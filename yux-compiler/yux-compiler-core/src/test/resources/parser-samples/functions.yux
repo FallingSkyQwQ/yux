@@ -1,0 +1,16 @@
+fun add(a:Int, b:Int) = a + b
+
+fun greet(name:String, title:String = "Mr.") {
+    print "Hello $title $name"
+}
+
+async fun loadPlayer(id:Int):Player {
+    return null
+}
+
+fun main() {
+    maxPlayers = 100
+    serverName = "YuxServer"
+    total = add(1, 2)
+    greet "Steve"
+}

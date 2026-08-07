@@ -1,0 +1,11 @@
+program
+  fun main()
+    block
+      var total = Int(0)
+      assign Id(total) += Int(1)
+      var name: String? = Null
+      var m: Map<String, Int> = Call(Id(newMap), [])
+      var ok = Is(Id(item), Sword)
+      var cast = As(Id(value), String)
+      var a = Get(Get(Id(b), c), d)
+      var e = Get(Call(Id(f), [Id(a)]), b)

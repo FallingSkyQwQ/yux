@@ -31,6 +31,10 @@ yux/
 ./gradlew build        # 全量构建 + 测试
 ./gradlew lint         # detekt 规范检查
 ./gradlew projects     # 列出全部模块
+
+# 里程碑命令
+./gradlew :yux-compiler:yux-compiler-cli:run --args="lex <file.yux>"   # M1 词法
+./gradlew :yux-compiler:yux-compiler-cli:run --args="ast <file.yux>"   # M2 语法
 ```
 
 ## 里程碑状态
@@ -39,7 +43,8 @@ yux/
 |---|---|---|
 | M0 工程骨架 + CI | ✅ | 多模块 Gradle 工程、lint、CI |
 | M1 词法分析器 | ✅ | Token/Trivia/插值分词 + golden 测试 |
-| M2+ | ⏳ | 见 [`docs/06-开发计划.md`](docs/06-开发计划.md) |
+| M2 语法分析器 | ✅ | CST/Pratt 表达式/消歧/错误恢复 + CstToAst + golden `.ast` |
+| M3+ | ⏳ | 见 [`docs/06-开发计划.md`](docs/06-开发计划.md) |
 
 ## 文档索引
 

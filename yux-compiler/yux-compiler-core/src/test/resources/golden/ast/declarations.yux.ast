@@ -1,0 +1,25 @@
+program
+  Player
+    property name: String
+    property health: Int
+      accessor get
+        block
+          return Id(value)
+      accessor set
+        block
+          assign Id(value) = Call(Id(clamp), [Id(set), Int(0), Int(20)])
+    fun send(msg: String)
+      block
+        expr CallNP(Id(print), [Template[Text("Player "), Id(name), Text(" says "), Id(msg)]])
+  data User
+    property id: Int
+    property name: String
+  data Result T
+    property ok: Boolean
+    property value: T
+  service Database
+    fun connect()
+      block
+    fun query(sql: String): String
+      block
+        return Id(sql)

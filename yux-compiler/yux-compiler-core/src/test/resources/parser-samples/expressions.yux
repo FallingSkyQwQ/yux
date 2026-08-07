@@ -1,0 +1,16 @@
+fun main() {
+    a = b + c * d
+    e = (f + g) * h
+    i = -j + k
+    p = q == r
+    s = t != u
+    v = w < x
+    y = z && a1
+    b2 = c3 || d4
+    e5 = !f6
+    msg = "Hello $name, next=${level + 1}"
+    raw = """\n 原样输出 $不解析"""
+    ch = 'a'
+    f = 3.14F
+    hex = 0x1F
+}

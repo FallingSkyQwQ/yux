@@ -12,14 +12,16 @@ class TokenKindTest {
 
     @Test
     fun `base keywords count is 30 and match the spec`() {
-        assertEquals(30, Keywords.BASE.size)
+        // 01-§2.4 列表为 30 个，但语法（§6.6/§7.1）将 `throw` 用作关键字——
+        // 规格列表漏列，实际共 31 个基础关键字（含 throw）。
+        assertEquals(31, Keywords.BASE.size)
         assertEquals(
             setOf(
                 "fun", "data", "service", "async", "parallel", "try", "catch", "finally",
                 "if", "else", "when", "for", "while", "return",
                 "import", "package", "new", "unsafe", "native", "stack",
                 "in", "is", "as", "this", "super",
-                "break", "continue", "true", "false", "null",
+                "break", "continue", "true", "false", "null", "throw",
             ),
             Keywords.BASE,
         )

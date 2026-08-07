@@ -1,0 +1,32 @@
+program
+  fun main()
+    block
+      if Binary(<=, Id(health), Int(0))
+        block
+          expr CallNP(Get(Id(player), send), [Str("\"你死了\"")])
+      else
+        if Binary(<, Id(health), Int(10))
+          block
+            expr CallNP(Get(Id(player), send), [Str("\"血量低\"")])
+        else
+          block
+            expr CallNP(Get(Id(player), send), [Str("\"状态良好\"")])
+      when Id(item)
+        branch is Sword ->
+          expr CallNP(Id(print), [Template[Text("武器 "), Get(Id(item), damage)]])
+        branch Int(1) ->
+          expr CallNP(Id(print), [Str("\"one\"")])
+        branch Str("\"hi\"") ->
+          expr CallNP(Id(print), [Str("\"hello\"")])
+        branch else ->
+          expr CallNP(Id(print), [Str("\"其他\"")])
+      for i in Range(Int(0), Int(10))
+        block
+          expr CallNP(Id(print), [Id(i)])
+      for player in Call(Id(onlinePlayers), [])
+        block
+          expr CallNP(Get(Id(player), send), [Str("\"在线\"")])
+      while Id(running)
+        block
+          expr Call(Id(tick), [])
+      return
