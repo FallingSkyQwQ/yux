@@ -1,10 +1,14 @@
 package yux.compiler.lexer
 
 import org.junit.jupiter.api.Test
+import yux.compiler.source.SourceFile
 import kotlin.test.assertEquals
+import kotlin.test.assertNotEquals
 import kotlin.test.assertTrue
 
 class TokenKindTest {
+
+    private fun tokens(text: String) = Lexer(SourceFile("t.yux", text)).tokenize()
 
     @Test
     fun `base keywords count is 30 and match the spec`() {
@@ -30,39 +34,41 @@ class TokenKindTest {
     }
 
     @Test
-    fun `base and soft keyword tables are disjoint`() {
-        assertTrue(Keywords.BASE.intersect(Keywords.SOFT).isEmpty())
-    }
-
-    @Test
-    fun `every two-char operator from 01-2-6 is registered`() {
+    fun `operator table from 01-2-6 is fully recognized`() {
         val operators = listOf(
-            "==", "!=", "<=", ">=", "&&", "||", "+=", "-=", "*=", "/=", "%=", "..", "->",
+            ".", ",", ":", ";", "(", ")", "[", "]", "{", "}",
+            "+", "-", "*", "/", "%", "=", "==", "!=", "<", ">", "<=", ">=",
+            "&&", "||", "!", "+=", "-=", "*=", "/=", "%=", "..", "->",
         )
         for (op in operators) {
-            assertTrue(Symbols.twoChar.containsKey(op), "two-char operator: $op")
+            val token = tokens(op).first()
+            assertEquals(op, token.text, "operator text: $op")
+            assertNotEquals(TokenKind.IDENTIFIER, token.kind, "operator should not be identifier: $op")
         }
     }
 
     @Test
-    fun `every single-char operator from 01-2-6 is registered`() {
-        val operators = listOf(
-            '.', ',', ':', ';', '(', ')', '[', ']', '{', '}',
-            '+', '-', '*', '/', '%', '=', '<', '>', '!',
-        )
-        for (op in operators) {
-            assertTrue(Symbols.single.containsKey(op), "single-char operator: $op")
+    fun `every two-char operator lexes as a single token`() {
+        for ((op, kind) in Symbols.twoChar) {
+            assertEquals(listOf(kind, TokenKind.EOF), tokens(op).map { it.kind }, "op: $op")
         }
     }
 
     @Test
-    fun `annotation and nullable markers are registered as single symbols`() {
-        assertEquals(TokenKind.AT, Symbols.single['@'])
-        assertEquals(TokenKind.QUESTION, Symbols.single['?'])
+    fun `keywords lex as KEYWORD and soft keywords as SOFT_KEYWORD`() {
+        assertTrue(Keywords.BASE.all { tokens(it).first().kind == TokenKind.KEYWORD })
+        assertTrue(Keywords.SOFT.all { tokens(it).first().kind == TokenKind.SOFT_KEYWORD })
     }
 
     @Test
-    fun `two-char and single-char tables do not collide`() {
-        assertTrue(Symbols.single.keys.none { it.toString() in Symbols.twoChar })
+    fun `it is a plain identifier`() {
+        assertEquals(TokenKind.IDENTIFIER, tokens("it").first().kind)
+    }
+
+    @Test
+    fun `built-in type names are identifiers not keywords`() {
+        for (name in listOf("Int", "String", "Boolean", "List", "Map", "Range", "Any")) {
+            assertEquals(TokenKind.IDENTIFIER, tokens(name).first().kind, name)
+        }
     }
 }
