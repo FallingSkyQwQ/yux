@@ -3,7 +3,7 @@ package yux.compiler.lexer
 import yux.compiler.source.SourceFile
 
 /**
- * Yux 词法分析器（02-§4）——骨架：标识符/关键字/符号扫描。
+ * Yux 词法分析器（02-§4）——骨架 + 数字字面量。
  *
  * - 逐字符扫描，产出 `Token(position, kind, text, leadingTrivia)`；
  * - 空白与换行折叠为单个 `NEWLINE` 记号；
@@ -92,12 +92,14 @@ class Lexer(val source: SourceFile) {
         return TriviaResult(trivia, sawNewline)
     }
 
-    // ── 单个逻辑记号（标识符/关键字/符号） ──────────────────────────────────
+    // ── 单个逻辑记号（标识符/数字/关键字/符号） ──────────────────────────────
 
     internal fun scanOneRealToken(): List<Token> {
         val c = peek()
         return when {
             isIdentifierStart(c) -> listOf(scanIdentifierOrKeyword())
+            c.isDigit() -> listOf(scanNumber())
+            c == '.' && peek(1).isDigit() -> listOf(scanNumber())
             else -> listOfNotNull(scanSymbol())
         }
     }
@@ -113,6 +115,59 @@ class Lexer(val source: SourceFile) {
             else -> TokenKind.IDENTIFIER
         }
         return Token(startPos, kind, word)
+    }
+
+    internal fun scanNumber(): Token {
+        val start = offset
+        val startPos = pos()
+        val c = peek()
+
+        if (c == '0' && (peek(1) == 'x' || peek(1) == 'X')) {
+            advance()
+            advance()
+            while (isHexDigit(peek()) || peek() == '_') advance()
+            if (peek() == 'L' || peek() == 'l') advance()
+            return Token(startPos, TokenKind.INT_LITERAL, text.substring(start, offset))
+        }
+        if (c == '0' && (peek(1) == 'b' || peek(1) == 'B')) {
+            advance()
+            advance()
+            while (isBinDigit(peek()) || peek() == '_') advance()
+            if (peek() == 'L' || peek() == 'l') advance()
+            return Token(startPos, TokenKind.INT_LITERAL, text.substring(start, offset))
+        }
+
+        var isFloat = false
+        while (peek().isDigit() || peek() == '_') advance()
+
+        if (peek() == '.' && peek(1).isDigit()) {
+            isFloat = true
+            advance()
+            while (peek().isDigit() || peek() == '_') advance()
+        }
+
+        if ((peek() == 'e' || peek() == 'E') && isExponentStart()) {
+            isFloat = true
+            advance()
+            if (peek() == '+' || peek() == '-') advance()
+            while (peek().isDigit()) advance()
+        }
+
+        val suffix = peek()
+        if (suffix == 'L' || suffix == 'l' || suffix == 'F' || suffix == 'f' || suffix == 'D' || suffix == 'd') {
+            advance()
+            if (suffix == 'F' || suffix == 'f' || suffix == 'D' || suffix == 'd') isFloat = true
+        }
+
+        val kind = if (isFloat) TokenKind.FLOAT_LITERAL else TokenKind.INT_LITERAL
+        return Token(startPos, kind, text.substring(start, offset))
+    }
+
+    private fun isExponentStart(): Boolean {
+        val next = peek(1)
+        if (next.isDigit()) return true
+        if (next == '+' || next == '-') return peek(2).isDigit()
+        return false
     }
 
     internal fun scanSymbol(): Token? {
@@ -135,4 +190,9 @@ class Lexer(val source: SourceFile) {
         advance()
         return null
     }
+
+    private fun isHexDigit(c: Char): Boolean =
+        c.isDigit() || c in 'a'..'f' || c in 'A'..'F'
+
+    private fun isBinDigit(c: Char): Boolean = c == '0' || c == '1'
 }

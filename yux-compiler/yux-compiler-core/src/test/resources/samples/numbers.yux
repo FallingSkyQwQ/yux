@@ -1,0 +1,11 @@
+age = 18
+count = 1_000_000L
+hex = 0x1F
+bin = 0b1010
+pi = 3.14F
+dbl = 3.14
+exp = 1e5
+neg = 1E-3
+frac = .5
+zero = 0
+range = 1..10
