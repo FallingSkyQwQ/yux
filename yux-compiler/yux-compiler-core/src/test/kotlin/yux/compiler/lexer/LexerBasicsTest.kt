@@ -79,12 +79,12 @@ class LexerBasicsTest {
 
     @Test
     fun `statement newline is a NEWLINE token`() {
-        val t = tokens("a = x\nb = y")
+        val t = tokens("a = 1\nb = 2")
         assertEquals(
             listOf(
-                TokenKind.IDENTIFIER, TokenKind.ASSIGN, TokenKind.IDENTIFIER,
+                TokenKind.IDENTIFIER, TokenKind.ASSIGN, TokenKind.INT_LITERAL,
                 TokenKind.NEWLINE,
-                TokenKind.IDENTIFIER, TokenKind.ASSIGN, TokenKind.IDENTIFIER,
+                TokenKind.IDENTIFIER, TokenKind.ASSIGN, TokenKind.INT_LITERAL,
                 TokenKind.EOF,
             ),
             t.map { it.kind },
