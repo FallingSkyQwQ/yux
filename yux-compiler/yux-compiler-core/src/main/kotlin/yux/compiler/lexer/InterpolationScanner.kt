@@ -22,6 +22,7 @@ class InterpolationScanner(private val lexer: Lexer) {
 
         while (true) {
             if (lexer.eof()) {
+                lexer.diagnostics.error("Unterminated string literal", openPos)
                 flushText(tokens, sb, segmentPos)
                 return tokens
             }
@@ -43,7 +44,10 @@ class InterpolationScanner(private val lexer: Lexer) {
                             scanExpressionBody(tokens)
                         }
                         lexer.isIdentifierStart(lexer.peek()) -> tokens += lexer.scanIdentifierOrKeyword()
-                        else -> Unit
+                        else -> lexer.diagnostics.error(
+                            "Invalid interpolation: expected identifier or '{'",
+                            lexer.pos(),
+                        )
                     }
                     segmentPos = lexer.pos()
                 }
@@ -77,7 +81,10 @@ class InterpolationScanner(private val lexer: Lexer) {
         var depth = 1
         while (true) {
             val (trivia, _) = lexer.scanTrivia(emitNewlineToken = false)
-            if (lexer.eof()) return
+            if (lexer.eof()) {
+                lexer.diagnostics.error("Unterminated interpolation expression", lexer.pos())
+                return
+            }
             val c = lexer.peek()
             when {
                 c == '}' -> {

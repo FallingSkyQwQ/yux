@@ -1,18 +1,19 @@
 package yux.compiler.lexer
 
+import yux.compiler.diag.DiagnosticSink
 import yux.compiler.source.SourceFile
 
 /**
- * Yux 词法分析器（02-§4）——骨架 + 数字 + 字符/字符串 + 插值分词。
+ * Yux 词法分析器（02-§4）。
  *
  * - 逐字符扫描，产出 `Token(position, kind, text, leadingTrivia)`；
- * - 空白与换行折叠为单个 `NEWLINE` 记号；
- * - 字符/字符串转义与 `\$`、`"""` 原始串；
- * - `$name`/`${expr}` 插值分词（InterpolationScanner，括号平衡 + 嵌套字符串）；
- * - 行/块（可嵌套）/文档注释保留为 Trivia，连续换行折叠为单个 `NEWLINE`；
- * - 非法字符跳过（错误诊断在 T-M1-7 接入）。
+ * - Trivia（空白/注释/文档注释）保留在前导位置，换行折叠为单个 `NEWLINE` 记号；
+ * - 非法字符/未闭合字面量 → 诊断（ERROR），不抛异常。
  */
-class Lexer(val source: SourceFile) {
+class Lexer(
+    val source: SourceFile,
+    val diagnostics: DiagnosticSink = DiagnosticSink(),
+) {
     internal val state = ScannerState(source.text)
     internal val text: String get() = state.text
     internal val offset: Int get() = state.offset
@@ -38,7 +39,7 @@ class Lexer(val source: SourceFile) {
         return attachTrivia(scanOneRealToken(), trivia)
     }
 
-    // ── 低层原语 ────────────────────────────────────────────────────────────
+    // ── 低层原语（InterpolationScanner 复用） ────────────────────────────────
 
     internal fun eof(): Boolean = offset >= text.length
 
@@ -127,11 +128,12 @@ class Lexer(val source: SourceFile) {
                 else -> advance()
             }
         }
+        if (depth > 0) diagnostics.error("Unterminated block comment", pos())
         val raw = text.substring(start, offset)
         return if (isDoc) Trivia.DocComment(raw) else Trivia.BlockComment(raw)
     }
 
-    // ── 单个逻辑记号（标识符/数字/字符/字符串/符号） ─────────────────────────
+    // ── 单个逻辑记号（标识符/数字/字符/字符串/符号） ────────────────────────
 
     internal fun scanOneRealToken(): List<Token> {
         val c = peek()
@@ -168,6 +170,7 @@ class Lexer(val source: SourceFile) {
         if (c == '0' && (peek(1) == 'x' || peek(1) == 'X')) {
             advance()
             advance()
+            if (!isHexDigit(peek())) diagnostics.error("Expect hex digit after '0x'", startPos)
             while (isHexDigit(peek()) || peek() == '_') advance()
             if (peek() == 'L' || peek() == 'l') advance()
             return Token(startPos, TokenKind.INT_LITERAL, text.substring(start, offset))
@@ -175,6 +178,7 @@ class Lexer(val source: SourceFile) {
         if (c == '0' && (peek(1) == 'b' || peek(1) == 'B')) {
             advance()
             advance()
+            if (!isBinDigit(peek())) diagnostics.error("Expect binary digit after '0b'", startPos)
             while (isBinDigit(peek()) || peek() == '_') advance()
             if (peek() == 'L' || peek() == 'l') advance()
             return Token(startPos, TokenKind.INT_LITERAL, text.substring(start, offset))
@@ -213,6 +217,24 @@ class Lexer(val source: SourceFile) {
         return false
     }
 
+    internal fun scanChar(): Token {
+        val start = offset
+        val startPos = pos()
+        advance() // '
+        var closed = false
+        while (!eof()) {
+            val c = advance()
+            if (c == '\\') {
+                if (!eof()) advance()
+            } else if (c == '\'') {
+                closed = true
+                break
+            }
+        }
+        if (!closed) diagnostics.error("Unterminated character literal", startPos)
+        return Token(startPos, TokenKind.CHAR_LITERAL, text.substring(start, offset))
+    }
+
     private fun scanRawString(): Token {
         val start = offset
         val startPos = pos()
@@ -230,24 +252,8 @@ class Lexer(val source: SourceFile) {
             }
             advance()
         }
+        if (!closed) diagnostics.error("Unterminated raw string literal", startPos)
         return Token(startPos, TokenKind.RAW_STRING_LITERAL, text.substring(start, offset))
-    }
-
-    internal fun scanChar(): Token {
-        val start = offset
-        val startPos = pos()
-        advance() // '
-        var closed = false
-        while (!eof()) {
-            val c = advance()
-            if (c == '\\') {
-                if (!eof()) advance()
-            } else if (c == '\'') {
-                closed = true
-                break
-            }
-        }
-        return Token(startPos, TokenKind.CHAR_LITERAL, text.substring(start, offset))
     }
 
     internal fun scanSymbol(): Token? {
@@ -267,6 +273,7 @@ class Lexer(val source: SourceFile) {
             advance()
             return Token(startPos, kind, c.toString())
         }
+        diagnostics.error("Unexpected character '$c'", startPos)
         advance()
         return null
     }
