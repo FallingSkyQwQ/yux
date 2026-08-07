@@ -167,4 +167,34 @@ class InferenceTest {
         val r = SemaTestSupport.analyze("maxPlayers = 100")
         assertFalse(r.hasErrors, r.errors.toString())
     }
+
+    @Test
+    fun `null body function inference fails without crash`() {
+        val r = SemaTestSupport.analyze("fun f() = null")
+        assertTrue(r.hasCode(ErrorCodes.INFERENCE_FAILURE), r.diagnostics.toString())
+    }
+
+    @Test
+    fun `null return statement inference fails without crash`() {
+        val r = SemaTestSupport.analyze("fun f() {\n  return null\n}")
+        assertTrue(r.hasCode(ErrorCodes.INFERENCE_FAILURE), r.diagnostics.toString())
+    }
+
+    @Test
+    fun `nothing function with null rejected`() {
+        val r = SemaTestSupport.analyze("fun f():Nothing = null")
+        assertTrue(r.hasCode(ErrorCodes.TYPE_MISMATCH), r.diagnostics.toString())
+    }
+
+    @Test
+    fun `nullable arithmetic rejected`() {
+        val r = SemaTestSupport.analyze("fun main() {\n  a:Int? = 1\n  b:Int? = 2\n  c = a + b\n}")
+        assertTrue(r.hasCode(ErrorCodes.INVALID_OPERATOR_OPERAND), r.diagnostics.toString())
+    }
+
+    @Test
+    fun `byte overflow literal rejected`() {
+        val r = SemaTestSupport.analyze("fun main() {\n  x:Byte = 200\n}")
+        assertTrue(r.hasCode(ErrorCodes.TYPE_MISMATCH), r.diagnostics.toString())
+    }
 }

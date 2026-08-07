@@ -66,8 +66,17 @@ class SymbolTable(
             )
             return
         }
+        val pkgMap = typesByPackage.getOrPut(file.packageName) { mutableMapOf() }
+        if (pkgMap.containsKey(symbol.name)) {
+            diagnostics.error(
+                "重复声明类型 '${symbol.name}'（同包跨文件，S-5.7）",
+                span.start,
+                ErrorCodes.DUPLICATE_DECLARATION,
+            )
+            return
+        }
         file.types[symbol.name] = symbol
-        typesByPackage.getOrPut(file.packageName) { mutableMapOf() }[symbol.name] = symbol
+        pkgMap[symbol.name] = symbol
     }
 
     private fun registerClassShell(file: FileScope, decl: YxClass, diagnostics: DiagnosticSink) {

@@ -292,4 +292,47 @@ class TypeCheckerTest {
         )
         assertFalse(r.hasErrors, r.errors.toString())
     }
+
+    @Test
+    fun `try body assignment not definite without catch`() {
+        val r = SemaTestSupport.analyze(
+            """
+            fun risky() = 1
+            fun main() {
+                x:Int
+                try {
+                    x = risky()
+                } catch e:Exception {
+                }
+                print x
+            }
+            """.trimIndent(),
+        )
+        assertTrue(r.hasCode(ErrorCodes.VARIABLE_NOT_INITIALIZED), r.diagnostics.toString())
+    }
+
+    @Test
+    fun `try and catch both assign is definite`() {
+        val r = SemaTestSupport.analyze(
+            """
+            fun risky() = 1
+            fun main() {
+                x:Int
+                try {
+                    x = risky()
+                } catch e:Exception {
+                    x = 0
+                }
+                print x
+            }
+            """.trimIndent(),
+        )
+        assertFalse(r.hasErrors, r.errors.toString())
+    }
+
+    @Test
+    fun `range requires numeric operands`() {
+        val r = SemaTestSupport.analyze("fun main() {\n  r = \"a\"..\"b\"\n}")
+        assertTrue(r.hasCode(ErrorCodes.INVALID_OPERATOR_OPERAND), r.diagnostics.toString())
+    }
 }

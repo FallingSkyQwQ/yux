@@ -118,4 +118,32 @@ class NullGuardTest {
         )
         assertTrue(r.hasCode(ErrorCodes.NULL_GUARD_INSERTED), r.diagnostics.toString())
     }
+
+    @Test
+    fun `nullable receiver value-returning method call guarded`() {
+        val r = SemaTestSupport.analyze(
+            """
+            fun main() {
+                s:String? = "abc"
+                n = s.length()
+            }
+            """.trimIndent(),
+        )
+        assertTrue(r.hasCode(ErrorCodes.NULL_GUARD_INSERTED), r.diagnostics.toString())
+    }
+
+    @Test
+    fun `unit returning method call not guarded`() {
+        val r = SemaTestSupport.analyze(
+            """
+            StringBuilder {
+            }
+            fun main() {
+                sb:StringBuilder? = null
+                sb.append("x")
+            }
+            """.trimIndent(),
+        )
+        assertFalse(r.hasCode(ErrorCodes.NULL_GUARD_INSERTED), r.diagnostics.toString())
+    }
 }

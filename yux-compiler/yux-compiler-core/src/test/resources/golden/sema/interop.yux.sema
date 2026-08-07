@@ -3,9 +3,9 @@ Call : UUID?
 TypeReference : System
 Call : Long
 TypeReference : Math
-IntLiteral : Double
-IntLiteral : Double
-Call : Double
+IntLiteral : Int
+IntLiteral : Int
+Call : Int
 StringLiteral : String
 Call : String?
 Identifier : String?

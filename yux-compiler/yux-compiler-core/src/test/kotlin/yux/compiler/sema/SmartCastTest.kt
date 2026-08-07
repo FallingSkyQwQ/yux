@@ -200,4 +200,52 @@ class SmartCastTest {
         )
         assertFalse(r.hasErrors, r.errors.toString())
     }
+
+    @Test
+    fun `loop variable reassignment disables smart cast`() {
+        val r = SemaTestSupport.analyze(
+            """
+            fun f(items:List Any) {
+                for x in items {
+                    if x is String {
+                        x = 5
+                        n = x.length
+                    }
+                }
+            }
+            """.trimIndent(),
+        )
+        // x 在分支内被重赋值 → 转型失效，x.length 不可解析（S-6.3.1/02-§7.3）
+        assertTrue(r.hasCode(ErrorCodes.UNRESOLVED_MEMBER), r.diagnostics.toString())
+    }
+
+    @Test
+    fun `impossible is-cast rejected`() {
+        val r = SemaTestSupport.analyze(
+            """
+            fun f(x:String) {
+                if x is Int {
+                    n = x + 1
+                }
+            }
+            """.trimIndent(),
+        )
+        assertTrue(r.hasCode(ErrorCodes.TYPE_MISMATCH), r.diagnostics.toString())
+    }
+
+    @Test
+    fun `when branch condition type mismatch`() {
+        val r = SemaTestSupport.analyze(
+            """
+            fun main() {
+                x:String = "a"
+                when x {
+                    5 -> print "five"
+                    else -> print "other"
+                }
+            }
+            """.trimIndent(),
+        )
+        assertTrue(r.hasCode(ErrorCodes.TYPE_MISMATCH), r.diagnostics.toString())
+    }
 }

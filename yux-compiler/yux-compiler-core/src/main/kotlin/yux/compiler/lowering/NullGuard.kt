@@ -48,4 +48,19 @@ class NullGuard(private val diagnostics: DiagnosticSink) {
             )
         }
     }
+
+    /**
+     * 取值方法调用守卫（02-§7.4）：返回非 Unit 的方法调用视为「读取」，
+     * 可空接收者上调用时插入守卫并 R0001（副作用调用不守卫）。
+     */
+    fun checkMethodCall(access: YxMemberAccess, receiverType: SemaType, returnType: SemaType) {
+        if (receiverType.nullable && !receiverType.isError && !returnType.isError && returnType !is SemaType.UnitT) {
+            guardPoints += GuardPoint(access, receiverType, access.span)
+            diagnostics.remind(
+                "可空接收者 '${receiverType.render()}' 的方法调用已插入空安全守卫（S-8.1）",
+                access.span.start,
+                ErrorCodes.NULL_GUARD_INSERTED,
+            )
+        }
+    }
 }

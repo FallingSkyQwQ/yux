@@ -130,10 +130,15 @@ sealed class SemaType(
 
         fun basic(name: String, nullable: Boolean = false): Basic = Basic(name, nullable)
 
-        /** 解引用推断变量（S-4.5）：跟随 solution 链到具体类型。 */
+        /** 解引用推断变量（S-4.5）：跟随 solution 链到具体类型（含环检测防自引用）。 */
         fun resolveVar(t: SemaType): SemaType {
             var cur = t
+            val seen = mutableSetOf<Int>()
             while (cur is InferenceVar && cur.solution != null) {
+                if (!seen.add(cur.id)) {
+                    // 自引用环：视为未求解
+                    return SemaType.ErrorT
+                }
                 cur = cur.solution!!
             }
             return cur
@@ -141,7 +146,8 @@ sealed class SemaType(
 
         fun isNumeric(t: SemaType): Boolean {
             val resolved = resolveVar(t)
-            return !resolved.isError && resolved is Basic && resolved.name in NUMERIC_NAMES
+            // 可空数字类型不得参与运算（S-4.2，需先判空）
+            return !resolved.isError && !resolved.nullable && resolved is Basic && resolved.name in NUMERIC_NAMES
         }
     }
 }

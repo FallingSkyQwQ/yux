@@ -51,6 +51,10 @@ class JvmClassSymbol(
             .let { superClass -> Class.forName(superType, false, JvmClassSymbol::class.java.classLoader).isAssignableFrom(superClass) }
     } catch (_: ClassNotFoundException) {
         false
+    } catch (_: NoClassDefFoundError) {
+        false
+    } catch (_: LinkageError) {
+        false
     }
 
     override fun toString(): String = "JvmClassSymbol($qualifiedName)"

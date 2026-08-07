@@ -439,8 +439,9 @@ class TypeChecker(
         checkStatement(stmt.thenBranch)
         val thenCasts = smartCast.snapshot()
         val thenAssigned = definiteAssignmentSnapshot()
-        // else 分支
+        // else 分支（从 before 状态开始，避免 then 分支污染快照）
         smartCast.restore(base)
+        restoreDefiniteAssignment(assignedBefore)
         if (stmt.elseBranch != null) {
             applyConditionCasts(stmt.condition, thenBranch = false)
             checkStatement(stmt.elseBranch)
@@ -485,6 +486,15 @@ class TypeChecker(
             val declared = lookupVariable(name)?.type ?: return
             val resolved = typeResolver.resolve(condition.type, currentFile!!)
             if (resolved.isError) return
+            // S-6.3.1：声明类型与目标类型不可能有交集 → 报错
+            if (!TypeAssignability.possiblySame(declared, resolved)) {
+                diagnostics.error(
+                    "类型检查不可能成立: '${declared.render()}' 与 '${resolved.render()}' 无交集（S-6.3.1）",
+                    condition.span.start,
+                    ErrorCodes.TYPE_MISMATCH,
+                )
+                return
+            }
             if (!smartCast.applyIsCast(name, resolved, ::isReassigned)) {
                 diagnostics.remind(
                     "可变引用 '$name' 的智能转型被抑制（02-§7.3）",
@@ -517,7 +527,14 @@ class TypeChecker(
                 is YxIsCondition -> {
                     val resolved = typeResolver.resolve(cond.type, currentFile!!)
                     val name = subjectAsVariable(stmt.subject)
-                    if (name != null && !resolved.isError) {
+                    val declared = name?.let { lookupVariable(it)?.type }
+                    if (name != null && !resolved.isError && declared != null && !TypeAssignability.possiblySame(declared, resolved)) {
+                        diagnostics.error(
+                            "类型检查不可能成立: '${declared.render()}' 与 '${resolved.render()}' 无交集（S-6.3.1）",
+                            cond.span.start,
+                            ErrorCodes.TYPE_MISMATCH,
+                        )
+                    } else if (name != null && !resolved.isError) {
                         if (!smartCast.applyIsCast(name, resolved, ::isReassigned)) {
                             diagnostics.remind("可变引用 '$name' 的智能转型被抑制", cond.span.start, ErrorCodes.SMART_CAST_MUTABLE)
                         }
@@ -525,7 +542,14 @@ class TypeChecker(
                 }
                 is YxExprCondition -> {
                     // when 分支条件与 subject 匹配（S-6.3），null 字面量以 subject 为期望
-                    typeOf(cond.expr, expected = subjectType)
+                    val condType = typeOf(cond.expr, expected = subjectType)
+                    if (!condType.isError && !subjectType.isError && !TypeAssignability.sameBase(condType, subjectType)) {
+                        diagnostics.error(
+                            "when 分支条件与 subject 类型不匹配: '${condType.render()}' 与 '${subjectType.render()}'",
+                            cond.span.start,
+                            ErrorCodes.TYPE_MISMATCH,
+                        )
+                    }
                 }
                 is YxElseCondition -> {
                     // else 分支：subject == null 时 subject 为非空
@@ -614,17 +638,38 @@ class TypeChecker(
     }
 
     private fun checkTry(stmt: YxTry) {
+        val before = definiteAssignmentSnapshot()
         checkStatement(stmt.body)
+        val afterBody = definiteAssignmentSnapshot()
+        val catchStates = mutableListOf<Map<String, Boolean>>()
         for (catch in stmt.catches) {
             smartCast.enterBlock()
+            // catch 从 try 入口状态开始（体可能已抛异常，变量未必已赋值）
+            restoreDefiniteAssignment(before)
             varStack.addLast(mutableMapOf())
             val type = catch.type?.let { typeResolver.resolve(it, currentFile!!) } ?: SemaType.basic("Throwable", nullable = true)
             val sym = VariableSymbol(catch.paramName, type, isVal = true, catch.span)
             sym.definitelyAssigned = true
             varStack.last()[catch.paramName] = sym
             checkStatement(catch.body)
+            catchStates += definiteAssignmentSnapshot()
             varStack.removeLast()
             smartCast.exitBlock()
+        }
+        // S-6.1.2：try 体赋值仅在「体赋值 && 全部 catch 赋值」时保证（无 catch 时体赋值即保证）
+        val allCatches = if (catchStates.isEmpty()) {
+            emptyMap()
+        } else {
+            val names = catchStates.flatMap { it.keys }.toSet()
+            names.associateWith { n -> catchStates.all { it[n] ?: false } }
+        }
+        for (i in varStack.indices.reversed()) {
+            for ((name, sym) in varStack[i]) {
+                val beforeV = before[name] ?: false
+                val bodyV = afterBody[name] ?: false
+                val catchV = if (catchStates.isEmpty()) true else (allCatches[name] ?: false)
+                sym.definitelyAssigned = beforeV || (bodyV && catchV)
+            }
         }
         stmt.finallyBody?.let { checkStatement(it) }
     }
@@ -643,11 +688,24 @@ class TypeChecker(
         is YxCharLiteral -> SemaType.CHAR
         is YxBoolLiteral -> SemaType.BOOLEAN
         is YxNullLiteral -> {
-            if (expected == null) {
-                diagnostics.error("null 字面量无法推断类型（S-4.5.4）", expr.span.start, ErrorCodes.INFERENCE_FAILURE)
-                SemaType.ErrorT
-            } else {
-                expected.asNullable()
+            val expectedResolved = expected?.let { SemaType.resolveVar(it) }
+            when {
+                // 无期望类型：无法推断（S-4.5.4）
+                expected == null -> {
+                    diagnostics.error("null 字面量无法推断类型（S-4.5.4）", expr.span.start, ErrorCodes.INFERENCE_FAILURE)
+                    SemaType.ErrorT
+                }
+                // 期望为未求解推断变量：null 无法提供类型信息
+                expectedResolved is SemaType.InferenceVar -> {
+                    diagnostics.error("null 字面量无法推断类型（S-4.5.4）", expr.span.start, ErrorCodes.INFERENCE_FAILURE)
+                    SemaType.ErrorT
+                }
+                // Nothing 不可接收 null（S-4.1.1）
+                expectedResolved is SemaType.NothingT -> {
+                    diagnostics.error("Nothing 不可赋值 null", expr.span.start, ErrorCodes.TYPE_MISMATCH)
+                    SemaType.ErrorT
+                }
+                else -> expected.asNullable()
             }
         }
         is YxStringLiteral -> SemaType.STRING
@@ -684,8 +742,11 @@ class TypeChecker(
         }
         is YxNullable -> typeOf(expr.expr).asNullable()
         is YxRange -> {
-            typeOf(expr.from)
-            typeOf(expr.to)
+            val from = typeOf(expr.from)
+            val to = typeOf(expr.to)
+            if (!SemaType.isNumeric(from) || !SemaType.isNumeric(to)) {
+                diagnostics.error("区间两端需要数字操作数（S-6.4.2）", expr.span.start, ErrorCodes.INVALID_OPERATOR_OPERAND)
+            }
             SemaType.RANGE
         }
         is YxAssign -> {
@@ -722,7 +783,9 @@ class TypeChecker(
                     ErrorCodes.VARIABLE_NOT_INITIALIZED,
                 )
             }
-            return smartCast.castedType(expr.name) ?: sym.type ?: SemaType.ErrorT
+            // 智能转型仅在符号未重赋值时生效（02-§7.3）
+            val casted = if (sym.reassigned) null else smartCast.castedType(expr.name)
+            return casted ?: sym.type ?: SemaType.ErrorT
         }
         // 类成员属性（隐式 this，S-5.2）
         currentClass?.property(expr.name)?.let { prop ->
@@ -845,11 +908,15 @@ class TypeChecker(
         is YxMemberAccess -> {
             val receiverType = typeOf(callee.receiver)
             if (receiverType.isError) return SemaType.ErrorT
-            if (callee.receiver is YxTypeReference) {
+            val result = if (callee.receiver is YxTypeReference) {
                 checkStaticCall(receiverType, callee.name, call)
             } else {
-                checkInstanceCall(receiverType, callee.name, call)
+                val ret = checkInstanceCall(receiverType, callee.name, call)
+                // 取值调用守卫（02-§7.4）：非 Unit 返回 + 可空接收者
+                nullGuard.checkMethodCall(callee, receiverType, ret)
+                ret
             }
+            result
         }
         is YxTypeReference -> {
             // `Type(args)` 形式已被 YxTypeCall 处理；此处兜底（静态调用）
@@ -945,14 +1012,14 @@ class TypeChecker(
     }
 
     private fun checkJvmCall(methods: List<JvmMethodSymbol>, call: YxCall): SemaType {
-        if (methods.size == 1) {
-            val m = methods.first()
-            return checkFunctionCallArgs(m.params, m.returnType, call)
-        }
-        // 重载：按参数个数匹配（类型匹配由 expectAssignable 处理）
         val byArity = methods.filter { it.params.size == call.args.size }
-        val m = byArity.firstOrNull() ?: methods.first()
-        return checkFunctionCallArgs(m.params, m.returnType, call)
+        val candidates = byArity.ifEmpty { methods }
+        // 重载选择：按实参类型可赋值性优先（避免反射方法顺序不确定性）
+        val argTypes = call.args.map { typeOf(it) }
+        val matched = candidates.firstOrNull { m ->
+            m.params.indices.all { i -> TypeAssignability.isAssignable(argTypes[i], m.params[i]) }
+        } ?: candidates.first()
+        return checkFunctionCallArgs(matched.params, matched.returnType, call)
     }
 
     private fun checkCallable(candidates: List<FunctionSymbol>, call: YxCall, kind: String): SemaType {
@@ -1177,15 +1244,34 @@ class TypeChecker(
         val clean = text.replace("_", "")
         val isLong = clean.endsWith("L") || clean.endsWith("l")
         val natural = if (isLong) SemaType.LONG else SemaType.INT
-        // 字面量按目标类型收窄（S-7.5.4）
+        val value = parseIntegerLiteral(clean) ?: return SemaType.ErrorT
+        // 字面量按目标类型收窄（S-7.5.4），超出目标范围报错（S-2.5.1）
         val expectedNum = expected as? SemaType.Basic
         if (!isLong && expectedNum != null && expectedNum.name in SemaType.NUMERIC_NAMES && !expectedNum.nullable) {
+            if (expectedNum.name == "Byte" && (value < -128 || value > 127)) {
+                diagnostics.error("字面量 $value 超出 Byte 范围（-128..127）", null, ErrorCodes.TYPE_MISMATCH)
+                return SemaType.ErrorT
+            }
             return expectedNum
         }
         if (isLong && expectedNum != null && expectedNum.name == "Long" && !expectedNum.nullable) {
             return expectedNum
         }
         return natural
+    }
+
+    /** 解析整数文本（十/十六/二进制，含后缀）；失败返回 null。 */
+    private fun parseIntegerLiteral(text: String): Long? {
+        val digits = text.removeSuffix("L").removeSuffix("l")
+        return try {
+            when {
+                digits.startsWith("0x") || digits.startsWith("0X") -> digits.substring(2).toLong(16)
+                digits.startsWith("0b") || digits.startsWith("0B") -> digits.substring(2).toLong(2)
+                else -> digits.toLong()
+            }
+        } catch (_: NumberFormatException) {
+            null
+        }
     }
 
     private fun literalFloatType(text: String, expected: SemaType?): SemaType {

@@ -27,9 +27,9 @@ class Declarations(
                 when (decl) {
                     is YxFunction -> registerTopLevelFunction(file, decl)
                     is YxProperty -> registerTopLevelProperty(file, decl)
-                    is YxClass -> fillClass(file, classSymbol(file, decl.name) ?: return, decl.members, decl)
-                    is YxDataClass -> fillDataClass(file, classSymbol(file, decl.name) ?: return, decl)
-                    is YxService -> fillService(file, classSymbol(file, decl.name) ?: return, decl)
+                    is YxClass -> fillClass(file, classSymbol(file, decl.name) ?: continue, decl.members, decl)
+                    is YxDataClass -> fillDataClass(file, classSymbol(file, decl.name) ?: continue, decl)
+                    is YxService -> fillService(file, classSymbol(file, decl.name) ?: continue, decl)
                     else -> Unit
                 }
             }
@@ -197,6 +197,7 @@ class Declarations(
 
     private fun buildProperty(file: FileScope, owner: YxClassSymbol, decl: YxProperty): PropertySymbol {
         val type = decl.type?.let { typeResolver.resolve(it, file) }
+        Annotations.validate(decl.annotations, setOf(AnnotationTarget.PROPERTY), diagnostics)
         // S-5.2.2/5.2.4：同一访问器不得重复声明
         val getCount = decl.accessors.count { it.kind == YxAccessorKind.GET }
         val setCount = decl.accessors.count { it.kind == YxAccessorKind.SET }
@@ -223,6 +224,7 @@ class Declarations(
         return typeResolver.withTypeParams(scope) {
             // 函数参数类型由解析器结构性保证（`name:Type`，S-4.5.3）
             val params = decl.params.map { p ->
+                Annotations.validate(p.annotations, setOf(AnnotationTarget.PARAMETER), diagnostics)
                 ParameterSymbol(p.name, typeResolver.resolve(p.type, file), p.defaultValue != null, p.span)
             }
             val ret = decl.returnType?.let { typeResolver.resolve(it, file) }
@@ -286,8 +288,13 @@ class Declarations(
 
     private fun validateOverrides(sym: YxClassSymbol) {
         for (fn in sym.functions().filter { it.isOverride }) {
-            val overridden = (sym.superType as? SemaType.Declared)?.symbol?.let { it as? YxClassSymbol }
-                ?.functionsNamed(fn.name)?.any { it.params.size == fn.params.size } == true
+            // S-8.7.2：父类/接口为 Yux 类或 JVM 类均可
+            val parent = (sym.superType as? SemaType.Declared)?.symbol
+            val overridden = when (parent) {
+                is YxClassSymbol -> parent.functionsNamed(fn.name).any { it.params.size == fn.params.size }
+                is JvmClassSymbol -> parent.allMethods().any { it.name == fn.name && it.params.size == fn.params.size }
+                else -> false
+            }
             if (!overridden) {
                 diagnostics.error(
                     "override 函数 '${fn.name}' 无对应父类成员",

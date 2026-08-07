@@ -171,4 +171,20 @@ object TypeAssignability {
                 sameBase(a.ret, b.ret)
         else -> false
     }
+
+    /**
+     * 两个类型是否「可能存在公共子类型」（用于 `is` 转型可行性，S-6.3.1）。
+     * `Any`/类型参数/`Nothing`/错误类型视为可能与任何类型相关；其余按 [sameBase] 判定。
+     */
+    fun possiblySame(a: SemaType, b: SemaType): Boolean {
+        val x = SemaType.resolveVar(a)
+        val y = SemaType.resolveVar(b)
+        if (x.isError || y.isError) return true
+        if (x is SemaType.NothingT || y is SemaType.NothingT) return true
+        if (x is SemaType.Basic && x.name == "Any") return true
+        if (y is SemaType.Basic && y.name == "Any") return true
+        if (x is SemaType.TypeParam || y is SemaType.TypeParam) return true
+        if (x is SemaType.UnitT || y is SemaType.UnitT) return x is SemaType.UnitT && y is SemaType.UnitT
+        return sameBase(x, y)
+    }
 }

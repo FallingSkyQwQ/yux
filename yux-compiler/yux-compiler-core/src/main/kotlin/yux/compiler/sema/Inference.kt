@@ -28,11 +28,9 @@ class Inference(private val diagnostics: DiagnosticSink) {
     fun unify(a: SemaType, b: SemaType): SemaType? {
         val av = a.resolveInferenceVar()
         val bv = b.resolveInferenceVar()
+        if (av === bv) return av
         if (av is SemaType.InferenceVar && bv is SemaType.InferenceVar) {
             if (av.id == bv.id) return av
-            // 两个推断变量：绑定到具体性更高的一方（有解的一方优先）
-            if (av.solution != null) { bv.solution = av.solution; return av.solution!! }
-            if (bv.solution != null) { av.solution = bv.solution; return bv.solution!! }
             av.solution = bv
             return bv
         }
@@ -85,6 +83,10 @@ class Inference(private val diagnostics: DiagnosticSink) {
         code: String,
     ): SemaType? {
         if (actual.isError || expected.isError) return SemaType.ErrorT
+        // 自引用保护：禁止 `V.solution = V`（S-4.5.4）
+        if (actual === expected || (actual is SemaType.InferenceVar && expected is SemaType.InferenceVar && actual.id == expected.id)) {
+            return actual
+        }
         // 推断变量：约束收集
         if (actual is SemaType.InferenceVar) {
             actual.solution = expected
