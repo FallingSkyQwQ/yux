@@ -1,0 +1,5 @@
+name = "Steve"
+msg = "Hello $name, next=${level + 1}"
+nested = "${ greet("x") }"
+plain = "no interpolation"
+raw = """$name stays raw"""
