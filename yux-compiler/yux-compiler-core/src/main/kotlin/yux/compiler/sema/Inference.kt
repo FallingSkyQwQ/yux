@@ -50,6 +50,9 @@ class Inference(private val diagnostics: DiagnosticSink) {
     /**
      * 赋值兼容检查：`actual` 必须可赋值给 `expected`；失败报告 E0004。
      * [context] 用于诊断文案（如「变量声明」「实参 2」）。
+     *
+     * 具体类型之间走严格可赋值性（含可空性：可空 → 非空不允许，S-4.2）；
+     * 涉及推断变量时交给 [unify]（约束收集，02-§7.2）。
      */
     fun expectAssignable(
         actual: SemaType,
@@ -57,15 +60,47 @@ class Inference(private val diagnostics: DiagnosticSink) {
         position: SourcePosition?,
         context: String,
     ): SemaType {
-        val unified = unify(actual, expected)
-        if (unified != null) return unified
+        val result = checkAssignable(actual, expected, position, context, ErrorCodes.TYPE_MISMATCH)
+        return result ?: SemaType.ErrorT
+    }
+
+    /**
+     * 返回类型兼容检查：语义同 [expectAssignable]，但失败报 E0015（S-5.5.2/6.5.1）。
+     */
+    fun expectReturn(
+        actual: SemaType,
+        expected: SemaType,
+        position: SourcePosition?,
+        context: String,
+    ): SemaType {
+        val result = checkAssignable(actual, expected, position, context, ErrorCodes.RETURN_TYPE_MISMATCH)
+        return result ?: SemaType.ErrorT
+    }
+
+    private fun checkAssignable(
+        actual: SemaType,
+        expected: SemaType,
+        position: SourcePosition?,
+        context: String,
+        code: String,
+    ): SemaType? {
         if (actual.isError || expected.isError) return SemaType.ErrorT
+        // 推断变量：约束收集
+        if (actual is SemaType.InferenceVar) {
+            actual.solution = expected
+            return expected
+        }
+        if (expected is SemaType.InferenceVar) {
+            val unified = unify(actual, expected)
+            if (unified != null) return unified
+        }
+        if (TypeAssignability.isAssignable(actual, expected)) return expected
         diagnostics.error(
             "类型不匹配（$context）: 期望 ${expected.render()}，实际 ${actual.render()}",
             position,
-            ErrorCodes.TYPE_MISMATCH,
+            code,
         )
-        return SemaType.ErrorT
+        return null
     }
 
     /** 推断失败报告（S-4.5.4）：不猜测类型，给出定位。 */

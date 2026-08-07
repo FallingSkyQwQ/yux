@@ -28,33 +28,32 @@ object SemaTestSupport {
     }
 
     fun analyze(text: String, path: String = "main.yux"): Result {
-        val declsByFile = parse(mapOf(path to text))
+        val (declsByFile, parseDiags) = parse(mapOf(path to text))
         val diags = DiagnosticSink()
         val result = SemanticAnalyzer().analyze(declsByFile, diags)
+        parseDiags.forEach { diags.report(it) }
         return Result(result)
     }
 
     fun analyzeAll(vararg sources: Pair<String, String>): Result {
-        val declsByFile = parse(sources.toMap())
+        val (declsByFile, parseDiags) = parse(sources.toMap())
         val diags = DiagnosticSink()
         val result = SemanticAnalyzer().analyze(declsByFile, diags)
+        parseDiags.forEach { diags.report(it) }
         return Result(result)
     }
 
-    private fun parse(declsByFile: Map<String, String>): Map<String, List<yux.compiler.ast.YxDecl>> {
+    private fun parse(declsByFile: Map<String, String>): Pair<Map<String, List<yux.compiler.ast.YxDecl>>, List<Diagnostic>> {
         val out = mutableMapOf<String, List<yux.compiler.ast.YxDecl>>()
+        val parseDiags = mutableListOf<Diagnostic>()
         for ((path, text) in declsByFile) {
             val diags = DiagnosticSink()
             val parser = Parser(SourceFile(path, text), diags)
             val program = parser.parse()
             val decls = CstToAst().convert(program)
-            if (diags.hasErrors) {
-                throw AssertionError(
-                    "解析失败（测试前置条件）: ${diags.diagnostics.joinToString("; ") { it.message }}",
-                )
-            }
+            parseDiags += diags.diagnostics
             out[path] = decls
         }
-        return out
+        return out to parseDiags
     }
 }

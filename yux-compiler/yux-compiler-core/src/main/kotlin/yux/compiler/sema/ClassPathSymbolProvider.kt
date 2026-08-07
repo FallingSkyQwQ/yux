@@ -13,12 +13,11 @@ class JvmClassSymbol(
     override val typeParams: List<String>,
     override val isData: Boolean = false,
     override val isService: Boolean = false,
-    val methods: List<JvmMethodSymbol>,
-    val staticMethods: List<JvmMethodSymbol>,
-    val fields: List<JvmFieldSymbol>,
-    val constructors: List<JvmConstructorSymbol>,
-) : Symbol, TypeSymbol {
-    override val name: String get() = simpleName
+    var methods: List<JvmMethodSymbol>,
+    var staticMethods: List<JvmMethodSymbol>,
+    var fields: List<JvmFieldSymbol>,
+    var constructors: List<JvmConstructorSymbol>,
+) : Symbol, TypeSymbol {    override val name: String get() = simpleName
     override val isYuxDeclared: Boolean = false
     override val span: SourceSpan? = null
     override val kind: SymbolKind get() = SymbolKind.TYPE
@@ -83,38 +82,33 @@ class JvmConstructorSymbol(
  * 结果缓存于 [cache]。JVM 引用类型一律视为可空（S-8.1 与 Java 互操作规则）；
  * JVM 基本类型（`int/long/...`）为非空。
  *
- * 实现要点：`build` 期间通过 [loading] 防递归（自引用方法/返回类型）。
+ * 实现要点：先构造**空成员符号**并写入 [cache]，再填充成员——自引用方法/返回类型
+ * 递归解析时命中同一符号实例（`===` 相等，类型一致性），无需事后修复。
  */
 class ClassPathSymbolProvider {
     private val cache = mutableMapOf<String, JvmClassSymbol?>()
-    private val loading = mutableSetOf<String>()
 
     /** 按完整限定名解析；失败返回 null。 */
-    fun resolve(qualifiedName: String): JvmClassSymbol? =
-        cache.getOrPut(qualifiedName) { loadByName(qualifiedName) }
+    fun resolve(qualifiedName: String): JvmClassSymbol? {
+        cache[qualifiedName]?.let { return it }
+        val cls = forName(qualifiedName) ?: return null.also { cache[qualifiedName] = null }
+        return resolveClass(cls)
+    }
 
     /** 尝试在给定包名/简单名下解析。 */
     fun resolveIn(packageName: String, simpleName: String): JvmClassSymbol? =
         resolve("$packageName.$simpleName")
 
-    /** 反射获取并构造符号；递归时返回最小占位。 */
-    private fun loadByName(qualifiedName: String): JvmClassSymbol? {
-        val cls = forName(qualifiedName) ?: return null
-        return buildGuarded(cls)
+    /** 类 → 符号：缓存空符号后原地填充，保证自引用解析到同一实例。 */
+    private fun resolveClass(cls: Class<*>): JvmClassSymbol {
+        cache[cls.name]?.let { return it }
+        val symbol = emptySymbol(cls)
+        cache[cls.name] = symbol
+        fill(symbol, cls)
+        return symbol
     }
 
-    private fun buildGuarded(cls: Class<*>): JvmClassSymbol {
-        if (loading.add(cls.name)) {
-            try {
-                return build(cls)
-            } finally {
-                loading.remove(cls.name)
-            }
-        }
-        return minimal(cls)
-    }
-
-    private fun minimal(cls: Class<*>): JvmClassSymbol = JvmClassSymbol(
+    private fun emptySymbol(cls: Class<*>): JvmClassSymbol = JvmClassSymbol(
         qualifiedName = cls.name,
         simpleName = cls.simpleName,
         isInterface = cls.isInterface,
@@ -125,7 +119,7 @@ class ClassPathSymbolProvider {
         constructors = emptyList(),
     )
 
-    private fun build(cls: Class<*>): JvmClassSymbol {
+    private fun fill(symbol: JvmClassSymbol, cls: Class<*>) {
         val methods = mutableListOf<JvmMethodSymbol>()
         val staticMethods = mutableListOf<JvmMethodSymbol>()
         for (m in cls.methods) {
@@ -144,16 +138,10 @@ class ClassPathSymbolProvider {
             )
         }
         val constructors = cls.constructors.map { JvmConstructorSymbol(it.parameterTypes.map { t -> jvmType(t) }) }
-        return JvmClassSymbol(
-            qualifiedName = cls.name,
-            simpleName = cls.simpleName,
-            isInterface = cls.isInterface,
-            typeParams = cls.typeParameters.map { it.name },
-            methods = methods,
-            staticMethods = staticMethods,
-            fields = fields,
-            constructors = constructors,
-        )
+        symbol.methods = methods
+        symbol.staticMethods = staticMethods
+        symbol.fields = fields
+        symbol.constructors = constructors
     }
 
     private fun forName(name: String): Class<*>? = try {
@@ -187,7 +175,7 @@ class ClassPathSymbolProvider {
         "java.lang.Exception" -> SemaType.basic("Exception", nullable = true)
         "java.lang.Iterable" -> SemaType.basic("Iterable", nullable = true)
         else -> {
-            val symbol = cache.getOrPut(cls.name) { buildGuarded(cls) } ?: minimal(cls)
+            val symbol = resolveClass(cls)
             SemaType.Declared(symbol, emptyList(), nullable = true)
         }
     }

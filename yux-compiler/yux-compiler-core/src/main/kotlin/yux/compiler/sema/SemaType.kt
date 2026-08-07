@@ -130,7 +130,19 @@ sealed class SemaType(
 
         fun basic(name: String, nullable: Boolean = false): Basic = Basic(name, nullable)
 
-        fun isNumeric(t: SemaType): Boolean = !t.isError && t is Basic && t.name in NUMERIC_NAMES
+        /** 解引用推断变量（S-4.5）：跟随 solution 链到具体类型。 */
+        fun resolveVar(t: SemaType): SemaType {
+            var cur = t
+            while (cur is InferenceVar && cur.solution != null) {
+                cur = cur.solution!!
+            }
+            return cur
+        }
+
+        fun isNumeric(t: SemaType): Boolean {
+            val resolved = resolveVar(t)
+            return !resolved.isError && resolved is Basic && resolved.name in NUMERIC_NAMES
+        }
     }
 }
 

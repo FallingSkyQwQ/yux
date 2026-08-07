@@ -53,9 +53,19 @@ class Declarations(
     // ── 顶层 ────────────────────────────────────────────────────────────────
 
     private fun registerTopLevelFunction(file: FileScope, decl: YxFunction) {
+        Annotations.validate(decl.annotations, setOf(AnnotationTarget.FUNCTION), diagnostics)
         if (file.types.containsKey(decl.name)) {
             diagnostics.error(
                 "顶层函数 '${decl.name}' 与同名类型冲突",
+                decl.span.start,
+                ErrorCodes.DUPLICATE_DECLARATION,
+            )
+            return
+        }
+        val existing = file.topLevelFunctions[decl.name].orEmpty()
+        if (existing.any { it.params.size == decl.params.size }) {
+            diagnostics.error(
+                "重复声明函数 '${decl.name}'（签名相同）",
                 decl.span.start,
                 ErrorCodes.DUPLICATE_DECLARATION,
             )
@@ -77,7 +87,7 @@ class Declarations(
         file.topLevelProperties[decl.name] = PropertySymbol(
             name = decl.name,
             type = decl.type?.let { typeResolver.resolve(it, file) },
-            isVal = decl.accessors.none { it.kind == YxAccessorKind.SET },
+            isVal = decl.accessors.isNotEmpty() && decl.accessors.none { it.kind == YxAccessorKind.SET },
             owner = null,
             span = decl.span,
             decl = decl,
@@ -97,7 +107,10 @@ class Declarations(
             for (member in members) {
                 when (member) {
                     is YxProperty -> registerClassMember(file, sym, buildProperty(file, sym, member))
-                    is YxFunction -> registerClassMember(file, sym, buildFunction(file, sym, member, sym.typeParams))
+                    is YxFunction -> {
+                        Annotations.validate(member.annotations, setOf(AnnotationTarget.FUNCTION), diagnostics)
+                        registerClassMember(file, sym, buildFunction(file, sym, member, sym.typeParams))
+                    }
                     is yux.compiler.ast.YxInitBlock -> Unit // S-5.2.5 合法
                 }
             }
@@ -120,7 +133,10 @@ class Declarations(
             for (member in decl.members) {
                 when (member) {
                     is YxProperty -> registerClassMember(file, sym, buildProperty(file, sym, member))
-                    is YxFunction -> registerClassMember(file, sym, buildFunction(file, sym, member, sym.typeParams))
+                    is YxFunction -> {
+                        Annotations.validate(member.annotations, setOf(AnnotationTarget.FUNCTION), diagnostics)
+                        registerClassMember(file, sym, buildFunction(file, sym, member, sym.typeParams))
+                    }
                     is yux.compiler.ast.YxInitBlock -> diagnostics.error(
                         "service 不允许初始化块",
                         member.span.start,
@@ -181,7 +197,19 @@ class Declarations(
 
     private fun buildProperty(file: FileScope, owner: YxClassSymbol, decl: YxProperty): PropertySymbol {
         val type = decl.type?.let { typeResolver.resolve(it, file) }
-        val isVal = decl.accessors.none { it.kind == YxAccessorKind.SET }
+        // S-5.2.2/5.2.4：同一访问器不得重复声明
+        val getCount = decl.accessors.count { it.kind == YxAccessorKind.GET }
+        val setCount = decl.accessors.count { it.kind == YxAccessorKind.SET }
+        if (getCount > 1 || setCount > 1) {
+            diagnostics.error(
+                "属性 '${decl.name}' 重复声明访问器（S-5.2.4）",
+                decl.span.start,
+                ErrorCodes.ILLEGAL_ACCESSOR,
+            )
+        }
+        val hasSet = decl.accessors.any { it.kind == YxAccessorKind.SET }
+        // S-5.2.1：默认自动生成 getter+setter（可变）；仅 data 类默认只读（S-5.3.1）
+        val isVal = if (owner.isData) !hasSet else (decl.accessors.isNotEmpty() && !hasSet)
         return PropertySymbol(decl.name, type, isVal, owner, decl.span, decl)
     }
 
@@ -209,6 +237,20 @@ class Declarations(
             .filterIsInstance<YxClassSymbol>()
             .filter { it.isService }
             .associateBy { it.name }
+
+        // S-5.4.1：非注入属性（类型非 service）必须提供初始值
+        for (prop in sym.properties()) {
+            val t = prop.type
+            if (t == null || t.isError) continue
+            val injected = (t as? SemaType.Declared)?.symbol?.isService == true
+            if (!injected && prop.decl?.initializer == null) {
+                diagnostics.error(
+                    "service 属性 '${prop.name}'（非注入类型）缺少初始值（S-5.4.1）",
+                    prop.span?.start,
+                    ErrorCodes.SERVICE_PROPERTY_NO_INIT,
+                )
+            }
+        }
 
         // 循环依赖检测（有向图 DFS）
         val visiting = mutableSetOf<String>()

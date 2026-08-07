@@ -154,9 +154,11 @@ object TypeAssignability {
     fun sameBase(a: SemaType, b: SemaType): Boolean = when {
         a is SemaType.NothingT || b is SemaType.NothingT -> true
         a is SemaType.ErrorT || b is SemaType.ErrorT -> true
+        // Any 为顶层类型（S-4.1.1）：接受一切
+        a is SemaType.Basic && a.name == "Any" -> true
+        b is SemaType.Basic && b.name == "Any" -> true
         a is SemaType.UnitT -> b is SemaType.UnitT
-        a is SemaType.Basic && b is SemaType.Basic ->
-            a.name == "Any" || b.name == "Any" || a.name == b.name
+        a is SemaType.Basic && b is SemaType.Basic -> a.name == b.name
         a is SemaType.TypeParam && b is SemaType.TypeParam -> a.name == b.name
         a is SemaType.TypeParam && b is SemaType.Basic -> true
         a is SemaType.Basic && b is SemaType.TypeParam -> true
