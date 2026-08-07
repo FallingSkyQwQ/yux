@@ -3,6 +3,7 @@ package yux.compiler.lexer
 import org.junit.jupiter.api.Test
 import yux.compiler.source.SourceFile
 import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 
 class StringLiteralTest {
 
@@ -54,6 +55,28 @@ class StringLiteralTest {
             t.map { it.kind },
         )
         assertEquals(src, t[0].text)
+    }
+
+    @Test
+    fun `unterminated string reports error but still produces a token stream`() {
+        val l = lex("\"abc")
+        val t = l.tokenize()
+        assertTrue(l.diagnostics.hasErrors)
+        assertEquals(TokenKind.STRING_START, t[0].kind)
+    }
+
+    @Test
+    fun `unterminated raw string reports error`() {
+        val l = lex("\"\"\"abc")
+        l.tokenize()
+        assertTrue(l.diagnostics.hasErrors)
+    }
+
+    @Test
+    fun `unterminated char literal reports error`() {
+        val l = lex("'a")
+        l.tokenize()
+        assertTrue(l.diagnostics.hasErrors)
     }
 
     @Test
