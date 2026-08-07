@@ -24,16 +24,16 @@ class DiagnosticSink {
     val diagnostics: List<Diagnostic> get() = _diagnostics
     val hasErrors: Boolean get() = _diagnostics.any { it.severity == Severity.ERROR }
 
-    fun error(message: String, position: SourcePosition? = null) {
-        _diagnostics += Diagnostic(Severity.ERROR, message, position)
+    fun error(message: String, position: SourcePosition? = null, code: String? = null) {
+        _diagnostics += Diagnostic(Severity.ERROR, message, position, code)
     }
 
-    fun warning(message: String, position: SourcePosition? = null) {
-        _diagnostics += Diagnostic(Severity.WARNING, message, position)
+    fun warning(message: String, position: SourcePosition? = null, code: String? = null) {
+        _diagnostics += Diagnostic(Severity.WARNING, message, position, code)
     }
 
-    fun remind(message: String, position: SourcePosition? = null) {
-        _diagnostics += Diagnostic(Severity.REMIND, message, position)
+    fun remind(message: String, position: SourcePosition? = null, code: String? = null) {
+        _diagnostics += Diagnostic(Severity.REMIND, message, position, code)
     }
 
     fun report(diagnostic: Diagnostic) {

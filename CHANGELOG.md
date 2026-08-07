@@ -2,6 +2,30 @@
 
 本文件记录各里程碑的显著变更（含 breaking changes，见 06-§3）。
 
+## [v0.1.0-m3] - 2026-08-08 — M3 语义分析
+
+### 新增
+- `yux.compiler.sema`：
+  - `SemaType` 类型系统（T-M3-1）：Basic/Declared/TypeParam/Function/InferenceVar/Unit/Nothing/Error，可空性 + 赋值兼容（`Any` 顶层、`Nothing` 空底）；
+  - `SymbolTable` + `FileScope`（T-M3-2）：声明收集遍（02-§6.2），包→类型索引、跨文件/导入/star 导入解析、冲突检测；
+  - `ClassPathSymbolProvider`（T-M3-2）：JVM 类反射懒加载 + 缓存（占位原地填充保证 `===` 实例一致），JavaBean 属性/方法/静态成员映射，Java 类型视为可空（S-8.1）；
+  - `TypeResolver`（T-M3-1/3）：AST 类型→SemaType，泛型实参数目校验（S-4.3.2）、类型参数作用域（S-4.3.3）、W0001 命名约定回退；
+  - `Declarations`（T-M3-3）：两遍式成员解析、data/service/override/注解/访问器校验（E0010/E0012/E0019/E0026）；
+  - `Inference`（T-M3-5）：局部双向推断（ADR-08），字面量按目标类型收窄（S-7.5.4）、函数返回推断（S-5.5.2）；
+  - `TypeChecker`（T-M3-4）：S-xx 规则全量（条件 Boolean、实参/返回匹配、确定性赋值含分支合并、运算符、成员/静态/构造调用、Lambda、this/super、异常、循环）；
+  - `SmartCast`（T-M3-6）：`is T`/空值判空分支智能转型，可变引用抑制 + R0002；
+  - `Annotations`（T-M3-8/9）：注解目标校验（S-8.2）、service 注入图循环检测（S-5.4.1）；
+- `yux.compiler.lowering.NullGuard`（T-M3-7）：可空接收者读路径守卫插入点 + R0001，写路径 E0023（S-8.1）；
+- `yux.compiler.diag.ErrorCodes.md`（T-M3-10）：诊断码唯一事实源，`ErrorCodes.kt` 常量（E0001~E0028/W0001/R0001~R0002）；
+- 内置函数 `print/println/serialize`（yux.core 最小集占位，标准库未实现前供示例通过）；
+- `yuxc check` 子命令：输出类型推导 + 诊断；
+- 测试：115 例（类型系统/符号表/类型检查/推断/智能转型/空守卫/注解 + **86 个编译期负向用例**，M3 验收要求 ≥80）+ `golden/sema/*.sema` 快照（5 个样例）。
+
+### 说明
+- 泛型实参数目：解析器层已拒绝过度实参（M2 消歧收集元数），sema 侧覆盖放行后仍不一致的情形（如 `Map String`）。
+- 类属性默认可变（自动 get/set，S-5.2.1）；`data` 类属性默认只读（S-5.3.1），可自定义 setter 覆盖。
+- `E0011/E0025/E0027` 为预留诊断码（data 非法成员/重复 override/歧义引用），由解析器或后续里程碑结构性保证。
+
 ## [v0.1.0-m2] - 2026-08-08 — M2 语法分析器
 
 ### 新增

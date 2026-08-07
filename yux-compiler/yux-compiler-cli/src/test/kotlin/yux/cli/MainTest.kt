@@ -57,6 +57,25 @@ class MainTest {
     }
 
     @Test
+    fun `check command runs semantic analysis`() {
+        val file = Files.createTempFile("yux", ".yux")
+        Files.writeString(file, "fun main() {\n  x:Int = 1\n  print x\n}")
+        val (out, err, code) = capture("check", file.toString())
+        assertEquals(0, code, err)
+        assertTrue(out.contains("IntLiteral : Int"), out)
+        assertTrue(out.contains("Call : Unit"), out)
+    }
+
+    @Test
+    fun `check command reports type error and exits non-zero`() {
+        val file = Files.createTempFile("yux", ".yux")
+        Files.writeString(file, "fun main() {\n  x:Int = \"str\"\n}")
+        val (_, err, code) = capture("check", file.toString())
+        assertEquals(1, code)
+        assertTrue(err.contains("E0004"), err)
+    }
+
+    @Test
     fun `unknown command prints usage`() {
         val (_, err, code) = capture("bogus")
         assertEquals(1, code)

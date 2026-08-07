@@ -1,0 +1,20 @@
+Sword {
+    damage:Int
+}
+
+fun main() {
+    item:Any? = null
+    if item is Sword {
+        d = item.damage
+    }
+
+    name:String? = "Steve"
+    if name != null {
+        len = name.length
+    }
+
+    when item {
+        is Sword -> print "sword"
+        else -> print "none"
+    }
+}

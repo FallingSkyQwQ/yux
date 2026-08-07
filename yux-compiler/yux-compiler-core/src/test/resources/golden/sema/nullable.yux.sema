@@ -1,0 +1,16 @@
+NullLiteral : Any?
+Identifier : Any?
+Is : Boolean
+Identifier : Sword
+MemberAccess : Int
+StringLiteral : String
+Identifier : String?
+NullLiteral : String?
+Binary : Boolean
+Identifier : String
+MemberAccess : Int
+Identifier : Any?
+StringLiteral : String
+Call : Unit
+StringLiteral : String
+Call : Unit

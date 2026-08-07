@@ -1,0 +1,12 @@
+TypeReference : UUID
+Call : UUID?
+TypeReference : System
+Call : Long
+TypeReference : Math
+IntLiteral : Int
+IntLiteral : Int
+Call : Int
+StringLiteral : String
+Call : String?
+Identifier : String?
+MemberAccess : Int
