@@ -99,6 +99,7 @@ class NegativeCasesTest {
         c("Unit 函数返回值", "fun main():Unit {\n  return 5\n}", ErrorCodes.RETURN_TYPE_MISMATCH)
         c("表达式体返回类型不符", "fun f():String = 5", ErrorCodes.RETURN_TYPE_MISMATCH)
         c("表达式体返回类型不符 2", "fun f():Int = \"x\"", ErrorCodes.RETURN_TYPE_MISMATCH)
+        c("块体声明返回但缺 return", "fun f():Int {\n  print 1\n}", ErrorCodes.RETURN_TYPE_MISMATCH)
 
         // ── E0016 成员不存在 ────────────────────────────────────────────────
         c("String 方法不存在", "fun main() {\n  s = \"abc\"\n  x = s.bogus()\n}", ErrorCodes.UNRESOLVED_MEMBER)

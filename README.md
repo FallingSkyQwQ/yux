@@ -35,6 +35,7 @@ yux/
 # 里程碑命令
 ./gradlew :yux-compiler:yux-compiler-cli:run --args="lex <file.yux>"   # M1 词法
 ./gradlew :yux-compiler:yux-compiler-cli:run --args="ast <file.yux>"   # M2 语法
+./gradlew :yux-compiler:yux-compiler-cli:run --args="check <file.yux>" # M3 语义
 ```
 
 ## 里程碑状态
@@ -44,7 +45,8 @@ yux/
 | M0 工程骨架 + CI | ✅ | 多模块 Gradle 工程、lint、CI |
 | M1 词法分析器 | ✅ | Token/Trivia/插值分词 + golden 测试 |
 | M2 语法分析器 | ✅ | CST/Pratt 表达式/消歧/错误恢复 + CstToAst + golden `.ast` |
-| M3+ | ⏳ | 见 [`docs/06-开发计划.md`](docs/06-开发计划.md) |
+| M3 语义分析 | ✅ | 类型系统/符号表/类型检查/推断/智能转型/空守卫 + 86 负向用例 + `.sema` golden |
+| M4+ | ⏳ | 见 [`docs/06-开发计划.md`](docs/06-开发计划.md) |
 
 ## 文档索引
 

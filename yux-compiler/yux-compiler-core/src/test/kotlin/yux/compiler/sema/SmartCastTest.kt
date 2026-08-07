@@ -184,4 +184,20 @@ class SmartCastTest {
         )
         assertFalse(r.hasErrors, r.errors.toString())
     }
+
+    @Test
+    fun `when null condition smart casts in else`() {
+        val r = SemaTestSupport.analyze(
+            """
+            fun main() {
+                s:String? = "a"
+                when s {
+                    null -> print "empty"
+                    else -> n = s.length
+                }
+            }
+            """.trimIndent(),
+        )
+        assertFalse(r.hasErrors, r.errors.toString())
+    }
 }

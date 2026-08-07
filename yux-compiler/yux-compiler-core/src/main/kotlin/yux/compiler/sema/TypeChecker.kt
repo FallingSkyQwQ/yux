@@ -233,6 +233,17 @@ class TypeChecker(
             }
             is YxFunctionBody.YxBlockBody -> {
                 checkStatements(body.block)
+                // S-5.5.2：声明非 Unit 返回的块体必须包含 return
+                if (declaredReturn !is SemaType.InferenceVar &&
+                    !TypeAssignability.sameBase(declaredReturn, SemaType.UnitT) &&
+                    !blockHasReturn(body.block)
+                ) {
+                    diagnostics.error(
+                        "函数 '${fn.name}' 声明返回 ${declaredReturn.render()} 但缺少 return 语句",
+                        decl.span.start,
+                        ErrorCodes.RETURN_TYPE_MISMATCH,
+                    )
+                }
                 null
             }
         }
@@ -513,8 +524,8 @@ class TypeChecker(
                     }
                 }
                 is YxExprCondition -> {
-                    // when 分支条件与 subject 匹配（S-6.3），非独立 Boolean 判断
-                    typeOf(cond.expr)
+                    // when 分支条件与 subject 匹配（S-6.3），null 字面量以 subject 为期望
+                    typeOf(cond.expr, expected = subjectType)
                 }
                 is YxElseCondition -> {
                     // else 分支：subject == null 时 subject 为非空
@@ -572,6 +583,19 @@ class TypeChecker(
                 sym.definitelyAssigned = before[name] ?: false
             }
         }
+    }
+
+    /** 块体内是否出现 `return` 语句（S-5.5.2 缺少返回检查）。 */
+    private fun blockHasReturn(block: YxBlock): Boolean {
+        fun scan(stmt: YxStmt): Boolean = when (stmt) {
+            is YxReturn -> true
+            is YxBlock -> stmt.statements.any { scan(it) }
+            is YxIf -> scan(stmt.thenBranch) || (stmt.elseBranch?.let { scan(it) } ?: false)
+            is YxWhen -> stmt.branches.any { scan(it.body) }
+            is YxTry -> scan(stmt.body) || stmt.catches.any { scan(it.body) } || (stmt.finallyBody?.let { scan(it) } ?: false)
+            else -> false
+        }
+        return block.statements.any { scan(it) }
     }
 
     private fun checkReturn(stmt: YxReturn) {

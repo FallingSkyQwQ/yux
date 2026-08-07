@@ -103,7 +103,8 @@ private fun printDiagnostics(diagnostics: DiagnosticSink) {
     if (diagnostics.diagnostics.isNotEmpty()) {
         System.err.println("\n-- 诊断 --")
         diagnostics.diagnostics.forEach { d ->
-            System.err.println("${d.severity}${d.position?.let { " $it" } ?: ""}: ${d.message}")
+            val code = d.code?.let { "[$it]" } ?: ""
+            System.err.println("${d.severity}$code${d.position?.let { " $it" } ?: ""}: ${d.message}")
         }
     }
 }
