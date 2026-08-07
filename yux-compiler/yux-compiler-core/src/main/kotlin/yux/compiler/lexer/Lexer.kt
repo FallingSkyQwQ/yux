@@ -9,6 +9,7 @@ import yux.compiler.source.SourceFile
  * - 空白与换行折叠为单个 `NEWLINE` 记号；
  * - 字符/字符串转义与 `\$`、`"""` 原始串；
  * - `$name`/`${expr}` 插值分词（InterpolationScanner，括号平衡 + 嵌套字符串）；
+ * - 行/块（可嵌套）/文档注释保留为 Trivia，连续换行折叠为单个 `NEWLINE`；
  * - 非法字符跳过（错误诊断在 T-M1-7 接入）。
  */
 class Lexer(val source: SourceFile) {
@@ -72,7 +73,7 @@ class Lexer(val source: SourceFile) {
     internal data class TriviaResult(val trivia: List<Trivia>, val sawNewline: Boolean)
 
     /**
-     * 收集空白；`emitNewlineToken=true` 时将连续换行折叠为一个 `NEWLINE` 记号，
+     * 收集空白与注释；`emitNewlineToken=true` 时将连续换行折叠为一个 `NEWLINE` 记号，
      * 否则换行并入 Trivia（插值表达式内部）。
      */
     internal fun scanTrivia(emitNewlineToken: Boolean): TriviaResult {
@@ -89,10 +90,45 @@ class Lexer(val source: SourceFile) {
                     advance()
                     if (emitNewlineToken) sawNewline = true else trivia += Trivia.Whitespace("\n")
                 }
+                peek() == '/' && peek(1) == '/' -> trivia += scanLineComment()
+                peek() == '/' && peek(1) == '*' -> trivia += scanBlockComment()
                 else -> return TriviaResult(trivia, sawNewline)
             }
         }
         return TriviaResult(trivia, sawNewline)
+    }
+
+    private fun scanLineComment(): Trivia {
+        val start = offset
+        advance()
+        advance()
+        while (!eof() && peek() != '\n') advance()
+        return Trivia.LineComment(text.substring(start, offset))
+    }
+
+    private fun scanBlockComment(): Trivia {
+        val start = offset
+        advance()
+        advance()
+        val isDoc = text.length >= start + 3 && text[start + 2] == '*' && text.getOrNull(start + 3) != '/'
+        var depth = 1
+        while (!eof() && depth > 0) {
+            when {
+                peek() == '/' && peek(1) == '*' -> {
+                    advance()
+                    advance()
+                    depth++
+                }
+                peek() == '*' && peek(1) == '/' -> {
+                    advance()
+                    advance()
+                    depth--
+                }
+                else -> advance()
+            }
+        }
+        val raw = text.substring(start, offset)
+        return if (isDoc) Trivia.DocComment(raw) else Trivia.BlockComment(raw)
     }
 
     // ── 单个逻辑记号（标识符/数字/字符/字符串/符号） ─────────────────────────
