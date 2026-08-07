@@ -1,0 +1,51 @@
+# detekt 配置（detekt 2.0，详见 https://detekt.dev）
+config:
+  validation: true
+  warningsAsErrors: false
+
+processors:
+  active: true
+
+console-reports:
+  active: true
+  exclude:
+    - 'ProjectStatisticsReport'
+
+style:
+  active: true
+  MagicNumber:
+    ignoreNumbers:
+      - '-1'
+      - '0'
+      - '1'
+      - '2'
+      - '100'
+    ignorePropertyDeclaration: true
+    ignoreLocalVariableDeclaration: true
+  UnusedPrivateProperty:
+    active: true
+    allowedNames: '(_|ignored|expected|actual)'
+
+naming:
+  active: true
+
+comments:
+  active: true
+
+complexity:
+  active: true
+
+exceptions:
+  active: true
+
+potential-bugs:
+  active: true
+
+performance:
+  active: true
+
+coroutines:
+  active: true
+
+empty-blocks:
+  active: true

@@ -1,0 +1,30 @@
+[versions]
+kotlin = "2.3.21"
+detekt = "2.0.0-alpha.6"
+
+# 运行时/工具链
+asm = "9.7.1"
+junit = "5.11.4"
+kotlinx-coroutines = "1.8.1"
+jackson-databind = "2.17.2"
+snakeyaml = "2.2"
+
+[libraries]
+# JVM 字节码生成（ADR-04）
+asm = { module = "org.ow2.asm:asm", version.ref = "asm" }
+asm-commons = { module = "org.ow2.asm:asm-commons", version.ref = "asm" }
+
+# 测试
+junit-jupiter = { module = "org.junit.jupiter:junit-jupiter", version.ref = "junit" }
+kotlin-test = { module = "org.jetbrains.kotlin:kotlin-test", version.ref = "kotlin" }
+
+# 并发
+kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "kotlinx-coroutines" }
+
+# 序列化 / 配置
+jackson-databind = { module = "com.fasterxml.jackson.core:jackson-databind", version.ref = "jackson-databind" }
+snakeyaml = { module = "org.yaml:snakeyaml", version.ref = "snakeyaml" }
+
+[plugins]
+kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
+detekt = { id = "dev.detekt", version.ref = "detekt" }

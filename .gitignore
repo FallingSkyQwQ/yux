@@ -1,0 +1,29 @@
+# Gradle
+.gradle/
+build/
+*/build/
+*/*/build/
+
+# IDE
+.idea/
+*.iml
+.vscode/
+.fleet/
+
+# OS
+.DS_Store
+
+# Local env / secrets
+*.local
+.env
+
+# yuxc outputs
+target/
+out/
+
+# Test / coverage reports
+reports/
+coverage/
+
+# Mimocode local state
+.mimocode/
