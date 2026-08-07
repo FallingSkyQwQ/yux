@@ -72,7 +72,7 @@ object Keywords {
         "if", "else", "when", "for", "while", "return",
         "import", "package", "new", "unsafe", "native", "stack",
         "in", "is", "as", "this", "super",
-        "break", "continue", "true", "false", "null",
+        "break", "continue", "true", "false", "null", "throw",
     )
 
     val SOFT: Set<String> = setOf(

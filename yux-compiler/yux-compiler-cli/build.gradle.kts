@@ -1,5 +1,6 @@
 plugins {
     alias(libs.plugins.kotlin.jvm)
+    application
     id("jacoco")
     alias(libs.plugins.detekt)
 }
@@ -13,4 +14,9 @@ dependencies {
 
     testImplementation(libs.junit.jupiter)
     testImplementation(libs.kotlin.test)
+}
+
+application {
+    mainClass.set("yux.cli.MainKt")
+    applicationName = "yuxc"
 }
