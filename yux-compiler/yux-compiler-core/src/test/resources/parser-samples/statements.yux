@@ -1,0 +1,30 @@
+fun main() {
+    if health <= 0 {
+        player.send "你死了"
+    } else if health < 10 {
+        player.send "血量低"
+    } else {
+        player.send "状态良好"
+    }
+
+    when item {
+        is Sword -> print "武器 ${item.damage}"
+        1 -> print "one"
+        "hi" -> print "hello"
+        else -> print "其他"
+    }
+
+    for i in 0..10 {
+        print i
+    }
+
+    for player in onlinePlayers() {
+        player.send "在线"
+    }
+
+    while running {
+        tick()
+    }
+
+    return
+}

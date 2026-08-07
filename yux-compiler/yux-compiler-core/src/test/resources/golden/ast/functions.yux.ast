@@ -1,0 +1,15 @@
+program
+  fun add(a: Int, b: Int)
+    body = Binary(+, Id(a), Id(b))
+  fun greet(name: String, title: String = Str("\"Mr.\""))
+    block
+      expr CallNP(Id(print), [Template[Text("Hello "), Id(title), Text(" "), Id(name)]])
+  fun async loadPlayer(id: Int): Player
+    block
+      return Null
+  fun main()
+    block
+      var maxPlayers = Int(100)
+      var serverName = Str("\"YuxServer\"")
+      var total = Call(Id(add), [Int(1), Int(2)])
+      expr CallNP(Id(greet), [Str("\"Steve\"")])

@@ -1,0 +1,6 @@
+program
+  fun main()
+    block
+      expr CallNP(Id(print), [Str("\"Hello Yux\"")])
+      var name = Str("\"Steve\"")
+      var age = Int(18)

@@ -1,0 +1,15 @@
+data Result T { }
+
+fun send(msg:String) {
+}
+
+fun main() {
+    r = Result Int(true, 5)
+    send "Hi"
+    player = Player("Steve", 20)
+    list = List String()
+    u = User(1, "Steve")
+    t = System.currentTimeMillis()
+    x = String.length
+    print player.name
+}

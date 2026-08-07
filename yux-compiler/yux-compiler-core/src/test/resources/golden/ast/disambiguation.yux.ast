@@ -1,0 +1,14 @@
+program
+  data Result T
+  fun send(msg: String)
+    block
+  fun main()
+    block
+      var r = New(Result<Int>, [Bool(true), Int(5)])
+      expr CallNP(Id(send), [Str("\"Hi\"")])
+      var player = New(Player, [Str("\"Steve\""), Int(20)])
+      var list = New(List<String>, [])
+      var u = New(User, [Int(1), Str("\"Steve\"")])
+      var t = Call(Get(TypeRef(System), currentTimeMillis), [])
+      var x = Get(TypeRef(String), length)
+      expr CallNP(Id(print), [Get(Id(player), name)])

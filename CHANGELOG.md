@@ -2,6 +2,25 @@
 
 本文件记录各里程碑的显著变更（含 breaking changes，见 06-§3）。
 
+## [v0.1.0-m2] - 2026-08-08 — M2 语法分析器
+
+### 新增
+- `yux.compiler.ast`：`YxNode` 层次（声明/类型/语句/表达式，节点携带 `SourceSpan`）——M3 语义分析的稳定输入。
+- `yux.compiler.parser`：
+  - `Cst`：全产生式 CST 节点（含括号/换行占位）；
+  - `Parser`：手写递归下降，package/import/类/data/service/函数/属性/访问器/注解/语句；
+  - `PrattParser`：01-§7.1 优先级表 + 后缀链 + 无括号单参调用（S-7.2.2，`f a + b`==`f(a)+b`）；
+  - `LambdaParser`：箭头/多参括号/块 Lambda（隐式 `it`）；
+  - `Disambiguation`：两遍式声明预收集（类型/函数/属性 + 泛型元数），`Type(args)` 构造 vs `func(args)` 调用 vs 静态成员访问（01-§7.7）；
+  - `Recovery`：同步恢复（缺 `)`/`}`/坏 token 不抛异常，多错误收集）；
+  - `CstToAst` + `AstPrinter`：规约 + 稳定 dump。
+- `yux.compiler.lexer`：补上语法必需的 `throw` 关键字（01-§2.4 列表漏列，实际 31 个基础关键字）。
+- golden 快照：`parser-samples/*.yux` → `golden/ast/*.ast`（8 个样例，覆盖声明/语句/表达式/消歧/Lambda/互操作）。
+- `yuxc` CLI：`lex` / `ast` 子命令（`yux-compiler-cli`）。
+
+### 说明
+- 已知歧义（记录供后续处理）：单行 `if x y`（条件与单语句体均以 Primary 起始）在无括号调用语义下解析为 `if(x(y))`，单行体建议用块或 `return/break` 形式。
+
 ## [v0.1.0-m1] - 2026-08-07 — M1 词法分析器
 
 ### 新增

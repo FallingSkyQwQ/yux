@@ -1,0 +1,28 @@
+Player {
+    name:String
+    health:Int {
+        get { return value }
+        set { value = clamp(set, 0, 20) }
+    }
+    fun send(msg:String) {
+        print "Player $name says $msg"
+    }
+}
+
+data User {
+    id:Int
+    name:String
+}
+
+data Result T {
+    ok:Boolean
+    value:T
+}
+
+service Database {
+    connect() {
+    }
+    query(sql:String):String {
+        return sql
+    }
+}

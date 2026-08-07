@@ -1,0 +1,17 @@
+program
+  fun main()
+    block
+      var a = Binary(+, Id(b), Binary(*, Id(c), Id(d)))
+      var e = Binary(*, Paren(Binary(+, Id(f), Id(g))), Id(h))
+      var i = Binary(+, Unary(-, Id(j)), Id(k))
+      var p = Binary(==, Id(q), Id(r))
+      var s = Binary(!=, Id(t), Id(u))
+      var v = Binary(<, Id(w), Id(x))
+      var y = Binary(&&, Id(z), Id(a1))
+      var b2 = Binary(||, Id(c3), Id(d4))
+      var e5 = Unary(!, Id(f6))
+      var msg = Template[Text("Hello "), Id(name), Text(", next="), Binary(+, Id(level), Int(1))]
+      var raw = Raw("\"\"\"\\n 原样输出 $不解析\"\"\"")
+      var ch = Char('a')
+      var f = Float(3.14F)
+      var hex = Int(0x1F)

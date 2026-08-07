@@ -1,0 +1,8 @@
+fun main() {
+    names = players.map { it.name }
+    filtered = players.filter (p -> p.health > 0)
+    sorted = players.sort (a, b -> a.health > b.health)
+    count = numbers.reduce (0, (acc, n -> acc + n))
+    increment = (x -> x + 1) as (Int) -> Int
+    double = map2 { it * 2 }
+}

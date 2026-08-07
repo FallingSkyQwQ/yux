@@ -1,0 +1,9 @@
+program
+  fun main()
+    block
+      var names = CallNP(Get(Id(players), map), [BlockLambda{Get(Id(it), name)}])
+      var filtered = CallNP(Get(Id(players), filter), [Lambda([p], Binary(>, Get(Id(p), health), Int(0)))])
+      var sorted = CallNP(Get(Id(players), sort), [Lambda([a, b], Binary(>, Get(Id(a), health), Get(Id(b), health)))])
+      var count = Call(Get(Id(numbers), reduce), [Int(0), Lambda([acc, n], Binary(+, Id(acc), Id(n)))])
+      var increment = As(Lambda([x], Binary(+, Id(x), Int(1))), (Int) -> Int)
+      var double = CallNP(Id(map2), [BlockLambda{Binary(*, Id(it), Int(2))}])
