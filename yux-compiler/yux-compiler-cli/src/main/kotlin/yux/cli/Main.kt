@@ -19,27 +19,28 @@ import java.nio.file.Path
  * - `yuxc ir   <file>`  M4 IR（待 M4 实现）
  */
 fun main(args: Array<String>) {
-    val exitCode = when (val cmd = args.getOrNull(0)) {
-        "lex" -> runLex(args.getOrNull(1))
-        "ast" -> runAst(args.getOrNull(1))
-        else -> {
-            System.err.println(
-                """
-                yuxc — Yux 编译器命令行
-                用法: yuxc <command> <file.yux>
-                  lex <file>   输出词法 token（M1）
-                  ast <file>   输出语法 AST（M2）
-                """.trimIndent(),
-            )
-            if (cmd == "lex" || cmd == "ast") {
-                System.err.println("错误: 缺少源文件参数")
-                1
-            } else {
-                1
-            }
+    // System.exit 会终止 JVM，测试通过 [runCli] 直接取退出码，避免杀测试进程。
+    kotlin.system.exitProcess(runCli(args))
+}
+
+/** 执行命令并返回进程退出码（0=成功，1=失败）；供 main 与测试复用。 */
+internal fun runCli(args: Array<String>): Int = when (val cmd = args.getOrNull(0)) {
+    "lex" -> runLex(args.getOrNull(1))
+    "ast" -> runAst(args.getOrNull(1))
+    else -> {
+        System.err.println(
+            """
+            yuxc — Yux 编译器命令行
+            用法: yuxc <command> <file.yux>
+              lex <file>   输出词法 token（M1）
+              ast <file>   输出语法 AST（M2）
+            """.trimIndent(),
+        )
+        if (cmd == "lex" || cmd == "ast") {
+            System.err.println("错误: 缺少源文件参数")
         }
+        1
     }
-    kotlin.system.exitProcess(exitCode)
 }
 
 private fun loadSource(path: String?): SourceFile? {

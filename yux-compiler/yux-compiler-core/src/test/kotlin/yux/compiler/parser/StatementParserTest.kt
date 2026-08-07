@@ -119,7 +119,7 @@ class StatementParserTest {
 
     @Test
     fun `async parallel unsafe blocks`() {
-        val ast = dump(inFun("async {\n  data = await fetch()\n}\nparallel {\n  download()\n  calculate()\n}\nunsafe {\n  poke()\n}"))
+        val ast = dump(inFun("async {\n  result = await fetch()\n}\nparallel {\n  download()\n  calculate()\n}\nunsafe {\n  poke()\n}"))
         assertTrue(ast.contains("async"), ast)
         assertTrue(ast.contains("parallel"), ast)
         assertTrue(ast.contains("unsafe"), ast)
