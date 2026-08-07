@@ -1,0 +1,6 @@
+name = "Steve"
+msg = "Hello\n\t\u0041"
+esc = "\$name"
+raw = """\n 原样输出 $不解析"""
+ch = 'a'
+quoted = 'it\'s'

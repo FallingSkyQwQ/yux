@@ -3,10 +3,11 @@ package yux.compiler.lexer
 import yux.compiler.source.SourceFile
 
 /**
- * Yux 词法分析器（02-§4）——骨架 + 数字字面量。
+ * Yux 词法分析器（02-§4）——骨架 + 数字 + 字符/字符串字面量。
  *
  * - 逐字符扫描，产出 `Token(position, kind, text, leadingTrivia)`；
  * - 空白与换行折叠为单个 `NEWLINE` 记号；
+ * - 字符/字符串转义与 `\$`、`"""` 原始串；
  * - 非法字符跳过（错误诊断在 T-M1-7 接入）。
  */
 class Lexer(val source: SourceFile) {
@@ -92,7 +93,7 @@ class Lexer(val source: SourceFile) {
         return TriviaResult(trivia, sawNewline)
     }
 
-    // ── 单个逻辑记号（标识符/数字/关键字/符号） ──────────────────────────────
+    // ── 单个逻辑记号（标识符/数字/字符/字符串/符号） ─────────────────────────
 
     internal fun scanOneRealToken(): List<Token> {
         val c = peek()
@@ -100,6 +101,10 @@ class Lexer(val source: SourceFile) {
             isIdentifierStart(c) -> listOf(scanIdentifierOrKeyword())
             c.isDigit() -> listOf(scanNumber())
             c == '.' && peek(1).isDigit() -> listOf(scanNumber())
+            c == '\'' -> listOf(scanChar())
+            c == '"' -> {
+                if (peek(1) == '"' && peek(2) == '"') listOf(scanRawString()) else listOf(scanString())
+            }
             else -> listOfNotNull(scanSymbol())
         }
     }
@@ -168,6 +173,60 @@ class Lexer(val source: SourceFile) {
         if (next.isDigit()) return true
         if (next == '+' || next == '-') return peek(2).isDigit()
         return false
+    }
+
+    private fun scanString(): Token {
+        val start = offset
+        val startPos = pos()
+        advance() // "
+        var closed = false
+        while (!eof()) {
+            val c = advance()
+            if (c == '\\') {
+                if (!eof()) advance()
+            } else if (c == '"') {
+                closed = true
+                break
+            }
+        }
+        return Token(startPos, TokenKind.STRING_LITERAL, text.substring(start, offset))
+    }
+
+    private fun scanRawString(): Token {
+        val start = offset
+        val startPos = pos()
+        advance()
+        advance()
+        advance() // """
+        var closed = false
+        while (!eof()) {
+            if (peek() == '"' && peek(1) == '"' && peek(2) == '"') {
+                advance()
+                advance()
+                advance()
+                closed = true
+                break
+            }
+            advance()
+        }
+        return Token(startPos, TokenKind.RAW_STRING_LITERAL, text.substring(start, offset))
+    }
+
+    internal fun scanChar(): Token {
+        val start = offset
+        val startPos = pos()
+        advance() // '
+        var closed = false
+        while (!eof()) {
+            val c = advance()
+            if (c == '\\') {
+                if (!eof()) advance()
+            } else if (c == '\'') {
+                closed = true
+                break
+            }
+        }
+        return Token(startPos, TokenKind.CHAR_LITERAL, text.substring(start, offset))
     }
 
     internal fun scanSymbol(): Token? {
