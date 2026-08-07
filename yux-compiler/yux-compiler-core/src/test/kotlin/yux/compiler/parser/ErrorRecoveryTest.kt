@@ -37,7 +37,7 @@ class ErrorRecoveryTest {
     @Test
     fun `unexpected character never throws`() {
         val r = ParseTestSupport.parse("fun main() {\n  x = @ # $\n  y = 1\n}")
-        assertTrue(r.hasErrors || r.errors.isEmpty())
+        assertTrue(r.hasErrors)
         assertTrue(r.decls.isNotEmpty())
     }
 

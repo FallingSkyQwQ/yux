@@ -19,7 +19,7 @@ import java.nio.file.Path
  * - `yuxc ir   <file>`  M4 IR（待 M4 实现）
  */
 fun main(args: Array<String>) {
-    when (val cmd = args.getOrNull(0)) {
+    val exitCode = when (val cmd = args.getOrNull(0)) {
         "lex" -> runLex(args.getOrNull(1))
         "ast" -> runAst(args.getOrNull(1))
         else -> {
@@ -33,10 +33,13 @@ fun main(args: Array<String>) {
             )
             if (cmd == "lex" || cmd == "ast") {
                 System.err.println("错误: 缺少源文件参数")
+                1
+            } else {
+                1
             }
-            kotlin.system.exitProcess(if (cmd == null) 1 else 0)
         }
     }
+    kotlin.system.exitProcess(exitCode)
 }
 
 private fun loadSource(path: String?): SourceFile? {
@@ -44,30 +47,38 @@ private fun loadSource(path: String?): SourceFile? {
         System.err.println("错误: 缺少源文件参数")
         return null
     }
-    val p = Path.of(path)
-    if (!Files.isRegularFile(p)) {
-        System.err.println("错误: 文件不存在: $path")
+    try {
+        val p = Path.of(path)
+        if (!Files.isRegularFile(p)) {
+            System.err.println("错误: 文件不存在: $path")
+            return null
+        }
+        val normalized = p.toRealPath()
+        return SourceFile(normalized.toString(), Files.readString(p))
+    } catch (e: Exception) {
+        System.err.println("错误: 无法读取文件: $path")
         return null
     }
-    return SourceFile(p.fileName.toString(), Files.readString(p))
 }
 
-private fun runLex(path: String?) {
-    val source = loadSource(path) ?: return
+private fun runLex(path: String?): Int {
+    val source = loadSource(path) ?: return 1
     val diagnostics = DiagnosticSink()
     val tokens = Lexer(source, diagnostics).tokenize()
     print(TokenPrinter.print(tokens))
     printDiagnostics(diagnostics)
+    return if (diagnostics.hasErrors) 1 else 0
 }
 
-private fun runAst(path: String?) {
-    val source = loadSource(path) ?: return
+private fun runAst(path: String?): Int {
+    val source = loadSource(path) ?: return 1
     val diagnostics = DiagnosticSink()
     val parser = Parser(source, diagnostics)
     val program = parser.parse()
     val decls = CstToAst().convert(program)
     print(AstPrinter.dump(decls))
     printDiagnostics(diagnostics)
+    return if (diagnostics.hasErrors) 1 else 0
 }
 
 private fun printDiagnostics(diagnostics: DiagnosticSink) {

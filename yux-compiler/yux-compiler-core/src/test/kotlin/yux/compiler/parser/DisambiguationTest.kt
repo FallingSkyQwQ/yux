@@ -90,7 +90,7 @@ class DisambiguationTest {
     @Test
     fun `imported type last segment usable in constructor`() {
         val ast = dump("import java.util.Date\nfun main() {\n  d = Date()\n}")
-        assertTrue(ast.contains("Call(Id(Date), [])") || ast.contains("New(Date, [])"), ast)
+        assertTrue(ast.contains("New(Date, [])"), ast)
     }
 
     @Test

@@ -28,6 +28,9 @@ object ParseTestSupport {
     /** AST dump（golden 格式）。 */
     fun dump(text: String, path: String = "main.yux"): String {
         val r = parse(text, path)
+        if (r.hasErrors) {
+            throw AssertionError("Parse failed with errors: ${r.diagnostics.diagnostics}")
+        }
         return AstPrinter.dump(r.decls)
     }
 }

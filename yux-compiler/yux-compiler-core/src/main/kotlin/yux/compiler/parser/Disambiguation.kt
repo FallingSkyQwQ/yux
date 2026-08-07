@@ -133,6 +133,7 @@ object DeclarationsCollector {
                     }
                 }
                 t.kind == IDENTIFIER -> scanIdentDecl(s, table)
+                t.kind == RBRACE -> s.advance()
                 else -> s.skipLine()
             }
         }

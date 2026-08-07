@@ -901,7 +901,10 @@ class Parser(
                             expect(RBRACE, "'}'")
                             parts += expr
                         }
-                        at(ID) -> parts += CstIdentifier(advance(), spanOf(current))
+                        at(ID) -> {
+                            val idToken = advance()
+                            parts += CstIdentifier(idToken, spanOf(idToken))
+                        }
                         else -> error("expected identifier or '{' after '\$'", dollar.position)
                     }
                 }

@@ -7,6 +7,7 @@ import yux.compiler.lexer.TokenKind.ARROW
 import yux.compiler.lexer.TokenKind.COMMA
 import yux.compiler.lexer.TokenKind.IDENTIFIER
 import yux.compiler.lexer.TokenKind.LPAREN
+import yux.compiler.lexer.TokenKind.NEWLINE
 import yux.compiler.lexer.TokenKind.RPAREN
 
 /**
@@ -48,12 +49,30 @@ internal class LambdaParser(private val p: Parser) {
 
     /** 判断 `(` 之后是否为括号形式 Lambda（含参数列表 + `->`）。 */
     fun looksLikeParenLambda(): Boolean {
-        if (p.peek(1).kind != IDENTIFIER) return false
-        return when (p.peek(2).kind) {
+        var i = 1
+        // Skip newlines after opening paren
+        while (p.peek(i).kind == NEWLINE) i++
+        if (p.peek(i).kind != IDENTIFIER) return false
+        i++
+        // Skip newlines after first identifier
+        while (p.peek(i).kind == NEWLINE) i++
+        return when (p.peek(i).kind) {
             ARROW -> true
             COMMA -> {
-                var i = 3
-                while (p.peek(i).kind == IDENTIFIER || p.peek(i).kind == COMMA) i++
+                i++
+                while (true) {
+                    // Skip newlines after comma
+                    while (p.peek(i).kind == NEWLINE) i++
+                    if (p.peek(i).kind == IDENTIFIER) {
+                        i++
+                        while (p.peek(i).kind == NEWLINE) i++
+                        if (p.peek(i).kind == COMMA) {
+                            i++
+                            continue
+                        }
+                    }
+                    break
+                }
                 p.peek(i).kind == ARROW ||
                     (p.peek(i).kind == RPAREN && p.peek(i + 1).kind == ARROW)
             }

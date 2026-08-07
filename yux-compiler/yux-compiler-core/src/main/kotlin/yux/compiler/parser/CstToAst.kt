@@ -107,9 +107,20 @@ class CstToAst {
     }
 
     private fun convertDataClass(decl: CstDataClassDecl): YxDataClass {
-        val properties = decl.body.members.mapNotNull { member ->
-            if (member is CstPropertyDecl) convertProperty(member, isTopLevel = false) else null
-        }
+        val properties = decl.body.members.map { member ->
+            when (member) {
+                is CstPropertyDecl -> convertProperty(member, isTopLevel = false)
+                is CstFunctionDecl -> {
+                    // Data classes cannot have methods; this would be caught in semantic analysis
+                    // For now, we skip unsupported members but they are visible in CST
+                    null
+                }
+                is CstInitBlock -> {
+                    // Data classes cannot have init blocks; this would be caught in semantic analysis
+                    null
+                }
+            }
+        }.filterNotNull()
         return YxDataClass(
             name = decl.name.text,
             typeParams = convertTypeParams(decl.typeParams),
