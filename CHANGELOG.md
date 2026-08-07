@@ -2,6 +2,15 @@
 
 本文件记录各里程碑的显著变更（含 breaking changes，见 06-§3）。
 
+## [v0.1.0-m1] - 2026-08-07 — M1 词法分析器
+
+### 新增
+- `yux.compiler.lexer`：`Lexer`、`TokenKind`（与 01-§2.6 运算符表一一对应）、`Token`、`SourcePosition`、`Trivia`、`ScannerState`、`InterpolationScanner`、`TokenPrinter`。
+- `yux.compiler.diag`：`Severity`（ERROR/WARNING/REMIND）、`Diagnostic`、`DiagnosticSink`（坏输入不抛异常）。
+- `yux.compiler.source`：`SourceFile`。
+- 词法能力：30 基础关键字 + 5 软关键字；十/十六/二进制与 `_`/后缀数字；浮点与指数；字符/字符串转义与 `\$`；`"""` 原始串；`$name`/`${expr}` 插值分词（括号平衡、嵌套字符串）；行/块（可嵌套）/文档注释；换行折叠为单个 `NEWLINE`。
+- golden 快照：`samples/*.yux` → `golden/tokens/*.tokens`（7 个样例，覆盖关键字/数字/字符串/运算符/注释/插值/HelloWorld）。
+
 ## [v0.1.0-m0] - 2026-08-07 — M0 工程骨架 + CI
 
 ### 新增
