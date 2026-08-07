@@ -3,17 +3,19 @@ package yux.compiler.lexer
 import yux.compiler.source.SourceFile
 
 /**
- * Yux 词法分析器（02-§4）——骨架 + 数字 + 字符/字符串字面量。
+ * Yux 词法分析器（02-§4）——骨架 + 数字 + 字符/字符串 + 插值分词。
  *
  * - 逐字符扫描，产出 `Token(position, kind, text, leadingTrivia)`；
  * - 空白与换行折叠为单个 `NEWLINE` 记号；
  * - 字符/字符串转义与 `\$`、`"""` 原始串；
+ * - `$name`/`${expr}` 插值分词（InterpolationScanner，括号平衡 + 嵌套字符串）；
  * - 非法字符跳过（错误诊断在 T-M1-7 接入）。
  */
 class Lexer(val source: SourceFile) {
     internal val state = ScannerState(source.text)
     internal val text: String get() = state.text
     internal val offset: Int get() = state.offset
+    private val interpolation = InterpolationScanner(this)
 
     fun tokenize(): List<Token> {
         val tokens = mutableListOf<Token>()
@@ -103,7 +105,7 @@ class Lexer(val source: SourceFile) {
             c == '.' && peek(1).isDigit() -> listOf(scanNumber())
             c == '\'' -> listOf(scanChar())
             c == '"' -> {
-                if (peek(1) == '"' && peek(2) == '"') listOf(scanRawString()) else listOf(scanString())
+                if (peek(1) == '"' && peek(2) == '"') listOf(scanRawString()) else interpolation.scanString()
             }
             else -> listOfNotNull(scanSymbol())
         }
@@ -173,23 +175,6 @@ class Lexer(val source: SourceFile) {
         if (next.isDigit()) return true
         if (next == '+' || next == '-') return peek(2).isDigit()
         return false
-    }
-
-    private fun scanString(): Token {
-        val start = offset
-        val startPos = pos()
-        advance() // "
-        var closed = false
-        while (!eof()) {
-            val c = advance()
-            if (c == '\\') {
-                if (!eof()) advance()
-            } else if (c == '"') {
-                closed = true
-                break
-            }
-        }
-        return Token(startPos, TokenKind.STRING_LITERAL, text.substring(start, offset))
     }
 
     private fun scanRawString(): Token {
