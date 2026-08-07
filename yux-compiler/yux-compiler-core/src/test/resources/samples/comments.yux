@@ -1,0 +1,9 @@
+// line comment
+a = 1
+
+/* block /* nested */ comment */
+b = 2
+/** doc comment */
+fun main() {
+    c = 3  // trailing
+}
