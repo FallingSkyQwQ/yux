@@ -1,8 +1,11 @@
 package yux.cli
 
 import yux.compiler.diag.DiagnosticSink
+import yux.compiler.ir.IrPrinter
+import yux.compiler.irgen.IRGen
 import yux.compiler.lexer.Lexer
 import yux.compiler.lexer.TokenPrinter
+import yux.compiler.optimizer.BasicOpt
 import yux.compiler.parser.AstPrinter
 import yux.compiler.parser.CstToAst
 import yux.compiler.parser.Parser
@@ -19,7 +22,7 @@ import java.nio.file.Path
  * - `yuxc lex  <file>`  M1 词法：输出 token 流
  * - `yuxc ast  <file>`  M2 语法：输出 AST dump
  * - `yuxc check <file>` M3 语义：输出类型推导与诊断
- * - `yuxc ir   <file>`  M4 IR（待 M4 实现）
+ * - `yuxc ir   <file>`  M4 IR：输出 IrModule（含最小优化）
  */
 fun main(args: Array<String>) {
     // System.exit 会终止 JVM，测试通过 [runCli] 直接取退出码，避免杀测试进程。
@@ -31,6 +34,7 @@ internal fun runCli(args: Array<String>): Int = when (val cmd = args.getOrNull(0
     "lex" -> runLex(args.getOrNull(1))
     "ast" -> runAst(args.getOrNull(1))
     "check" -> runCheck(args.getOrNull(1))
+    "ir" -> runIr(args.getOrNull(1))
     else -> {
         System.err.println(
             """
@@ -39,9 +43,10 @@ internal fun runCli(args: Array<String>): Int = when (val cmd = args.getOrNull(0
               lex   <file>   输出词法 token（M1）
               ast   <file>   输出语法 AST（M2）
               check <file>   输出语义分析（M3）
+              ir    <file>   输出 IR（M4）
             """.trimIndent(),
         )
-        if (cmd == "lex" || cmd == "ast" || cmd == "check") {
+        if (cmd == "lex" || cmd == "ast" || cmd == "check" || cmd == "ir") {
             System.err.println("错误: 缺少源文件参数")
         }
         1
@@ -97,6 +102,23 @@ private fun runCheck(path: String?): Int {
     print(AnalysisPrinter.dumpTypes(result.exprTypes))
     printDiagnostics(diagnostics)
     return if (diagnostics.hasErrors) 1 else 0
+}
+
+private fun runIr(path: String?): Int {
+    val source = loadSource(path) ?: return 1
+    val diagnostics = DiagnosticSink()
+    val parser = Parser(source, diagnostics)
+    val program = parser.parse()
+    val decls = CstToAst().convert(program)
+    val analysis = SemanticAnalyzer().analyze(mapOf(source.path to decls), diagnostics)
+    if (diagnostics.hasErrors) {
+        printDiagnostics(diagnostics)
+        return 1
+    }
+    val module = IRGen(analysis).generate(mapOf(source.path to decls))
+    BasicOpt.optimize(module)
+    print(IrPrinter.dump(module))
+    return 0
 }
 
 private fun printDiagnostics(diagnostics: DiagnosticSink) {

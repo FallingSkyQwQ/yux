@@ -76,6 +76,26 @@ class MainTest {
     }
 
     @Test
+    fun `ir command dumps module`() {
+        val file = Files.createTempFile("yux", ".yux")
+        Files.writeString(file, "fun main() {\n  print \"Hello Yux\"\n}")
+        val (out, err, code) = capture("ir", file.toString())
+        assertEquals(0, code, err)
+        assertTrue(out.contains("module"), out)
+        assertTrue(out.contains("(file)"), out)
+        assertTrue(out.contains("yux.core.CoreLib.print"), out)
+    }
+
+    @Test
+    fun `ir command reports errors and exits non-zero`() {
+        val file = Files.createTempFile("yux", ".yux")
+        Files.writeString(file, "fun main() {\n  x:Int = \"str\"\n}")
+        val (_, err, code) = capture("ir", file.toString())
+        assertEquals(1, code)
+        assertTrue(err.contains("E0004"), err)
+    }
+
+    @Test
     fun `unknown command prints usage`() {
         val (_, err, code) = capture("bogus")
         assertEquals(1, code)

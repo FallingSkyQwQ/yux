@@ -1,0 +1,9 @@
+import java.util.UUID
+
+fun main() {
+    id:UUID? = UUID.randomUUID()
+    t = System.currentTimeMillis()
+    m = Math.max(1, 2)
+    s = "  abc  ".trim()
+    n = s.length
+}

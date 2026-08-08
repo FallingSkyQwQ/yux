@@ -1,0 +1,73 @@
+module {
+ class Types (file) {
+  static synthetic method $clinit(): Unit
+  }
+  static method add(a: Int, b: Int): Int
+   Return Arith(ADD, LocalRead(#0), LocalRead(#1))
+  }
+  static method main(): Unit
+   LocalAssign #0: User = New User [Const(1), Const("Steve")]
+   LocalAssign #1: Result = New Result [Const(true), Const(42)]
+   LocalAssign #2: Player = New Player [Const("Alex"), Const(20)]
+   LocalAssign #3: Int = Invoke Types.add [Const(1), Const(2)]
+   LocalAssign #4: String = Invoke Player.greet [LocalRead(#2)]
+  }
+ }
+ class User (data) {
+  field id: Int
+  field name: String
+  property id: Int [get: getId()]
+  property name: String [get: getName()]
+  synthetic method getId(): Int
+   Return FieldRead(this.id)
+  }
+  synthetic method getName(): String
+   Return FieldRead(this.name)
+  }
+  synthetic method <init>(id: Int, name: String): Unit
+   FieldWrite this.id = LocalRead(#0)
+   FieldWrite this.name = LocalRead(#1)
+  }
+ }
+ class Result (data) {
+  field ok: Boolean
+  field value: T
+  property ok: Boolean [get: isOk()]
+  property value: T [get: getValue()]
+  synthetic method isOk(): Boolean
+   Return FieldRead(this.ok)
+  }
+  synthetic method getValue(): T
+   Return FieldRead(this.value)
+  }
+  synthetic method <init>(ok: Boolean, value: T): Unit
+   FieldWrite this.ok = LocalRead(#0)
+   FieldWrite this.value = LocalRead(#1)
+  }
+ }
+ class Player {
+  field name: String
+  field health: Int
+  property name: String [get: getName(), set: setName(String)]
+  property health: Int [get: getHealth(), set: setHealth(Int)]
+  synthetic method getName(): String
+   Return FieldRead(this.name)
+  }
+  synthetic method setName(value: String): Unit
+   FieldWrite this.name = LocalRead(#0)
+  }
+  synthetic method getHealth(): Int
+   Return FieldRead(this.health)
+  }
+  synthetic method setHealth(value: Int): Unit
+   FieldWrite this.health = LocalRead(#0)
+  }
+  synthetic method <init>(name: String, health: Int): Unit
+   FieldWrite this.name = LocalRead(#0)
+   FieldWrite this.health = LocalRead(#1)
+  }
+  method greet(): String
+   Return StringTemplate [Const("Hi "), Invoke Player.getName [This]]
+  }
+ }
+}
