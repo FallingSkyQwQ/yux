@@ -154,7 +154,7 @@ class ExprGen(
         return if (expr in irGen.guardSet) IrExpr.NullGuard(result) else result
     }
 
-    /** 成员解析：Yux 属性→getter 调用；Yux 函数/JVM 方法→调用。 */
+    /** 成员解析：Yux 属性→getter 调用；Yux 函数/JVM 方法→调用；Object 方法→JVM 调用回退。 */
     private fun resolveMemberExpr(receiver: IrExpr, rt: SemaType, name: String, args: List<IrExpr>): IrExpr? = when {
         rt is SemaType.Declared && rt.symbol is YxClassSymbol -> {
             val sym = rt.symbol as YxClassSymbol
@@ -162,13 +162,22 @@ class ExprGen(
                 irGen.propertyAccessors[prop]?.getter?.let { IrExpr.Invoke(IrMethodRef(it), receiver, emptyList()) }
             } ?: sym.functionsNamed(name).firstOrNull()?.let { fn ->
                 irGen.functionMethods[fn]?.let { IrExpr.Invoke(IrMethodRef(it), receiver, args) }
-            }
+            } ?: objectMethodCall(sym.name, name, args)?.let { IrExpr.Invoke(it, receiver, args) }
         }
         else -> resolver.resolveInstanceMethod(rt, name)?.let { IrExpr.Invoke(it, receiver, args) }
     }
 
+    /** Object 方法回退（S-8.7.1）：data 类生成 toString/equals/hashCode，普通类继承——统一虚拟调用。 */
+    private fun objectMethodCall(owner: String, name: String, args: List<IrExpr>): IrJvmCall? = when (name) {
+        "toString" -> IrJvmCall("toString", owner, static = false, params = emptyList(), retType = IrType.STRING)
+        "equals" -> IrJvmCall("equals", owner, static = false, params = listOf(IrType.ANY), retType = IrType.BOOLEAN)
+        "hashCode" -> IrJvmCall("hashCode", owner, static = false, params = emptyList(), retType = IrType.INT)
+        else -> null
+    }
+
     private fun genCall(call: YxCall, g: MethodGen, fileScope: FileScope): IrExpr {
         val args = call.args.map { gen(it, g, fileScope) }
+        val argTypes = call.args.mapNotNull { irGen.exprTypes[it] }
         return when (val callee = call.callee) {
             is YxIdentifier -> {
                 val sym = irGen.resolvedRefs[callee]
@@ -197,7 +206,7 @@ class ExprGen(
                     }
                 }
             }
-            is YxMemberAccess -> genMemberCall(callee, args, g, fileScope)
+            is YxMemberAccess -> genMemberCall(callee, args, argTypes, g, fileScope)
             else -> error("IRGen: 不支持的调用目标: ${callee::class.simpleName}")
         }
     }
@@ -205,13 +214,14 @@ class ExprGen(
     private fun genMemberCall(
         callee: YxMemberAccess,
         args: List<IrExpr>,
+        argTypes: List<SemaType>,
         g: MethodGen,
         fileScope: FileScope,
     ): IrExpr {
         val receiverType = SemaType.resolveVar(irGen.exprTypes[callee.receiver] ?: SemaType.ErrorT)
         val result: IrExpr
         if (callee.receiver is YxTypeReference) {
-            val static = resolver.resolveStaticMethod(receiverType, callee.name)
+            val static = resolver.resolveStaticMethod(receiverType, callee.name, argTypes)
                 ?: error("IRGen: 静态方法不存在: ${callee.name}")
             result = IrExpr.Invoke(static, null, args)
         } else {
@@ -353,12 +363,12 @@ class ExprGen(
             else -> emptyList()
         }
         val params = buildList {
-            names.forEachIndexed { i, name ->
-                add(IrParam(name, TypeBridge.toIr(fnType.params.getOrElse(i) { SemaType.ErrorT })))
-            }
-            // 捕获参数（B2）：并入参数表后 paramLocals 自动覆盖捕获槽位
+            // 捕获参数在前（M5：LambdaMetafactory implMethod 要求 (captures..., invoked...) -> R）
             captures.forEach { (name, sym) ->
                 add(IrParam(name, captureIrType(sym)))
+            }
+            names.forEachIndexed { i, name ->
+                add(IrParam(name, TypeBridge.toIr(fnType.params.getOrElse(i) { SemaType.ErrorT })))
             }
         }
         val method = irGen.newLambdaMethod(
@@ -558,70 +568,13 @@ class ExprGen(
             else -> error("IRGen: 不支持的赋值目标: ${t::class.simpleName}")
         }
 
-    // ── 字面量解码（01-§2.3/§2.5；词法器已验证合法转义）────────────────────────
+    // ── 字面量解码（01-§2.3/§2.5；复用 Literals，注解实参求值共用）────────────
 
-    private fun decodeInt(text: String): Any {
-        val clean = text.replace("_", "")
-        val long = clean.endsWith("L") || clean.endsWith("l")
-        val digits = if (long) clean.dropLast(1) else clean
-        val value = when {
-            digits.startsWith("0x") || digits.startsWith("0X") -> digits.substring(2).toLong(16)
-            digits.startsWith("0b") || digits.startsWith("0B") -> digits.substring(2).toLong(2)
-            else -> digits.toLong()
-        }
-        return if (long) value else value.toInt()
-    }
+    private fun decodeInt(text: String): Any = Literals.decodeInt(text)
 
-    private fun decodeFloat(text: String): Any {
-        val clean = text.replace("_", "")
-        return when (clean.lastOrNull()) {
-            'f', 'F' -> clean.dropLast(1).toFloat()
-            'd', 'D' -> clean.dropLast(1).toDouble()
-            else -> clean.toDouble()
-        }
-    }
+    private fun decodeFloat(text: String): Any = Literals.decodeFloat(text)
 
-    private fun decodeChar(text: String): Char {
-        val inner = text.substring(1, text.length - 1)
-        return decodeEscapes(inner).single()
-    }
+    private fun decodeChar(text: String): Char = Literals.decodeChar(text)
 
-    private fun decodeString(text: String): String =
-        decodeEscapes(text.substring(1, text.length - 1))
-
-    private fun decodeEscapes(s: String): String = buildString {
-        var i = 0
-        while (i < s.length) {
-            val c = s[i]
-            if (c != '\\' || i + 1 >= s.length) {
-                append(c)
-                i++
-                continue
-            }
-            val next = s[i + 1]
-            when (next) {
-                'n' -> { append('\n'); i += 2 }
-                't' -> { append('\t'); i += 2 }
-                'r' -> { append('\r'); i += 2 }
-                'b' -> { append('\b'); i += 2 }
-                'f' -> { append('\u000C'); i += 2 }
-                '\\' -> { append('\\'); i += 2 }
-                '\'' -> { append('\''); i += 2 }
-                '"' -> { append('"'); i += 2 }
-                '$' -> { append('$'); i += 2 }
-                '0' -> { append('\u0000'); i += 2 }
-                'u' -> {
-                    if (i + 5 < s.length) {
-                        append(s.substring(i + 2, i + 6).toInt(16).toChar())
-                        i += 6
-                    } else {
-                        // 截断的 \uXXXX：退化为字面 `u`，前进越过 `\u` 防重复输出
-                        append('u')
-                        i += 2
-                    }
-                }
-                else -> { append('\\'); i++ }
-            }
-        }
-    }
+    private fun decodeString(text: String): String = Literals.decodeString(text)
 }

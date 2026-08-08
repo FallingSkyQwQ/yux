@@ -214,6 +214,7 @@ class StmtGen(
     /** 语句位置调用（结果丢弃）。 */
     private fun emitCallStatement(call: YxCall, g: MethodGen, fileScope: FileScope) {
         val args = call.args.map { exprGen.gen(it, g, fileScope) }
+        val argTypes = call.args.mapNotNull { irGen.exprTypes[it] }
         when (val callee = call.callee) {
             is YxIdentifier -> {
                 val sym = irGen.resolvedRefs[callee]
@@ -251,7 +252,7 @@ class StmtGen(
                 val receiverType = irGen.exprTypes[callee.receiver]
                 val rt = SemaType.resolveVar(receiverType ?: SemaType.ErrorT)
                 if (callee.receiver is YxTypeReference) {
-                    val static = irGen.resolver.resolveStaticMethod(rt, callee.name)
+                    val static = irGen.resolver.resolveStaticMethod(rt, callee.name, argTypes)
                         ?: error("IRGen: 静态方法不存在: ${callee.name}")
                     g.emit(IrStmt.Call(static, null, args, static.retType))
                     return
@@ -276,9 +277,17 @@ class StmtGen(
             val sym = rt.symbol as YxClassSymbol
             sym.functionsNamed(name).firstOrNull()?.let { fn ->
                 irGen.functionMethods[fn]?.let { IrMethodRef(it) to receiver }
-            }
+            } ?: objectMethodCall(sym.name, name)?.let { it to receiver }
         }
         else -> irGen.resolver.resolveInstanceMethod(rt, name)?.let { it to receiver }
+    }
+
+    /** Object 方法回退（S-8.7.1，与 ExprGen 一致）：语句位置 `u.toString()`。 */
+    private fun objectMethodCall(owner: String, name: String): IrJvmCall? = when (name) {
+        "toString" -> IrJvmCall("toString", owner, static = false, params = emptyList(), retType = IrType.STRING)
+        "equals" -> IrJvmCall("equals", owner, static = false, params = listOf(IrType.ANY), retType = IrType.BOOLEAN)
+        "hashCode" -> IrJvmCall("hashCode", owner, static = false, params = emptyList(), retType = IrType.INT)
+        else -> null
     }
 
     private fun genIf(stmt: YxIf, g: MethodGen, fileScope: FileScope) {

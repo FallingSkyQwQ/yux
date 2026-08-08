@@ -1,10 +1,12 @@
 package yux.compiler.irgen
 
 import yux.compiler.ast.YxAccessorKind
+import yux.compiler.ast.YxAnnotation
 import yux.compiler.ast.YxClass
 import yux.compiler.ast.YxClassMember
 import yux.compiler.ast.YxDataClass
 import yux.compiler.ast.YxDecl
+import yux.compiler.ast.YxExpr
 import yux.compiler.ast.YxFunction
 import yux.compiler.ast.YxInitBlock
 import yux.compiler.ast.YxMemberAccess
@@ -12,6 +14,8 @@ import yux.compiler.ast.YxProperty
 import yux.compiler.ast.YxService
 import yux.compiler.ast.YxType
 import yux.compiler.diag.DiagnosticSink
+import yux.compiler.ir.IrAnnotation
+import yux.compiler.ir.IrAnnotationArg
 import yux.compiler.ir.IrClass
 import yux.compiler.ir.IrExpr
 import yux.compiler.ir.IrField
@@ -134,6 +138,13 @@ class IRGen(
             typeParams = sym.typeParams,
             superType = shape.superType?.let { resolveIrType(it, fileScope) },
             interfaces = shape.interfaces.map { resolveIrType(it, fileScope) },
+            annotations = buildList {
+                shape.annotations.forEach { addAll(toIrAnnotation(it)) }
+                // S-5.4.1：service 自动附 @YuxService（源码已标注时去重）
+                if (sym.isService && none { it.name == "yux.di.YuxService" }) {
+                    add(IrAnnotation("yux.di.YuxService"))
+                }
+            },
         )
         module.classes.add(irClass)
 
@@ -169,15 +180,48 @@ class IRGen(
         val name: String,
         val superType: YxType?,
         val interfaces: List<YxType>,
+        val annotations: List<YxAnnotation>,
         val members: List<YxClassMember>,
     )
 
     private fun classShape(decl: Any): ClassShape? = when (decl) {
-        is YxClass -> ClassShape(decl.name, decl.superType, decl.interfaces, decl.members)
-        is YxDataClass -> ClassShape(decl.name, decl.superType, decl.interfaces, decl.properties)
-        is YxService -> ClassShape(decl.name, null, emptyList(), decl.members)
+        is YxClass -> ClassShape(decl.name, decl.superType, decl.interfaces, decl.annotations, decl.members)
+        is YxDataClass -> ClassShape(decl.name, decl.superType, decl.interfaces, decl.annotations, decl.properties)
+        is YxService -> ClassShape(decl.name, null, emptyList(), decl.annotations, decl.members)
         else -> null
     }
+
+    /** AST 注解 → IR 注解（T-M5-6）：限定名转 JVM 名；仅常量字面量实参保留。 */
+    private fun toIrAnnotation(a: YxAnnotation): List<IrAnnotation> {
+        val name = a.qualifiedName.joinToString(".")
+        return listOf(
+            IrAnnotation(
+                name = BUILTIN_ANNOTATIONS[name] ?: name,
+                args = a.args.mapNotNull { arg ->
+                    constValue(arg.value)?.let { IrAnnotationArg(arg.name, it) }
+                },
+            ),
+        )
+    }
+
+    /** 注解实参常量求值（非字面量返回 null，IRGen 跳过）。 */
+    private fun constValue(e: YxExpr): Any? = when (e) {
+        is yux.compiler.ast.YxIntLiteral -> Literals.decodeInt(e.text)
+        is yux.compiler.ast.YxFloatLiteral -> Literals.decodeFloat(e.text)
+        is yux.compiler.ast.YxCharLiteral -> Literals.decodeChar(e.text)
+        is yux.compiler.ast.YxBoolLiteral -> e.value
+        is yux.compiler.ast.YxNullLiteral -> null
+        is yux.compiler.ast.YxStringLiteral -> Literals.decodeString(e.text)
+        else -> null
+    }
+
+    /** 内置注解简单名 → JVM 限定名（01-§8.2 内置注解；未知注解原样保留）。 */
+    private val BUILTIN_ANNOTATIONS = mapOf(
+        "Override" to "java.lang.Override",
+        "Deprecated" to "java.lang.Deprecated",
+        "Serializable" to "yux.serializer.Serializable",
+        "YuxService" to "yux.di.YuxService",
+    )
 
     /** 属性 → backing 字段 + getter/setter 骨架（T-M4-1：属性 → 2 方法映射）。 */
     private fun registerProperty(prop: PropertySymbol, propDecl: YxProperty, irClass: IrClass, fileScope: FileScope): IrProperty {
@@ -188,6 +232,7 @@ class IRGen(
             type = type,
             isStatic = false,
             isFinal = prop.isVal,
+            owner = irClass.name,
         )
         propertyFields[prop] = backingField
         val getter = registerAccessor(propDecl, prop, irClass, type, YxAccessorKind.GET, backingField, fileScope)
@@ -247,6 +292,7 @@ class IRGen(
             isAsync = fnDecl.isAsync,
             isOverride = fnDecl.isOverride,
             isSynthetic = false,
+            annotations = fnDecl.annotations.flatMap { toIrAnnotation(it) },
             owner = irClass,
         )
         functionMethods[sym] = method
@@ -257,7 +303,7 @@ class IRGen(
     private fun registerTopLevelProperty(propDecl: YxProperty, fileClass: IrClass, fileScope: FileScope) {
         val sym = fileScope.topLevelProperties[propDecl.name] ?: return
         val type = TypeBridge.toIr(sym.type ?: SemaType.ErrorT)
-        val field = IrField(propDecl.name, type, isStatic = true, isFinal = sym.isVal)
+        val field = IrField(propDecl.name, type, isStatic = true, isFinal = sym.isVal, owner = fileClass.name)
         propertyFields[sym] = field
         val getter = IrMethod(
             name = getterName(propDecl.name, type),

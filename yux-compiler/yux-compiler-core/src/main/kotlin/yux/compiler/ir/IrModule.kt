@@ -26,6 +26,8 @@ class IrClass(
     /** 单继承父类型（S-8.7.1）。 */
     val superType: IrType?,
     val interfaces: List<IrType>,
+    /** JVM 注解（T-M5-6）：IRGen 从 AST 注解 + service 自动 `@YuxService` 填充。 */
+    val annotations: List<IrAnnotation> = emptyList(),
     val fields: MutableList<IrField> = mutableListOf(),
     val properties: MutableList<IrProperty> = mutableListOf(),
     val methods: MutableList<IrMethod> = mutableListOf(),
@@ -43,6 +45,8 @@ data class IrField(
     val type: IrType,
     val isStatic: Boolean,
     val isFinal: Boolean,
+    /** 归属类 JVM 名（后端 GET/PUTSTATIC 需要；实例字段为 null 时用当前类）。 */
+    val owner: String? = null,
 )
 
 /** 属性（01-§5.2）：backing 字段 + getter/setter 方法（可自定义访问器，亦可只读）。 */
@@ -61,6 +65,19 @@ class IrProperty(
 data class IrParam(
     val name: String,
     val type: IrType,
+)
+
+/** JVM 注解（T-M5-6 / 01-§8.2）：[name] 为 JVM 限定名（`yux.core.YuxService`）。 */
+data class IrAnnotation(
+    val name: String,
+    /** 注解实参（常量字面量值；非字面量实参由 IRGen 跳过）。 */
+    val args: List<IrAnnotationArg> = emptyList(),
+)
+
+/** 注解实参（01-§8.2）：[name] 参数名，[value] 常量值（String/Int/Long/Float/Double/Boolean/Char）。 */
+data class IrAnnotationArg(
+    val name: String,
+    val value: Any?,
 )
 
 /**
@@ -90,6 +107,8 @@ class IrMethod(
     val isOverride: Boolean,
     /** 合成方法（Lambda 体、属性访问器），非用户声明。 */
     val isSynthetic: Boolean,
+    /** JVM 注解（T-M5-6）。 */
+    val annotations: List<IrAnnotation> = emptyList(),
     val body: MutableList<IrStmt> = mutableListOf(),
     /** 所属类；Lambda 方法在生成后由 IRGen 回填。 */
     val owner: IrClass? = null,

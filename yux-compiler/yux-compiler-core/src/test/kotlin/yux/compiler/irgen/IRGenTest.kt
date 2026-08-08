@@ -300,7 +300,7 @@ class IRGenTest {
         val lambda = main.methods.firstOrNull { it.isSynthetic && it.name.startsWith("lambda") }
         assertTrue(lambda != null, "应生成 lambda 合成方法: ${main.methods.map { it.name }}")
         // S-7.4.4 闭包：捕获 x 并入参数表（v, x）
-        assertEquals(listOf("v", "x"), lambda!!.params.map { it.name })
+        assertEquals(listOf("x", "v"), lambda!!.params.map { it.name })
         val body = methodBody(module, "Main", "f")
         val lambdaRef = body.mapNotNull { (it as? IrStmt.LocalAssign)?.value as? IrExpr.Lambda }.single()
         assertEquals(1, lambdaRef.captures.size)
@@ -312,7 +312,7 @@ class IRGenTest {
         val main = module.classNamed("Main")!!
         val lambda = main.methods.firstOrNull { it.isSynthetic && it.name.startsWith("lambda") }
         assertTrue(lambda != null, "应生成 lambda 合成方法: ${main.methods.map { it.name }}")
-        assertEquals(2, lambda!!.params.size, "捕获 x 后应有 (it, x) 两个参数: ${lambda.params}")
+        assertEquals(2, lambda!!.params.size, "捕获 x 后应有 (x, it) 两个参数: ${lambda.params}")
         assertTrue(lambda.body.single() is IrStmt.Return)
     }
 
@@ -335,7 +335,7 @@ class IRGenTest {
         val inner = main.methods.firstOrNull { it.name == "lambda\$1" }
             ?: error("缺少内层 lambda 合成方法: ${main.methods.map { it.name }}")
         // 捕获 g 并入参数表（v, g）
-        assertEquals(listOf("v", "g"), inner.params.map { it.name }, "g 应作为捕获参数: ${inner.params}")
+        assertEquals(listOf("g", "v"), inner.params.map { it.name }, "g 应作为捕获参数: ${inner.params}")
         // 体内调用为 FnInvoke(捕获 g 的 LocalRead, [参数 v])
         val ret = inner.body.single() as IrStmt.Return
         val fnInvoke = ret.value as IrExpr.FnInvoke
@@ -373,7 +373,7 @@ class IRGenTest {
         val lambda = main.methods.firstOrNull { it.isSynthetic && it.name.startsWith("lambda") }
             ?: error("缺少 lambda 合成方法: ${main.methods.map { it.name }}")
         // 外层 i 须被捕获（参数表含 i）；循环体内 i 为循环局部
-        assertEquals(listOf("it", "i"), lambda.params.map { it.name }, "外层 i 应被捕获: ${lambda.params}")
+        assertEquals(listOf("i", "it"), lambda.params.map { it.name }, "外层 i 应被捕获: ${lambda.params}")
     }
 
     @Test
@@ -384,7 +384,7 @@ class IRGenTest {
         val main = module.classNamed("Main")!!
         val lambda = main.methods.firstOrNull { it.isSynthetic && it.name.startsWith("lambda") }
             ?: error("缺少 lambda 合成方法: ${main.methods.map { it.name }}")
-        assertEquals(listOf("it", "w"), lambda.params.map { it.name }, "外层 w 应被捕获: ${lambda.params}")
+        assertEquals(listOf("w", "it"), lambda.params.map { it.name }, "外层 w 应被捕获: ${lambda.params}")
     }
 
     @Test
@@ -493,5 +493,40 @@ class IRGenTest {
         val assign = body.filterIsInstance<IrStmt.LocalAssign>().last()
         assertEquals(IrExpr.Const(5), assign.value)
         assertEquals(assign.local, (arg as IrExpr.LocalRead).local)
+    }
+
+    @Test
+    fun `object method toString falls back to jvm call on user class`() {
+        // S-8.7.1 回退（M5-11 data 验收）：`u.toString` 无成员声明时走 Object 方法
+        val module = ir("data User { id:Int }\nfun f(u:User) = u.toString")
+        val body = methodBody(module, "Main", "f")
+        val ret = body.single() as IrStmt.Return
+        val invoke = ret.value as IrExpr.Invoke
+        val call = invoke.target as IrJvmCall
+        assertEquals("toString", call.name)
+        assertEquals("User", call.owner)
+        assertTrue(!call.static, "toString 应为实例调用")
+        assertEquals(IrType.STRING, call.retType)
+    }
+
+    @Test
+    fun `object method fallback works for equals and hashCode`() {
+        val module = ir("data User { id:Int }\nfun f(u:User) { print u.equals(u)\n print u.hashCode }")
+        val body = methodBody(module, "Main", "f")
+        val invokes = body.filterIsInstance<IrStmt.Call>()
+            .flatMap { it.args.filterIsInstance<IrExpr.Invoke>() }
+            .map { it.target as IrJvmCall }
+        assertEquals("equals", invokes[0].name)
+        assertEquals(IrType.BOOLEAN, invokes[0].retType)
+        assertEquals("hashCode", invokes[1].name)
+        assertEquals(IrType.INT, invokes[1].retType)
+    }
+
+    @Test
+    fun `service class carries yux service annotation`() {
+        val module = ir("service Database {\n connect() { }\n}")
+        val db = module.classNamed("Database")!!
+        assertTrue(db.isService)
+        assertEquals(listOf("yux.di.YuxService"), db.annotations.map { it.name })
     }
 }
