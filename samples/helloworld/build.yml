@@ -1,0 +1,11 @@
+name: helloworld
+version: 0.1.0
+
+language:
+  yux: 1.0
+
+target:
+  jvm: 21
+
+source:
+  main: src

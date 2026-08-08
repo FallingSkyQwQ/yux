@@ -1,0 +1,23 @@
+// 由 yuxc 生成（T-M7-2，02-§11.3 / 05-§6）——手动修改会被下次构建覆盖
+plugins {
+    java
+}
+
+java {
+    toolchain {
+        languageVersion.set(JavaLanguageVersion.of(21))
+    }
+}
+
+sourceSets {
+    main {
+        java {
+            srcDir("build/yux-classes")
+        }
+        resources.srcDir("resources")
+    }
+}
+
+tasks.jar {
+    from("build/yux-classes")
+}
