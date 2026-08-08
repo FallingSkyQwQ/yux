@@ -46,7 +46,8 @@ yux/
 | M1 词法分析器 | ✅ | Token/Trivia/插值分词 + golden 测试 |
 | M2 语法分析器 | ✅ | CST/Pratt 表达式/消歧/错误恢复 + CstToAst + golden `.ast` |
 | M3 语义分析 | ✅ | 类型系统/符号表/类型检查/推断/智能转型/空守卫 + 86 负向用例 + `.sema` golden |
-| M4+ | ⏳ | 见 [`docs/06-开发计划.md`](docs/06-开发计划.md) |
+| M4 IR | ✅ | IrModule/IrStmt/IrExpr/IrType + IRGen + 最小优化 + golden `.ir` + `yuxc ir` |
+| M5+ | ⏳ | 见 [`docs/06-开发计划.md`](docs/06-开发计划.md) |
 
 ## 文档索引
 
