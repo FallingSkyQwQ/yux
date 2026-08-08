@@ -12,6 +12,7 @@ dependencies {
     implementation(project(":yux-compiler:yux-compiler-backend-jvm"))
     implementation(project(":yux-compiler:yux-compiler-plugin-api"))
     implementation(project(":yux-stdlib"))
+    implementation(project(":build-tool")) // M7（T-M7-5）：yuxc build/run/test -p 项目命令
 
     testImplementation(libs.junit.jupiter)
     testImplementation(libs.kotlin.test)

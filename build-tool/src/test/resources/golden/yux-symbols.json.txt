@@ -1,0 +1,23 @@
+{
+  "project": "demo",
+  "version": "1.0.0",
+  "files": [
+    {
+      "file": "src/main.yux",
+      "class": "Main",
+      "symbols": [
+        { "name": "name", "kind": "property" },
+        { "name": "main", "kind": "function" },
+        { "name": "User", "kind": "class" },
+        { "name": "Point", "kind": "data" }
+      ]
+    },
+    {
+      "file": "src/sub/Economy.yux",
+      "class": "Economy",
+      "symbols": [
+        { "name": "deposit", "kind": "function" }
+      ]
+    }
+  ]
+}
