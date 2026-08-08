@@ -1,0 +1,27 @@
+module {
+ class Annotations (file) {
+  static synthetic method $clinit(): Unit {
+  }
+  static method main(): Unit {
+   LocalAssign #0: Player = New Player [Const("Alex")]
+   Call yux.core.CoreLib.print [Invoke Player#toString [LocalRead(#0)]] : Unit
+  }
+ }
+ class Database (service) @yux.di.YuxService {
+  synthetic method <init>(): Unit {
+  }
+  method connect(): Unit {
+   Call yux.core.CoreLib.print [Const("connect")] : Unit
+  }
+ }
+ class Player (data) {
+  field name: String
+  property name: String [get: getName()]
+  synthetic method getName(): String {
+   Return FieldRead(this.name)
+  }
+  synthetic method <init>(name: String): Unit {
+   FieldWrite this.name = LocalRead(#0)
+  }
+ }
+}

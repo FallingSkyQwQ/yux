@@ -20,13 +20,19 @@ object IrPrinter {
 
     private fun renderClass(cls: IrClass, depth: Int): String = buildString {
         val kind = when {
-            cls.isData -> " (data)"
-            cls.isService -> " (service)"
-            cls.isFileClass -> " (file)"
+            cls.isData -> "(data)"
+            cls.isService -> "(service)"
+            cls.isFileClass -> "(file)"
             else -> ""
         }
         val typeParams = if (cls.typeParams.isEmpty()) "" else "<${cls.typeParams.joinToString(", ")}>"
-        append(line(depth, "class ${cls.name}$typeParams$kind {"))
+        val annotations = cls.annotations.joinToString(" ") { "@${it.name}" }
+        val suffix = buildList {
+            if (kind.isNotEmpty()) add(kind)
+            if (annotations.isNotEmpty()) add(annotations)
+        }.joinToString(" ")
+        val header = "class ${cls.name}$typeParams" + if (suffix.isEmpty()) "" else " $suffix"
+        append(line(depth, "$header {"))
         cls.fields.forEach { append(line(depth + 1, "field ${it.name}: ${it.type.render()}")) }
         cls.properties.forEach { append(renderProperty(it, depth + 1)) }
         cls.methods.forEach { append(renderMethod(it, depth + 1)) }
@@ -53,7 +59,9 @@ object IrPrinter {
             append("method ")
         }
         val params = method.params.joinToString(", ") { "${it.name}: ${it.type.render()}" }
-        append(line(depth, "$prefix${method.name}($params): ${method.returnType.render()} {"))
+        val annotations = method.annotations.joinToString(" ") { "@${it.name}" }
+        val header = "$prefix${method.name}($params): ${method.returnType.render()}"
+        append(line(depth, if (annotations.isEmpty()) "$header {" else "$header $annotations {"))
         method.body.forEach { append(renderStmt(it, depth + 1)) }
         append(line(depth, "}"))
     }
@@ -76,6 +84,7 @@ object IrPrinter {
             }] : ${stmt.ret.render()}")
         }
         is IrStmt.New -> line(depth, "New ${stmt.type.render()} [${exprList(stmt.args)}]")
+        is IrStmt.Eval -> line(depth, "Eval ${IrExprRenderer.render(stmt.expr)}")
         is IrStmt.FieldAccess -> renderFieldAccess(stmt, depth)
         is IrStmt.Branch ->
             line(depth, "Branch ${IrExprRenderer.render(stmt.cond)} ${stmt.then.name} ${stmt.elseLabel.name}")

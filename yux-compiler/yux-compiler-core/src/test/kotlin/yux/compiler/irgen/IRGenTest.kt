@@ -280,6 +280,172 @@ class IRGenTest {
     }
 
     @Test
+    fun `block lambda body emits return of last expression`() {
+        val module = ir("fun f() { g:(Int)->Int = { it + 1 } }")
+        val main = module.classNamed("Main")!!
+        val lambda = main.methods.firstOrNull { it.isSynthetic && it.name.startsWith("lambda") }
+        assertTrue(lambda != null, "应生成 lambda 合成方法: ${main.methods.map { it.name }}")
+        // S-7.4.3：块 Lambda 的末条表达式语句 `it + 1` 作为返回值
+        val ret = lambda!!.body.single() as IrStmt.Return
+        val arith = ret.value as IrExpr.Arith
+        assertEquals(ArithOp.ADD, arith.op)
+        assertEquals(0, (arith.l as IrExpr.LocalRead).local.index, "参数 it 应为槽位 #0")
+        assertEquals(IrExpr.Const(1), arith.r)
+    }
+
+    @Test
+    fun `lambda capturing outer local does not crash`() {
+        val module = ir("fun f() { x = 5\n g:(Int)->Int = v -> v + x\n print x }")
+        val main = module.classNamed("Main")!!
+        val lambda = main.methods.firstOrNull { it.isSynthetic && it.name.startsWith("lambda") }
+        assertTrue(lambda != null, "应生成 lambda 合成方法: ${main.methods.map { it.name }}")
+        // S-7.4.4 闭包：捕获 x 并入参数表（v, x）
+        assertEquals(listOf("x", "v"), lambda!!.params.map { it.name })
+        val body = methodBody(module, "Main", "f")
+        val lambdaRef = body.mapNotNull { (it as? IrStmt.LocalAssign)?.value as? IrExpr.Lambda }.single()
+        assertEquals(1, lambdaRef.captures.size)
+    }
+
+    @Test
+    fun `block lambda capturing outer local`() {
+        val module = ir("fun f() { x = 5\n g:(Int)->Int = { it + x } }")
+        val main = module.classNamed("Main")!!
+        val lambda = main.methods.firstOrNull { it.isSynthetic && it.name.startsWith("lambda") }
+        assertTrue(lambda != null, "应生成 lambda 合成方法: ${main.methods.map { it.name }}")
+        assertEquals(2, lambda!!.params.size, "捕获 x 后应有 (x, it) 两个参数: ${lambda.params}")
+        assertTrue(lambda.body.single() is IrStmt.Return)
+    }
+
+    @Test
+    fun `calling function type local produces fn invoke`() {
+        val module = ir("fun f() { g:(Int)->Int = { it + 1 }\n h = g(3) }")
+        val body = methodBody(module, "Main", "f")
+        // h 的赋值右值为 FnInvoke(函数值 LocalRead, [Const(3)])
+        val assign = body.filterIsInstance<IrStmt.LocalAssign>().last()
+        val fnInvoke = assign.value as IrExpr.FnInvoke
+        assertTrue(fnInvoke.fn is IrExpr.LocalRead, "函数值接收者应为 LocalRead: $fnInvoke")
+        assertEquals(listOf(IrExpr.Const(3)), fnInvoke.args)
+    }
+
+    @Test
+    fun `fn type local called inside lambda body is captured and invoked`() {
+        // B3 × B2（P1-1 回归）：Lambda 体内调用函数类型局部——callee 须被捕获并入参数表
+        val module = ir("fun f() { g:(Int)->Int = { it + 1 }\n h:(Int)->Int = v -> g(v) }")
+        val main = module.classNamed("Main")!!
+        val inner = main.methods.firstOrNull { it.name == "lambda\$1" }
+            ?: error("缺少内层 lambda 合成方法: ${main.methods.map { it.name }}")
+        // 捕获 g 并入参数表（v, g）
+        assertEquals(listOf("g", "v"), inner.params.map { it.name }, "g 应作为捕获参数: ${inner.params}")
+        // 体内调用为 FnInvoke(捕获 g 的 LocalRead, [参数 v])
+        val ret = inner.body.single() as IrStmt.Return
+        val fnInvoke = ret.value as IrExpr.FnInvoke
+        assertTrue(fnInvoke.fn is IrExpr.LocalRead, "函数值接收者应为 LocalRead: $fnInvoke")
+        assertEquals(1, fnInvoke.args.size)
+    }
+
+    @Test
+    fun `fn type local called as statement emits eval fn invoke`() {
+        // P1-2 回归：语句位置函数类型调用 → Eval(FnInvoke)，不得报"未解析的调用"
+        val module = ir("fun f() { g:(Int)->Int = { it + 1 }\n g(3) }")
+        val body = methodBody(module, "Main", "f")
+        val eval = body.filterIsInstance<IrStmt.Eval>().single()
+        val fnInvoke = eval.expr as IrExpr.FnInvoke
+        assertTrue(fnInvoke.fn is IrExpr.LocalRead, "函数值接收者应为 LocalRead: $fnInvoke")
+        assertEquals(listOf(IrExpr.Const(3)), fnInvoke.args)
+    }
+
+    @Test
+    fun `statement side effect in comparison is preserved as eval`() {
+        // P1-3 回归：`side() == 1` 语句的调用副作用不得被 isDiscardable 门丢弃
+        val module = ir("fun f() { side() == 1 }\nfun side():Int { print \"x\"\n return 1 }")
+        val body = methodBody(module, "Main", "f")
+        val eval = body.filterIsInstance<IrStmt.Eval>().single()
+        val cmp = eval.expr as IrExpr.Compare
+        assertTrue(cmp.l is IrExpr.Invoke, "比较左操作数的调用应保留: $cmp")
+    }
+
+    @Test
+    fun `lambda capture is not suppressed by loop var shadowing`() {
+        // P1-4 回归：for 循环变量与嵌套 Lambda 参数仅在自身作用域绑定——
+        // 离开作用域后不得压制同名外层变量的捕获（bound 须随作用域恢复）
+        val module = ir("fun f() { i = 5\n g:(Int)->Int = { for i in 0..3 { print i }\n it + i } }")
+        val main = module.classNamed("Main")!!
+        val lambda = main.methods.firstOrNull { it.isSynthetic && it.name.startsWith("lambda") }
+            ?: error("缺少 lambda 合成方法: ${main.methods.map { it.name }}")
+        // 外层 i 须被捕获（参数表含 i）；循环体内 i 为循环局部
+        assertEquals(listOf("i", "it"), lambda.params.map { it.name }, "外层 i 应被捕获: ${lambda.params}")
+    }
+
+    @Test
+    fun `lambda capture is not suppressed by nested lambda param shadowing`() {
+        // P1-4 回归：内层 Lambda 参数 w 不得泄漏到外层遍历——
+        // 内层之后的 `it + w` 引用的外层 w 须被捕获
+        val module = ir("fun f() { w = 5\n g:(Int)->Int = { h:(Int)->Int = z -> z + w\n it + w } }")
+        val main = module.classNamed("Main")!!
+        val lambda = main.methods.firstOrNull { it.isSynthetic && it.name.startsWith("lambda") }
+            ?: error("缺少 lambda 合成方法: ${main.methods.map { it.name }}")
+        assertEquals(listOf("w", "it"), lambda.params.map { it.name }, "外层 w 应被捕获: ${lambda.params}")
+    }
+
+    @Test
+    fun `top level val getter honors custom accessor`() {
+        // 自定义访问器回归：顶层 val 的 getter 体应为自定义体而非字段读取
+        val module = ir(
+            """
+            max:Int {
+                get { return 10 }
+            }
+            fun main() {
+            }
+            """.trimIndent(),
+        )
+        val main = module.classNamed("Main")!!
+        val prop = main.properties.single { it.name == "max" }
+        assertTrue(prop.setter == null, "顶层 val 不应生成 setter")
+        val getter = prop.getter ?: error("缺少 getter")
+        val ret = getter.body.single() as IrStmt.Return
+        assertEquals(IrExpr.Const(10), ret.value, "自定义 getter 体应返回 10 而非字段读取: ${getter.body}")
+    }
+
+    @Test
+    fun `property initializer runs before ctor params`() {
+        val module = ir(
+            """
+            Player {
+                name:String
+                health:Int = 20
+            }
+            fun main() {
+                p = Player("A", 20)
+            }
+            """.trimIndent(),
+        )
+        val ctor = module.classNamed("Player")!!.constructor!!
+        val writes = ctor.body.filterIsInstance<IrStmt.FieldAccess>()
+        // S-5.2.5：初始化器写 health 必须先于任何构造参数赋值
+        assertTrue(writes.size >= 3, "初始化器 + 两个参数赋值: $writes")
+        assertEquals("health", writes[0].field.name)
+        assertEquals(IrExpr.Const(20), writes[0].value)
+    }
+
+    @Test
+    fun `top level val has no setter and final field`() {
+        val module = ir(
+            """
+            max:Int {
+                get { return 10 }
+            }
+            fun main() {
+            }
+            """.trimIndent(),
+        )
+        val main = module.classNamed("Main")!!
+        val prop = main.properties.single { it.name == "max" }
+        assertTrue(prop.setter == null, "顶层 val 不应生成 setter")
+        assertTrue(prop.backingField!!.isFinal, "顶层 val 的 backing 字段应为 final")
+    }
+
+    @Test
     fun `short circuit with side-effecting right operand`() {
         val module = ir("fun f(a:Boolean) { x = a && sideEffect() }\nfun sideEffect():Boolean { print \"x\"\n return true }")
         val body = methodBody(module, "Main", "f")
@@ -327,5 +493,40 @@ class IRGenTest {
         val assign = body.filterIsInstance<IrStmt.LocalAssign>().last()
         assertEquals(IrExpr.Const(5), assign.value)
         assertEquals(assign.local, (arg as IrExpr.LocalRead).local)
+    }
+
+    @Test
+    fun `object method toString falls back to jvm call on user class`() {
+        // S-8.7.1 回退（M5-11 data 验收）：`u.toString` 无成员声明时走 Object 方法
+        val module = ir("data User { id:Int }\nfun f(u:User) = u.toString")
+        val body = methodBody(module, "Main", "f")
+        val ret = body.single() as IrStmt.Return
+        val invoke = ret.value as IrExpr.Invoke
+        val call = invoke.target as IrJvmCall
+        assertEquals("toString", call.name)
+        assertEquals("User", call.owner)
+        assertTrue(!call.static, "toString 应为实例调用")
+        assertEquals(IrType.STRING, call.retType)
+    }
+
+    @Test
+    fun `object method fallback works for equals and hashCode`() {
+        val module = ir("data User { id:Int }\nfun f(u:User) { print u.equals(u)\n print u.hashCode }")
+        val body = methodBody(module, "Main", "f")
+        val invokes = body.filterIsInstance<IrStmt.Call>()
+            .flatMap { it.args.filterIsInstance<IrExpr.Invoke>() }
+            .map { it.target as IrJvmCall }
+        assertEquals("equals", invokes[0].name)
+        assertEquals(IrType.BOOLEAN, invokes[0].retType)
+        assertEquals("hashCode", invokes[1].name)
+        assertEquals(IrType.INT, invokes[1].retType)
+    }
+
+    @Test
+    fun `service class carries yux service annotation`() {
+        val module = ir("service Database {\n connect() { }\n}")
+        val db = module.classNamed("Database")!!
+        assertTrue(db.isService)
+        assertEquals(listOf("yux.di.YuxService"), db.annotations.map { it.name })
     }
 }

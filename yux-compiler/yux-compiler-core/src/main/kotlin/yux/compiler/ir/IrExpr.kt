@@ -8,6 +8,27 @@ package yux.compiler.ir
  * 与数值转换共用 [Convert]，由后端按源/目标类型区分（CHECKCAST vs i2l）。
  */
 sealed interface IrExpr {
+    /**
+     * 表达式可丢弃判定（StmtGen 表达式语句门 + BasicOpt 死代码消除共用，02-§8.4）：
+     * 可安全丢弃 = 无副作用且不抛异常。**递归检查操作数**——`a() == b()` 作为语句
+     * 时，操作数中的调用有副作用，整个表达式不可丢弃。
+     * 可能抛异常者不可丢弃：除/模（除零）、可空接收者字段读取（NPE）、强制 Convert
+     * （CCE）、Invoke/New/StringTemplate/FnInvoke（任意被调代码）。
+     */
+    fun isDiscardable(): Boolean = when (this) {
+        is Const, is This, is LocalRead -> true
+        is Lambda -> captures.all { it.isDiscardable() }
+        is FieldRead -> receiver == null || receiver is This // 静态/this 字段读安全；其他接收者可能 NPE
+        is Arith -> op != ArithOp.DIV && op != ArithOp.MOD && l.isDiscardable() && r.isDiscardable()
+        is Compare -> l.isDiscardable() && r.isDiscardable()
+        is Not -> operand.isDiscardable()
+        is Neg -> operand.isDiscardable()
+        is IsType -> expr.isDiscardable()
+        is NullGuard -> expr.isDiscardable() // 守卫吞掉 NPE，可丢弃（结果未用）
+        is FnInvoke -> false // 函数调用可能有副作用
+        else -> false // Invoke/New/Convert/StringTemplate 不保证安全
+    }
+
     /** 尽力推导表达式类型（空守卫折叠/优化器/快照用）；无法确定返回 null。 */
     fun inferType(): IrType? = when (this) {
         is Const -> when (value) {
@@ -30,6 +51,7 @@ sealed interface IrExpr {
         is Neg -> operand.inferType()
         is Convert -> to
         is Invoke -> target.retType
+        is FnInvoke -> (fn.inferType() as? IrType.Function)?.ret
         is StringTemplate -> IrType.STRING
         is NullGuard -> expr.inferType()
         is Lambda -> null
@@ -104,6 +126,12 @@ sealed interface IrExpr {
         val args: List<IrExpr>,
     ) : IrExpr
 
+    /** 函数类型值调用（S-7.4 高阶函数）：`fn(args)`，[fn] 为函数类型表达式（LocalRead/Lambda）。 */
+    data class FnInvoke(
+        val fn: IrExpr,
+        val args: List<IrExpr>,
+    ) : IrExpr
+
     /** 字符串插值（02-§9.3：StringBuilder.append 序列；纯文本段为 Const(String)）。 */
     data class StringTemplate(
         val parts: List<IrExpr>,
@@ -117,6 +145,8 @@ sealed interface IrExpr {
     /** Lambda 引用：目标为合成方法（内部类/方法引用由后端决定，02-§9.1）。 */
     data class Lambda(
         val target: IrMethodRef,
+        /** 闭包捕获实参（调用点求值；合成方法对应追加捕获参数）。 */
+        val captures: List<IrExpr> = emptyList(),
     ) : IrExpr
 
     private fun arithResultType(op: ArithOp, l: IrExpr, r: IrExpr): IrType? {

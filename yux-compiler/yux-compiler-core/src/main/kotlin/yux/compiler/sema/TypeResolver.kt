@@ -150,6 +150,27 @@ object TypeAssignability {
         return sameBase(f, t)
     }
 
+    /** 类型精确相等（重载选择用：`Math.max(1,2)` 不得命中 double 重载）。 */
+    fun isExact(from: SemaType, to: SemaType): Boolean {
+        val f = SemaType.resolveVar(from)
+        val t = SemaType.resolveVar(to)
+        if (f is SemaType.InferenceVar || t is SemaType.InferenceVar) return false
+        if (f.nullable != t.nullable) return false
+        val fb = f.nonNull()
+        val tb = t.nonNull()
+        return when {
+            fb is SemaType.ErrorT || tb is SemaType.ErrorT -> true
+            fb is SemaType.Basic && tb is SemaType.Basic -> fb.name == tb.name
+            fb is SemaType.Declared && tb is SemaType.Declared -> fb.symbol === tb.symbol
+            fb is SemaType.Function && tb is SemaType.Function ->
+                fb.params.size == tb.params.size &&
+                    fb.params.zip(tb.params).all { (x, y) -> isExact(x, y) } &&
+                    isExact(fb.ret, tb.ret)
+            fb is SemaType.UnitT && tb is SemaType.UnitT -> true
+            else -> false
+        }
+    }
+
     /** 底层类型结构一致（不含可空性）。 */
     fun sameBase(a: SemaType, b: SemaType): Boolean = when {
         a is SemaType.NothingT || b is SemaType.NothingT -> true

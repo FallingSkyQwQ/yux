@@ -2,6 +2,39 @@
 
 本文件记录各里程碑的显著变更（含 breaking changes，见 06-§3）。
 
+## [v0.1.0-m5] - 2026-08-08 — M5 JVM 后端
+
+### 新增
+- `yux-compiler-backend-jvm` 模块（T-M5-1..9，02-§9）：
+  - `AsmBackend`（T-M5-1）：`IrModule → .class` 字节；`ClassWriter(COMPUTE_FRAMES)`；类/文件类命名（文件类 = 文件名大写化）；V21 目标；私有字段 + 访问器（T-M5-2，Boolean→`isX`）；
+  - `AsmEmitter` 方法体发射（T-M5-3/4/7/8）：IrStmt/IrExpr → 字节码；局部槽位分配（this/宽类型 2 槽）；标签/分支/Goto；try/catch/finally（异常表 + finally 三路径）；字符串拼接与 StringTemplate → StringBuilder（02-§9.3）；空守卫 → ifnull + 类型默认值（02-§9.4）；
+  - 调用：Yux 方法引用用 IR 描述符；JVM 互操作（T-M5-7）经 `JvmDescResolver` 反射解析**真实描述符**（`Iterator.next()` 真实 `()Ljava/lang/Object;`）+ `InvocationAdapter` 装箱/拆箱适配（`print 42` → `Integer.valueOf`）；静态/实例/接口调用分派；
+  - Lambda（T-M5-4）：`invokedynamic` + `LambdaMetafactory`，合成方法捕获参数前置（匹配 metafactory `(captures..., invoked...)` 约定）；实例方法上下文捕获 `this`；`FnInvoke` → `FunctionN.invoke` + 装箱适配；
+  - `AsmDataGen`（T-M5-5）：data 类自动 `toString`（`User(id=1, name=Steve)`）/`equals`（引用短路 + instanceof + 逐属性，引用用 `Objects.equals`）/`hashCode`（31 进制）；
+  - 注解（T-M5-6）：类/方法注解 → JVM 注解字节码（RuntimeVisible + 常量实参）；service 自动 `@yux.di.YuxService`；
+  - async 同步降级（T-M5-9，R3）：`async fun` 照常同步发射 + REMIND 诊断（真正协程 M11）。
+- `yux-stdlib` 运行时：`yux.core.CoreLib`（print/println 静态方法）、`yux.core.Range`（闭区间迭代）、`yux.core.function.Function0..3`（函数类型 SAM 接口）、`yux.di.YuxService`/`yux.serializer.Serializable` 注解。
+- `yuxc run <file>`（T-M5-10）：编译 → `MemoryClassLoader`（父加载器含 yux-stdlib）→ 文件类静态 `main()` 反射执行；运行时异常打印堆栈并返回 1。
+- 端到端 `samples/`（T-M5-11）：hello/data/controlflow/nullable/interop/types/lambdas 七个样例 + `.stdout` 快照比对（`yuxc run samples/hello.yux` → `Hello Yux`；`yuxc run samples/data.yux` → `User(id=1, name=Steve)`）。
+- 前端配套：用户类继承 Object 成员回退（`u.toString`/`equals`/`hashCode`，S-8.7.1，data 验收依赖）；JVM 重载选择实参类型精确匹配优先（`Math.max(1,2)` 不再落到 double 重载）；字符串拼接另一侧须为 String/数字（防 `print "a" + "b"` 解析歧义落到 Unit）；IR 携带 `IrAnnotation`；`IrField.owner`（静态字段归属）。
+
+### 说明
+- 已知限制：IR 无源码 span，方法体不产出 `LineNumberTable`（行号表后置）；泛型擦除但不产出 Signature 属性；`async` 同步降级（R3 既定）；`package` 命名空间未映射到 JVM 包（文件类在默认包）。
+- 测试：新增 42 例（后端 30：端到端 11/类结构 2/访问器 1/data 2/注解 1/互操作 2/空守卫 1/async 1/加载 1/样例目录 1 + stdlib 12 + CLI 6），累计 411+ 例全绿；golden 新增 `annotations.yux.ir`（注解渲染）。
+
+## [Unreleased]
+
+### 变更
+- 严格 Git Workflow（M5 起，06-§7.4）：开发统一在 `feature/m5-jvm-backend` 上进行，`main` 仅接受 PR 合入；新增 `AGENTS.md` 固化约定；清理本地与远端旧里程碑分支。
+
+### 修复
+- IRGen 高阶函数/闭包正确性（M5 前端准备，CodeRabbit 审查后回归）：
+  - 函数类型局部/参数调用在 Lambda 体内可解析并捕获（sema 登记 `resolvedRefs[callee]`）；语句位置 `g(3)` 发 `Eval(FnInvoke)` 而非报错；
+  - `IrExpr.isDiscardable()` 统一表达式语句门与优化器可丢弃判定（递归检查操作数，`a() == b()` 语句不再丢失调用副作用）；
+  - 闭包捕获分析作用域化（`bound` 随块/循环/嵌套 Lambda 保存恢复），循环变量/内层参数不再压制同名外层变量捕获；
+  - 块 Lambda 非 Unit 返回校验（S-7.4.3）：末条语句必须是表达式且类型匹配（sema E0015 + IRGen 防御性报错）；
+  - 顶层属性自定义访问器生效（不再静默退化为字段读取）；捕获变量未登记时以诊断替代 NPE。
+
 ## [v0.1.0-m4] - 2026-08-08 — M4 IR
 
 ### 新增

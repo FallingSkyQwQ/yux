@@ -36,8 +36,10 @@ import yux.compiler.ir.IrStmt
 import yux.compiler.ir.IrType
 import yux.compiler.sema.FileScope
 import yux.compiler.sema.FunctionSymbol
+import yux.compiler.sema.ParameterSymbol
 import yux.compiler.sema.PropertySymbol
 import yux.compiler.sema.SemaType
+import yux.compiler.sema.Symbol
 import yux.compiler.sema.VariableSymbol
 import yux.compiler.sema.YxClassSymbol
 
@@ -200,32 +202,57 @@ class StmtGen(
                     expr.args.map { exprGen.gen(it, g, fileScope) },
                 ),
             )
-            else -> Unit // 纯值语句无副作用（M4 子集）
+        else -> {
+            // 表达式语句：gen 过程中已发射副作用语句（短路/表达式赋值）；结果若有
+            // 运行时副作用（调用/构造/强制转换等）则显式 Eval，否则为纯值，丢弃
+            val result = exprGen.gen(expr, g, fileScope)
+            if (!result.isDiscardable()) g.emit(IrStmt.Eval(result))
         }
     }
+}
 
     /** 语句位置调用（结果丢弃）。 */
     private fun emitCallStatement(call: YxCall, g: MethodGen, fileScope: FileScope) {
         val args = call.args.map { exprGen.gen(it, g, fileScope) }
+        val argTypes = call.args.mapNotNull { irGen.exprTypes[it] }
         when (val callee = call.callee) {
             is YxIdentifier -> {
                 val sym = irGen.resolvedRefs[callee]
-                if (sym !is FunctionSymbol) error("IRGen: 未解析的调用: ${callee.name}")
-                val irCall = irGen.functionMethods[sym]?.let { IrMethodRef(it) }
-                    ?: IrJvmCall(
-                        name = sym.name,
-                        owner = "yux.core.CoreLib",
-                        static = true,
-                        params = sym.params.map { TypeBridge.toIr(it.type) },
-                        retType = TypeBridge.toIr(sym.returnType ?: SemaType.UnitT),
-                    )
-                g.emit(IrStmt.Call(irCall, null, args, irCall.retType))
+                when (sym) {
+                    is FunctionSymbol -> {
+                        val irCall = irGen.functionMethods[sym]?.let { IrMethodRef(it) }
+                            ?: IrJvmCall(
+                                name = sym.name,
+                                owner = "yux.core.CoreLib",
+                                static = true,
+                                params = sym.params.map { TypeBridge.toIr(it.type) },
+                                retType = TypeBridge.toIr(sym.returnType ?: SemaType.UnitT),
+                            )
+                        g.emit(IrStmt.Call(irCall, null, args, irCall.retType))
+                    }
+                    is VariableSymbol, is ParameterSymbol -> {
+                        // 函数类型局部/参数调用（B3）：语句位置发 Eval(FnInvoke)（结果丢弃）
+                        val fnType = SemaType.resolveVar(symbolType(sym) ?: SemaType.ErrorT)
+                        if (fnType is SemaType.Function) {
+                            g.emit(IrStmt.Eval(IrExpr.FnInvoke(exprGen.gen(callee, g, fileScope), args)))
+                        } else {
+                            error("IRGen: 未解析的调用: ${callee.name}")
+                        }
+                    }
+                    else -> {
+                        // sema 的 typeOfCall 对函数类型局部/参数的调用未登记 resolvedRefs[callee]，
+                        // 退化为本地变量（函数类型值）直查（B3）
+                        val local = g.lookupLocal(callee.name)
+                            ?: error("IRGen: 未解析的调用: ${callee.name}")
+                        g.emit(IrStmt.Eval(IrExpr.FnInvoke(IrExpr.LocalRead(local), args)))
+                    }
+                }
             }
             is YxMemberAccess -> {
                 val receiverType = irGen.exprTypes[callee.receiver]
                 val rt = SemaType.resolveVar(receiverType ?: SemaType.ErrorT)
                 if (callee.receiver is YxTypeReference) {
-                    val static = irGen.resolver.resolveStaticMethod(rt, callee.name)
+                    val static = irGen.resolver.resolveStaticMethod(rt, callee.name, argTypes)
                         ?: error("IRGen: 静态方法不存在: ${callee.name}")
                     g.emit(IrStmt.Call(static, null, args, static.retType))
                     return
@@ -250,9 +277,17 @@ class StmtGen(
             val sym = rt.symbol as YxClassSymbol
             sym.functionsNamed(name).firstOrNull()?.let { fn ->
                 irGen.functionMethods[fn]?.let { IrMethodRef(it) to receiver }
-            }
+            } ?: objectMethodCall(sym.name, name)?.let { it to receiver }
         }
         else -> irGen.resolver.resolveInstanceMethod(rt, name)?.let { it to receiver }
+    }
+
+    /** Object 方法回退（S-8.7.1，与 ExprGen 一致）：语句位置 `u.toString()`。 */
+    private fun objectMethodCall(owner: String, name: String): IrJvmCall? = when (name) {
+        "toString" -> IrJvmCall("toString", owner, static = false, params = emptyList(), retType = IrType.STRING)
+        "equals" -> IrJvmCall("equals", owner, static = false, params = listOf(IrType.ANY), retType = IrType.BOOLEAN)
+        "hashCode" -> IrJvmCall("hashCode", owner, static = false, params = emptyList(), retType = IrType.INT)
+        else -> null
     }
 
     private fun genIf(stmt: YxIf, g: MethodGen, fileScope: FileScope) {
@@ -420,6 +455,13 @@ class StmtGen(
         g.withTarget(out) { gen(stmt, g, fileScope) }
         g.exitScope()
         return out
+    }
+
+    /** 变量/参数符号携带的 SemaType（其他符号无类型）。 */
+    private fun symbolType(sym: Symbol): SemaType? = when (sym) {
+        is VariableSymbol -> sym.type
+        is ParameterSymbol -> sym.type
+        else -> null
     }
 
     /** 复合赋值运算符映射；`=` 返回 null（纯赋值），未知运算符显式报错。 */

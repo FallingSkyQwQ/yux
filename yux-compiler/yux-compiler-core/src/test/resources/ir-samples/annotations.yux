@@ -1,0 +1,15 @@
+@YuxService
+service Database {
+    connect() {
+        print "connect"
+    }
+}
+
+data Player {
+    name:String
+}
+
+fun main() {
+    p = Player("Alex")
+    print p.toString
+}

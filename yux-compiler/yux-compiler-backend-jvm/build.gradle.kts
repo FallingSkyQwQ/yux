@@ -11,6 +11,7 @@ dependencies {
     implementation(libs.asm)
     implementation(libs.asm.commons)
 
+    testImplementation(project(":yux-stdlib"))
     testImplementation(libs.junit.jupiter)
     testImplementation(libs.kotlin.test)
 }

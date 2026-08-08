@@ -843,6 +843,9 @@ class TypeChecker(
                 is YxClassSymbol -> {
                     sym.property(name)?.let { return Triple(it.type ?: SemaType.ErrorT, true, it) }
                     sym.functionsNamed(name).firstOrNull()?.let { return Triple(functionType(it), false, it) }
+                    // 继承 Object 成员（S-8.7.1）：data 类生成 toString/equals/hashCode（S-5.3.1），
+                    // 普通类继承自 Object——成员查找统一回退到 java.lang.Object（M5-11 data 验收依赖）
+                    objectMember(name)?.let { return Triple(functionType(it), false, null) }
                     null
                 }
                 is JvmClassSymbol -> {
@@ -865,6 +868,10 @@ class TypeChecker(
         is SemaType.InferenceVar -> receiver.solution?.let { memberLookup(it, name) }
         else -> null
     }
+
+    /** java.lang.Object 成员回退（用户类继承 Object，S-8.7.1）。 */
+    private fun objectMember(name: String): JvmMethodSymbol? =
+        classPath.resolve("java.lang.Object")?.methodNamed(name)
 
     private fun jvmForBasic(name: String): JvmClassSymbol? = when (name) {
         "String" -> classPath.resolve("java.lang.String")
@@ -891,6 +898,9 @@ class TypeChecker(
                 if (varSym != null) {
                     val t = varSym.type ?: SemaType.ErrorT
                     if (t is SemaType.Function) {
+                        // B3：函数类型局部/参数调用——登记解析符号，供 IRGen 捕获分析
+                        // （自由变量识别）与 FnInvoke 生成使用（与 typeOfIdentifier 一致）
+                        resolvedRefs[callee] = varSym
                         checkFunctionCallArgs(t.params, t.ret, call)
                     } else {
                         diagnostics.error("'${callee.name}' 不是可调用函数", call.span.start, ErrorCodes.UNRESOLVED_REFERENCE)
@@ -971,6 +981,8 @@ class TypeChecker(
                 if (prop != null) {
                     return applyFunctionType(prop.type ?: SemaType.ErrorT, call)
                 }
+                // Object 方法回退（S-8.7.1，与 memberLookup 一致）
+                objectMember(name)?.let { return checkJvmCall(listOf(it), call) }
                 diagnostics.error("方法 '${name}' 不存在于 '${receiverType.render()}'", call.span.start, ErrorCodes.UNRESOLVED_MEMBER)
                 return SemaType.ErrorT
             }
@@ -1014,9 +1026,12 @@ class TypeChecker(
     private fun checkJvmCall(methods: List<JvmMethodSymbol>, call: YxCall): SemaType {
         val byArity = methods.filter { it.params.size == call.args.size }
         val candidates = byArity.ifEmpty { methods }
-        // 重载选择：按实参类型可赋值性优先（避免反射方法顺序不确定性）
+        // 重载选择：实参类型精确匹配优先（反射方法顺序不稳定，Math.max(int,int) 不得落到 double 重载）
         val argTypes = call.args.map { typeOf(it) }
-        val matched = candidates.firstOrNull { m ->
+        val exact = candidates.firstOrNull { m ->
+            m.params.indices.all { i -> TypeAssignability.isExact(argTypes[i], m.params[i]) }
+        }
+        val matched = exact ?: candidates.firstOrNull { m ->
             m.params.indices.all { i -> TypeAssignability.isAssignable(argTypes[i], m.params[i]) }
         } ?: candidates.first()
         return checkFunctionCallArgs(matched.params, matched.returnType, call)
@@ -1107,6 +1122,14 @@ class TypeChecker(
         when (expr.op) {
             "+" -> {
                 if (left is SemaType.Basic && left.name == "String" || right is SemaType.Basic && right.name == "String") {
+                    // 字符串拼接：另一侧须为 String 或数字（S-7.6.1），防 `print "a" + "b"` 落到 Unit
+                    val otherOk = left.isError || right.isError ||
+                        (left is SemaType.Basic && left.name == "String") ||
+                        (right is SemaType.Basic && right.name == "String") ||
+                        SemaType.isNumeric(left) && SemaType.isNumeric(right)
+                    if (!otherOk) {
+                        diagnostics.error("字符串拼接需要 String 或数字操作数（S-7.6.1），实际 ${left.render()} 与 ${right.render()}", expr.span.start, ErrorCodes.INVALID_OPERATOR_OPERAND)
+                    }
                     return SemaType.STRING
                 }
                 return arithmeticResult(expr, left, right, "加法")
@@ -1233,6 +1256,23 @@ class TypeChecker(
             varStack.last()["it"] = itSym
         }
         checkStatements(expr.body)
+        // S-7.4.3：非 Unit 返回时，末条语句必须是表达式且类型匹配（与箭头 Lambda 对称）
+        if (SemaType.resolveVar(ret) != SemaType.UnitT) {
+            val last = expr.body.statements.lastOrNull()
+            when (last) {
+                is YxExprStmt -> {
+                    val tailType = typeOf(last.expr, expected = ret)
+                    if (!tailType.isError) {
+                        inference.expectAssignable(tailType, ret, last.expr.span.start, "Lambda 返回")
+                    }
+                }
+                else -> diagnostics.error(
+                    "块 Lambda 返回类型非 Unit 时末条语句必须是表达式（S-7.4.3）",
+                    expr.span.start,
+                    ErrorCodes.RETURN_TYPE_MISMATCH,
+                )
+            }
+        }
         varStack.removeLast()
         smartCast.exitBlock()
         return expectedFn ?: SemaType.ErrorT

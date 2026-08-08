@@ -7,6 +7,7 @@ import yux.compiler.sema.ClassPathSymbolProvider
 import yux.compiler.sema.JvmClassSymbol
 import yux.compiler.sema.JvmMethodSymbol
 import yux.compiler.sema.SemaType
+import yux.compiler.sema.TypeAssignability
 
 /**
  * JVM 互操作解析（T-M4-4，S-8.5）：给定接收者语义类型与成员名，解析出
@@ -33,17 +34,28 @@ class JvmCallResolver(
         return null
     }
 
-    /** 静态方法：`System.currentTimeMillis()`。 */
-    fun resolveStaticMethod(receiverType: SemaType, name: String): IrJvmCall? {
+    /** 静态方法：`System.currentTimeMillis()`。按实参类型匹配重载（Math.max 等）。 */
+    fun resolveStaticMethod(receiverType: SemaType, name: String, argTypes: List<SemaType> = emptyList()): IrJvmCall? {
         val jc = jvmClassOf(receiverType) ?: return null
-        return jc.staticMethods.firstOrNull { it.name == name }?.let { jvmCall(it, jc.qualifiedName) }
+        val byName = jc.staticMethods.filter { it.name == name }
+        val candidates = if (argTypes.isEmpty()) byName else byName.filter { it.params.size == argTypes.size }
+        val chosen = if (argTypes.isEmpty()) {
+            candidates.firstOrNull()
+        } else {
+            candidates.firstOrNull { m ->
+                m.params.indices.all { i -> TypeAssignability.isExact(argTypes[i], m.params[i]) }
+            } ?: candidates.firstOrNull { m ->
+                m.params.indices.all { i -> TypeAssignability.isAssignable(argTypes[i], m.params[i]) }
+            }
+        }
+        return chosen?.let { jvmCall(it, jc.qualifiedName) }
     }
 
     /** 静态字段：`System.out`。 */
     fun resolveStaticField(receiverType: SemaType, name: String): IrField? {
         val jc = jvmClassOf(receiverType) ?: return null
         return jc.fields.firstOrNull { it.name == name && it.isStatic }
-            ?.let { IrField(it.name, TypeBridge.toIr(it.type), isStatic = true, isFinal = it.isFinal) }
+            ?.let { IrField(it.name, TypeBridge.toIr(it.type), isStatic = true, isFinal = it.isFinal, owner = jc.qualifiedName) }
     }
 
     /** JavaBean setter：`p.name = x` → `setName(x)`。 */

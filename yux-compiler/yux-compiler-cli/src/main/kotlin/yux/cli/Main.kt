@@ -23,6 +23,7 @@ import java.nio.file.Path
  * - `yuxc ast  <file>`  M2 语法：输出 AST dump
  * - `yuxc check <file>` M3 语义：输出类型推导与诊断
  * - `yuxc ir   <file>`  M4 IR：输出 IrModule（含最小优化）
+ * - `yuxc run  <file>`  M5 运行：编译 → 自定义类加载器 → main 执行（T-M5-10）
  */
 fun main(args: Array<String>) {
     // System.exit 会终止 JVM，测试通过 [runCli] 直接取退出码，避免杀测试进程。
@@ -35,6 +36,7 @@ internal fun runCli(args: Array<String>): Int = when (val cmd = args.getOrNull(0
     "ast" -> runAst(args.getOrNull(1))
     "check" -> runCheck(args.getOrNull(1))
     "ir" -> runIr(args.getOrNull(1))
+    "run" -> runRun(args.getOrNull(1))
     else -> {
         System.err.println(
             """
@@ -44,9 +46,10 @@ internal fun runCli(args: Array<String>): Int = when (val cmd = args.getOrNull(0
               ast   <file>   输出语法 AST（M2）
               check <file>   输出语义分析（M3）
               ir    <file>   输出 IR（M4）
+              run   <file>   编译并运行 main（M5）
             """.trimIndent(),
         )
-        if (cmd == "lex" || cmd == "ast" || cmd == "check" || cmd == "ir") {
+        if (cmd == "lex" || cmd == "ast" || cmd == "check" || cmd == "ir" || cmd == "run") {
             System.err.println("错误: 缺少源文件参数")
         }
         1
@@ -115,10 +118,24 @@ private fun runIr(path: String?): Int {
         printDiagnostics(diagnostics)
         return 1
     }
-    val module = IRGen(analysis).generate(mapOf(source.path to decls))
-    BasicOpt.optimize(module)
-    print(IrPrinter.dump(module))
-    return 0
+    try {
+        val module = IRGen(analysis).generate(mapOf(source.path to decls))
+        BasicOpt.optimize(module)
+        print(IrPrinter.dump(module))
+        return 0
+    } catch (e: IllegalStateException) {
+        // IRGen 对语义合法但不支持的输入以 error() 抛异常：转为诊断而非堆栈
+        System.err.println("IRGen 错误: ${e.message}")
+        return 1
+    }
+}
+
+private fun runRun(path: String?): Int {
+    val source = loadSource(path) ?: return 1
+    val compiled = Runner.compile(path!!, source)
+    printDiagnostics(compiled.diagnostics)
+    if (compiled.diagnostics.hasErrors) return 1
+    return Runner().run(compiled)
 }
 
 private fun printDiagnostics(diagnostics: DiagnosticSink) {

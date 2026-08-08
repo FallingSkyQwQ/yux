@@ -1,0 +1,15 @@
+// M5-11 端到端样例：JVM 互操作（S-8.5）
+import java.util.UUID
+
+fun main() {
+    id:UUID? = UUID.randomUUID()
+    t = System.currentTimeMillis()
+    m = Math.max(1, 2)
+    s = "  abc  ".trim()
+    n = s.length
+    print (id != null)
+    print (t > 0)
+    print m
+    print (s == "abc")
+    print n
+}

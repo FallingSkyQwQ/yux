@@ -20,7 +20,7 @@ sealed interface IrStmt {
     ) : IrStmt
 
     /** 语句位置调用（结果丢弃）：`foo(args)` / `obj.foo(args)`（表达式位置用 [IrExpr.Invoke]）。 */
-    class Call(
+    data class Call(
         val callee: IrCallable,
         /** 实例接收者（静态调用为 null）。 */
         val receiver: IrExpr?,
@@ -33,6 +33,11 @@ sealed interface IrStmt {
     data class New(
         val type: IrType,
         val args: List<IrExpr>,
+    ) : IrStmt
+
+    /** 表达式求值并丢弃结果（表达式语句的下沉；结果无用但副作用必须保留）。 */
+    data class Eval(
+        val expr: IrExpr,
     ) : IrStmt
 
     /** 字段访问（[write]=false 读取并丢弃 / true 写入 [value]）。 */
@@ -84,7 +89,7 @@ sealed interface IrStmt {
 }
 
 /** catch 子句（01-§6.6）。 */
-class IrCatch(
+data class IrCatch(
     val paramName: String,
     /** null = 捕获全部（`catch e`）。 */
     val type: IrType?,
