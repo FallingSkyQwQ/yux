@@ -1,0 +1,13 @@
+module {
+ class Interop (file) {
+  static synthetic method $clinit(): Unit {
+  }
+  static method main(): Unit {
+   LocalAssign #0: UUID? = Invoke java.util.UUID.randomUUID []
+   LocalAssign #1: Long = Invoke java.lang.System.currentTimeMillis []
+   LocalAssign #2: Int = Invoke java.lang.Math.max [Const(1), Const(2)]
+   LocalAssign #3: String? = Invoke java.lang.String#trim [Const("  abc  ")]
+   LocalAssign #4: Int = NullGuard(Invoke java.lang.String#length [LocalRead(#3)])
+  }
+ }
+}

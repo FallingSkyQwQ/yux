@@ -1,0 +1,25 @@
+data User {
+    id:Int
+    name:String
+}
+
+data Result T {
+    ok:Boolean
+    value:T
+}
+
+Player {
+    name:String
+    health:Int = 20
+    fun greet() = "Hi $name"
+}
+
+fun add(a:Int, b:Int) = a + b
+
+fun main() {
+    u = User(1, "Steve")
+    r = Result(true, 42)
+    p = Player("Alex", 20)
+    sum = add(1, 2)
+    s = p.greet()
+}

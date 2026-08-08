@@ -1,0 +1,9 @@
+module {
+ class Hello (file) {
+  static synthetic method $clinit(): Unit {
+  }
+  static method main(): Unit {
+   Call yux.core.CoreLib.print [Const("Hello Yux")] : Unit
+  }
+ }
+}

@@ -27,3 +27,6 @@ coverage/
 
 # Mimocode local state
 .mimocode/
+
+# Agent tooling state
+.omo/

@@ -1,0 +1,40 @@
+module {
+ class Nullable (file) {
+  static synthetic method $clinit(): Unit {
+  }
+  static method main(): Unit {
+   LocalAssign #0: Any? = Const(null)
+   Branch IsType(LocalRead(#0), Sword) L0 L1
+   Label L0
+   LocalAssign #1: Int = Invoke Sword.getDamage [LocalRead(#0)]
+   Label L1
+   LocalAssign #2: String = Const("Steve")
+   Branch Compare(NE, LocalRead(#2), Const(null)) L2 L3
+   Label L2
+   LocalAssign #3: Int = Invoke java.lang.String#length [LocalRead(#2)]
+   Label L3
+   LocalAssign #4: Any? = LocalRead(#0)
+   Branch IsType(LocalRead(#4), Sword) L5 L6
+   Label L5
+   Call yux.core.CoreLib.print [Const("sword")] : Unit
+   Goto L4
+   Label L6
+   Label L7
+   Call yux.core.CoreLib.print [Const("none")] : Unit
+   Label L4
+  }
+ }
+ class Sword {
+  field damage: Int
+  property damage: Int [get: getDamage(), set: setDamage(Int)]
+  synthetic method getDamage(): Int {
+   Return FieldRead(this.damage)
+  }
+  synthetic method setDamage(value: Int): Unit {
+   FieldWrite this.damage = LocalRead(#0)
+  }
+  synthetic method <init>(damage: Int): Unit {
+   FieldWrite this.damage = LocalRead(#0)
+  }
+ }
+}
