@@ -76,7 +76,8 @@ class IRGen(
             registerFile(path, decls, analysis.symbolTable.fileFor(path))
         }
         for (cls in module.classes) {
-            for (method in cls.methods) {
+            // 快照：Lambda 下沉会向 cls.methods 追加合成方法（newLambdaMethod）
+            for (method in cls.methods.toList()) {
                 bodyGenerators[method]?.invoke(MethodGen(method, cls))
             }
         }
@@ -130,6 +131,7 @@ class IRGen(
             isFileClass = false,
             isData = sym.isData,
             isService = sym.isService,
+            typeParams = sym.typeParams,
             superType = shape.superType?.let { resolveIrType(it, fileScope) },
             interfaces = shape.interfaces.map { resolveIrType(it, fileScope) },
         )
@@ -180,11 +182,12 @@ class IRGen(
     /** 属性 → backing 字段 + getter/setter 骨架（T-M4-1：属性 → 2 方法映射）。 */
     private fun registerProperty(prop: PropertySymbol, propDecl: YxProperty, irClass: IrClass, fileScope: FileScope): IrProperty {
         val type = TypeBridge.toIr(prop.type ?: SemaType.ErrorT)
+        // isFinal 与 setter 注册同规则（均以 isVal 为准）；val 声明 set 访问器为 sema 拒绝的程序
         val backingField = IrField(
             name = propDecl.name,
             type = type,
             isStatic = false,
-            isFinal = prop.isVal && propDecl.accessors.none { it.kind == YxAccessorKind.SET },
+            isFinal = prop.isVal,
         )
         propertyFields[prop] = backingField
         val getter = registerAccessor(propDecl, prop, irClass, type, YxAccessorKind.GET, backingField, fileScope)
@@ -333,9 +336,9 @@ class IRGen(
 
     // ── 工具 ──────────────────────────────────────────────────────────────────
 
-    /** 文件类名：`main.yux` → `Main`（05-§5.3 文件类）。 */
+    /** 文件类名：`main.yux` → `Main`（05-§5.3 文件类；兼容 Windows 分隔符）。 */
     private fun fileClassName(path: String): String {
-        val stem = path.substringAfterLast('/').substringBeforeLast('.')
+        val stem = path.substringAfterLast('/').substringAfterLast('\\').substringBeforeLast('.')
         return stem.replaceFirstChar { it.uppercaseChar() }
     }
 

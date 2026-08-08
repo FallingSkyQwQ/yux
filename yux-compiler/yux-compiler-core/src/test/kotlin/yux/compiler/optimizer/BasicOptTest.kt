@@ -194,4 +194,58 @@ class BasicOptTest {
         )
         assertFalse(body.any { it is IrStmt.Branch }, "同目标分支应删除: $body")
     }
+
+    @Test
+    fun `min value div and mod by minus one fold per jvm semantics`() {
+        // JVM 上 MIN_VALUE / -1 == MIN_VALUE、MIN_VALUE % -1 == 0（不抛异常，可折叠）
+        val div = optimize(
+            listOf(
+                IrStmt.LocalAssign(local0, IrExpr.Arith(ArithOp.DIV, IrExpr.Const(Int.MIN_VALUE), IrExpr.Const(-1))),
+                IrStmt.Return(IrExpr.LocalRead(local0)),
+            ),
+        )
+        assertEquals(
+            listOf(IrStmt.LocalAssign(local0, IrExpr.Const(Int.MIN_VALUE)), IrStmt.Return(IrExpr.LocalRead(local0))),
+            div,
+        )
+        val mod = optimize(
+            listOf(
+                IrStmt.LocalAssign(local0, IrExpr.Arith(ArithOp.MOD, IrExpr.Const(Int.MIN_VALUE), IrExpr.Const(-1))),
+                IrStmt.Return(IrExpr.LocalRead(local0)),
+            ),
+        )
+        assertEquals(
+            listOf(IrStmt.LocalAssign(local0, IrExpr.Const(0)), IrStmt.Return(IrExpr.LocalRead(local0))),
+            mod,
+        )
+    }
+
+    @Test
+    fun `long min value fold keeps exact semantics`() {
+        val div = optimize(
+            listOf(
+                IrStmt.LocalAssign(local0, IrExpr.Arith(ArithOp.DIV, IrExpr.Const(Long.MIN_VALUE), IrExpr.Const(-1L))),
+                IrStmt.Return(IrExpr.LocalRead(local0)),
+            ),
+        )
+        assertEquals(
+            listOf(IrStmt.LocalAssign(local0, IrExpr.Const(Long.MIN_VALUE)), IrStmt.Return(IrExpr.LocalRead(local0))),
+            div,
+        )
+    }
+
+    @Test
+    fun `long compare near max keeps exact ordering`() {
+        // Long 必须保留原类型比较：转 Double 会丢失 Long.MAX_VALUE 附近精度
+        val body = optimize(
+            listOf(
+                IrStmt.LocalAssign(local0, IrExpr.Compare(CompareOp.GT, IrExpr.Const(Long.MAX_VALUE), IrExpr.Const(Long.MAX_VALUE - 1))),
+                IrStmt.Return(IrExpr.LocalRead(local0)),
+            ),
+        )
+        assertEquals(
+            listOf(IrStmt.LocalAssign(local0, IrExpr.Const(true)), IrStmt.Return(IrExpr.LocalRead(local0))),
+            body,
+        )
+    }
 }

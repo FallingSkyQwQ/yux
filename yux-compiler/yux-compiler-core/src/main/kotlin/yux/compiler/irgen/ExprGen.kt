@@ -231,13 +231,15 @@ class ExprGen(
         val rhsL = g.newLabel()
         val endL = g.newLabel()
         g.emit(IrStmt.LocalAssign(tmp, gen(expr.left, g, fileScope)))
-        val then = gen(expr.right, g, fileScope)
         if (expr.op == "&&") {
             g.emit(IrStmt.Branch(IrExpr.LocalRead(tmp), rhsL, endL))
         } else {
             g.emit(IrStmt.Branch(IrExpr.LocalRead(tmp), endL, rhsL))
         }
         g.emit(IrStmt.Label(rhsL))
+        // 右操作数在 rhsL 标签之后下沉：其发射的语句（嵌套短路/表达式赋值）
+        // 必须落在被守卫的块内，否则短路语义被破坏
+        val then = gen(expr.right, g, fileScope)
         g.emit(IrStmt.LocalAssign(tmp, then))
         g.emit(IrStmt.Label(endL))
         return IrExpr.LocalRead(tmp)
@@ -292,35 +294,45 @@ class ExprGen(
         return method
     }
 
-    /** 表达式位置赋值：发射写入语句后返回写入值。 */
+    /** 表达式位置赋值：发射写入语句后返回写入值（S-6.1 赋值即表达式）。 */
     private fun genAssignValue(expr: yux.compiler.ast.YxAssign, g: MethodGen, fileScope: FileScope): IrExpr {
         val value = gen(expr.value, g, fileScope)
-        when (val t = expr.target) {
-            is YxIdentifier -> {
-                val sym = irGen.resolvedRefs[t]
-                if (sym is VariableSymbol) {
+        return when (val t = expr.target) {
+            is YxIdentifier -> when (val sym = irGen.resolvedRefs[t]) {
+                is VariableSymbol -> {
                     val local = g.lookupLocal(sym.name)
-                    if (local != null) {
-                        g.emit(IrStmt.LocalAssign(local, value))
-                        return IrExpr.LocalRead(local)
-                    }
+                        ?: error("IRGen: 赋值目标未登记: ${sym.name}")
+                    g.emit(IrStmt.LocalAssign(local, value))
+                    IrExpr.LocalRead(local)
                 }
+                is PropertySymbol -> {
+                    val accessor = irGen.propertyAccessors[sym]
+                        ?: error("IRGen: 属性访问器未登记: ${sym.name}")
+                    val setter = accessor.setter ?: error("IRGen: 属性 setter 未登记: ${sym.name}")
+                    val getter = accessor.getter ?: error("IRGen: 属性 getter 未登记: ${sym.name}")
+                    g.emit(IrStmt.Call(IrMethodRef(setter), IrExpr.This, listOf(value), IrType.Void))
+                    IrExpr.Invoke(IrMethodRef(getter), IrExpr.This, emptyList())
+                }
+                else -> error("IRGen: 不支持的赋值目标: ${t.name}")
             }
             is YxMemberAccess -> {
                 val receiverType = SemaType.resolveVar(irGen.exprTypes[t.receiver] ?: SemaType.ErrorT)
                 val receiver = if (t.receiver is YxTypeReference) null else gen(t.receiver, g, fileScope)
                 if (receiverType is SemaType.Declared && receiverType.symbol is YxClassSymbol) {
                     val prop = (receiverType.symbol as YxClassSymbol).property(t.name)
-                    val setter = prop?.let { irGen.propertyAccessors[it]?.setter }
-                    if (setter != null) {
-                        g.emit(IrStmt.Call(IrMethodRef(setter), receiver, listOf(value), IrType.Void))
-                        return IrExpr.Invoke(IrMethodRef(setter), receiver, emptyList())
-                    }
+                        ?: error("IRGen: 赋值目标属性不存在: ${t.name}")
+                    val accessor = irGen.propertyAccessors[prop]
+                        ?: error("IRGen: 属性访问器不存在: ${t.name}")
+                    val setter = accessor.setter ?: error("IRGen: 属性 setter 不存在: ${t.name}")
+                    val getter = accessor.getter ?: error("IRGen: 属性 getter 不存在: ${t.name}")
+                    g.emit(IrStmt.Call(IrMethodRef(setter), receiver, listOf(value), IrType.Void))
+                    IrExpr.Invoke(IrMethodRef(getter), receiver, emptyList())
+                } else {
+                    error("IRGen: 不支持的表达式位置赋值目标: ${t.name}")
                 }
             }
-            else -> Unit
+            else -> error("IRGen: 不支持的赋值目标: ${t::class.simpleName}")
         }
-        return value
     }
 
     // ── 字面量解码（01-§2.3/§2.5；词法器已验证合法转义）────────────────────────
@@ -380,8 +392,9 @@ class ExprGen(
                         append(s.substring(i + 2, i + 6).toInt(16).toChar())
                         i += 6
                     } else {
+                        // 截断的 \uXXXX：退化为字面 `u`，前进越过 `\u` 防重复输出
                         append('u')
-                        i += 1
+                        i += 2
                     }
                 }
                 else -> { append('\\'); i++ }

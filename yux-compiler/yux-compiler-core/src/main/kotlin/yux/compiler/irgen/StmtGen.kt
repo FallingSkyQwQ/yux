@@ -52,7 +52,8 @@ import yux.compiler.sema.YxClassSymbol
 class StmtGen(
     private val irGen: IRGen,
 ) {
-    private val exprGen: ExprGen get() = ExprGen(irGen, irGen.resolver)
+    // 无内部状态：单实例复用（gen 递归中高频访问）
+    private val exprGen: ExprGen = ExprGen(irGen, irGen.resolver)
 
     fun gen(stmt: YxStmt, g: MethodGen, fileScope: FileScope) {
         when (stmt) {
@@ -118,10 +119,13 @@ class StmtGen(
                 is PropertySymbol -> {
                     val setter = irGen.propertyAccessors[sym]?.setter
                         ?: error("IRGen: 属性 setter 未登记: ${sym.name}")
+                    val getter = irGen.propertyAccessors[sym]?.getter
+                        ?: error("IRGen: 属性 getter 未登记: ${sym.name}")
                     val value = if (op == null) {
                         exprGen.gen(stmt.value, g, fileScope)
                     } else {
-                        IrExpr.Arith(op, IrExpr.Invoke(IrMethodRef(setter), IrExpr.This, emptyList()), exprGen.gen(stmt.value, g, fileScope))
+                        // 复合赋值读取侧走 getter（S-5.2 自定义访问器语义）
+                        IrExpr.Arith(op, IrExpr.Invoke(IrMethodRef(getter), IrExpr.This, emptyList()), exprGen.gen(stmt.value, g, fileScope))
                     }
                     g.emit(IrStmt.Call(IrMethodRef(setter), IrExpr.This, listOf(value), IrType.Void))
                 }
@@ -146,21 +150,41 @@ class StmtGen(
             rt is SemaType.Declared && rt.symbol is YxClassSymbol -> {
                 val prop = (rt.symbol as YxClassSymbol).property(target.name)
                     ?: error("IRGen: 赋值目标属性不存在: ${target.name}")
-                val setter = irGen.propertyAccessors[prop]?.setter
-                    ?: error("IRGen: 属性 setter 不存在: ${target.name}")
-                val value = if (op == null) {
-                    exprGen.gen(stmt.value, g, fileScope)
-                } else {
-                    IrExpr.Arith(op, IrExpr.Invoke(IrMethodRef(irGen.propertyAccessors[prop]!!.getter!!), receiver, emptyList()), exprGen.gen(stmt.value, g, fileScope))
+                val accessor = irGen.propertyAccessors[prop]
+                    ?: error("IRGen: 属性访问器未登记: ${target.name}")
+                val setter = accessor.setter ?: error("IRGen: 属性 setter 不存在: ${target.name}")
+                if (op == null) {
+                    g.emit(IrStmt.Call(IrMethodRef(setter), receiver, listOf(exprGen.gen(stmt.value, g, fileScope)), IrType.Void))
+                    return
                 }
-                g.emit(IrStmt.Call(IrMethodRef(setter), receiver, listOf(value), IrType.Void))
+                val getter = accessor.getter ?: error("IRGen: 属性 getter 不存在: ${target.name}")
+                // 复合赋值：接收者求值一次（副作用安全），读取走 getter；静态访问无复合赋值
+                val instanceReceiver = receiver ?: error("IRGen: 复合赋值需要实例接收者: ${target.name}")
+                val receiverLocal = g.newLocal("receiver", TypeBridge.toIr(rt))
+                g.emit(IrStmt.LocalAssign(receiverLocal, instanceReceiver))
+                val value = IrExpr.Arith(
+                    op,
+                    IrExpr.Invoke(IrMethodRef(getter), IrExpr.LocalRead(receiverLocal), emptyList()),
+                    exprGen.gen(stmt.value, g, fileScope),
+                )
+                g.emit(IrStmt.Call(IrMethodRef(setter), IrExpr.LocalRead(receiverLocal), listOf(value), IrType.Void))
             }
             else -> {
                 // JVM JavaBean setter：`p.name = x` → `p.setName(x)`
                 val setter = irGen.resolver.resolveInstanceSetter(rt, target.name)
                     ?: error("IRGen: JVM setter 不存在: ${target.name} on ${rt.render()}")
-                val value = exprGen.gen(stmt.value, g, fileScope)
-                g.emit(IrStmt.Call(setter, receiver, listOf(value), IrType.Void))
+                if (op == null) {
+                    g.emit(IrStmt.Call(setter, receiver, listOf(exprGen.gen(stmt.value, g, fileScope)), IrType.Void))
+                    return
+                }
+                // 复合赋值：读取 getter + op + 写 setter（op 不得静默丢失）
+                val getter = irGen.resolver.resolveInstanceMethod(rt, target.name)
+                    ?: error("IRGen: JVM getter 不存在: ${target.name} on ${rt.render()}")
+                val instanceReceiver = receiver ?: error("IRGen: 复合赋值需要实例接收者: ${target.name}")
+                val receiverLocal = g.newLocal("receiver", TypeBridge.toIr(rt))
+                g.emit(IrStmt.LocalAssign(receiverLocal, instanceReceiver))
+                val value = IrExpr.Arith(op, IrExpr.Invoke(getter, IrExpr.LocalRead(receiverLocal), emptyList()), exprGen.gen(stmt.value, g, fileScope))
+                g.emit(IrStmt.Call(setter, IrExpr.LocalRead(receiverLocal), listOf(value), IrType.Void))
             }
         }
     }
@@ -398,14 +422,15 @@ class StmtGen(
         return out
     }
 
-    /** 复合赋值运算符映射；`=` 返回 null（纯赋值）。 */
+    /** 复合赋值运算符映射；`=` 返回 null（纯赋值），未知运算符显式报错。 */
     private fun compoundOp(op: String): ArithOp? = when (op) {
+        "=" -> null
         "+=" -> ArithOp.ADD
         "-=" -> ArithOp.SUB
         "*=" -> ArithOp.MUL
         "/=" -> ArithOp.DIV
         "%=" -> ArithOp.MOD
-        "..=" -> null // M4 不支持 `..=` 复合赋值（范围拼接语义未定义）
-        else -> null
+        "..=" -> error("IRGen: `..=` 复合赋值不支持（M4）")
+        else -> error("IRGen: 未知复合赋值运算符: $op")
     }
 }

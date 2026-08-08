@@ -237,4 +237,69 @@ class IRGenTest {
         val values = body.filterIsInstance<IrStmt.LocalAssign>().map { (it.value as IrExpr.Const).value }
         assertEquals(listOf(31, 1000L, 3.14f, '\n', "x\ty"), values)
     }
+
+    @Test
+    fun `lambda lowers to synthetic method`() {
+        val module = ir("fun f() { g:(Int)->Int = { it + 1 } }")
+        // 合成方法 lambda$0 存在于 owner 类且含参数 it
+        val main = module.classNamed("Main")!!
+        val lambda = main.methods.firstOrNull { it.isSynthetic && it.name.startsWith("lambda") }
+        assertTrue(lambda != null, "应生成 lambda 合成方法: ${main.methods.map { it.name }}")
+        assertEquals("it", lambda!!.params.single().name)
+        assertEquals(IrType.INT, lambda.returnType)
+        // 调用处为 Lambda 引用
+        val body = methodBody(module, "Main", "f")
+        val lambdaRef = body.mapNotNull { (it as? IrStmt.LocalAssign)?.value as? IrExpr.Lambda }.single()
+        assertEquals(lambda, lambdaRef.target.method)
+    }
+
+    @Test
+    fun `short circuit with side-effecting right operand`() {
+        val module = ir("fun f(a:Boolean) { x = a && sideEffect() }\nfun sideEffect():Boolean { print \"x\"\n return true }")
+        val body = methodBody(module, "Main", "f")
+        // 短路分支后才有右操作数调用：sideEffect 的 Invoke 必须在 rhsL 标签之后
+        val branchIndex = body.indexOfFirst { it is IrStmt.Branch }
+        assertTrue(branchIndex >= 0)
+        val invokeIndex = body.indexOfFirst { stmt ->
+            (stmt as? IrStmt.LocalAssign)?.value is IrExpr.Invoke
+        }
+        assertTrue(invokeIndex > branchIndex, "右操作数调用应在短路分支之后: $body")
+    }
+
+    @Test
+    fun `compound property assignment reads getter and writes setter`() {
+        val module = ir(
+            """
+            Counter {
+                n:Int
+            }
+            fun main() {
+                c = Counter(0)
+                c.n += 5
+            }
+            """.trimIndent(),
+        )
+        val mainBody = methodBody(module, "Main", "main")
+        val calls = mainBody.filterIsInstance<IrStmt.Call>()
+        // 复合赋值：getter 读取（含 op）+ setter 写入
+        val setterCall = calls.last()
+        assertEquals("setN", (setterCall.callee as yux.compiler.ir.IrMethodRef).method.name)
+        val writeValue = setterCall.args.single() as IrExpr.Arith
+        assertEquals(ArithOp.ADD, writeValue.op)
+        val readSide = writeValue.l as IrExpr.Invoke
+        assertEquals("getN", (readSide.target as yux.compiler.ir.IrMethodRef).method.name)
+    }
+
+    @Test
+    fun `expression position assignment returns assigned value`() {
+        val module = ir("fun f() { y = 0\n print (y = 5) }")
+        val body = methodBody(module, "Main", "f")
+        val call = body.filterIsInstance<IrStmt.Call>().single()
+        // print 实参为赋值表达式的值：写入 5 并返回该变量读取
+        val arg = call.args.single()
+        assertTrue(arg is IrExpr.LocalRead, "赋值表达式应返回变量读取: $arg")
+        val assign = body.filterIsInstance<IrStmt.LocalAssign>().last()
+        assertEquals(IrExpr.Const(5), assign.value)
+        assertEquals(assign.local, (arg as IrExpr.LocalRead).local)
+    }
 }

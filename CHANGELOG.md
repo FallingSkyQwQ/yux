@@ -16,7 +16,7 @@
   - Lambda → 合成方法 `lambda$n`（箭头/块/`it`）；字符串插值 → StringTemplate；字面量解码（十六/二进制/`_`/后缀/转义/`\uXXXX`）。
 - `yux.compiler.optimizer.BasicOpt`（T-M4-5，02-§8.4 默认开启）：常量折叠（数值提升/字符串拼接/比较/Not/Neg/Convert，除零不折叠）、死代码消除（终结语句后不可达 + 未读取纯赋值，副作用保留）、冗余跳转消除（Goto-紧随-Label、Branch 同目标）、空守卫折叠（接收者静态 null→默认值 / 静态非空→去守卫）；迭代至不动点（≤3 轮）。
 - `yux.compiler.ir.IrPrinter`（T-M4-6）：稳定文本 dump（golden 逐字节锁定），`yuxc ir <file>` 子命令（IRGen + BasicOpt 后输出）。
-- 测试：60 例新增（IrType 等价/桥接 9、IrStructure 结构 9、IRGen 下沉 13、BasicOpt 优化 12、GoldenIr 快照 5 + CLI 2 例），累计 360 例全绿；golden 快照 `golden/ir/*.ir`（5 个样例：hello/types/controlflow/nullable/interop）。
+- 测试：51 例新增（IrType 等价/桥接 8、IrStructure 结构 8、IRGen 下沉 18、BasicOpt 优化 14、GoldenIr 快照 1 + CLI 2 例），累计 368 例全绿；golden 快照 `golden/ir/*.ir`（5 个样例：hello/types/controlflow/nullable/interop）。
 
 ### 说明
 - 文档 02-§8.2 的补充（M4 落地的必要具体化）：`IrStmt.Label`（Branch/Goto 需标签定位）、`IrExpr.New`（表达式位置构造）、`Not/Neg`（`!`/一元负）、`IsType`（`is T`）、`IrStmt.Call` 增加 receiver 槽位（实例方法语句位置调用）、`IrStmt.FieldAccess` 增加 value 槽位（写值表达）。后端（M5）按源/目标类型区分 `Convert`（CHECKCAST vs i2l）。

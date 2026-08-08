@@ -12,21 +12,18 @@ import yux.compiler.sema.SemaType
 object TypeBridge {
 
     fun toIr(type: SemaType): IrType {
-        val base = when (val t = SemaType.resolveVar(type)) {
+        val resolved = SemaType.resolveVar(type)
+        val base = when (resolved) {
             is SemaType.UnitT -> IrType.Void
             is SemaType.NothingT -> IrType.Nothing
             is SemaType.ErrorT -> IrType.Error
-            is SemaType.Basic -> IrType.Basic(t.name)
-            is SemaType.Declared -> IrType.Declared(t.symbol, t.args.map(::toIr))
-            is SemaType.TypeParam -> IrType.TypeParam(t.name, t.bound?.let(::toIr))
-            is SemaType.Function -> IrType.Function(t.params.map(::toIr), toIr(t.ret))
+            is SemaType.Basic -> IrType.Basic(resolved.name)
+            is SemaType.Declared -> IrType.Declared(resolved.symbol, resolved.args.map(::toIr))
+            is SemaType.TypeParam -> IrType.TypeParam(resolved.name, resolved.bound?.let(::toIr))
+            is SemaType.Function -> IrType.Function(resolved.params.map(::toIr), toIr(resolved.ret))
             is SemaType.InferenceVar -> IrType.Error // 未求解推断变量（不应抵达 IR）
         }
-        return if (base is IrType.Nullable || base is IrType.Void || base is IrType.Nothing || base is IrType.Error) {
-            base
-        } else {
-            // 仅包装「可空标记缺失」的情形（不可空原样返回）
-            if (type.nullable && !base.nullable) IrType.Nullable(base) else base
-        }
+        // 用「已求解值」的可空标记判定是否包装：已求解的可空推断变量（如 Int?）须产出可空 IR
+        return if (resolved.nullable && !base.nullable) IrType.Nullable(base) else base
     }
 }

@@ -1,8 +1,8 @@
 module {
  class Controlflow (file) {
-  static synthetic method $clinit(): Unit
+  static synthetic method $clinit(): Unit {
   }
-  static method main(): Unit
+  static method main(): Unit {
    LocalAssign #0: Int = Const(10)
    Branch Compare(LE, LocalRead(#0), Const(0)) L0 L2
    Label L0

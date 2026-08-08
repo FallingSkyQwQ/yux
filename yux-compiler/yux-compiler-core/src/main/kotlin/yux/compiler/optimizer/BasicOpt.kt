@@ -126,17 +126,9 @@ object BasicOpt {
         if (lv !is Number || rv !is Number) return IrExpr.Arith(op, l, r)
         if (op == ArithOp.DIV || op == ArithOp.MOD) {
             if (isZero(rv)) return IrExpr.Arith(op, l, r) // 除零不折叠，保留运行时语义
-            // JVM 上 MIN_VALUE / -1 抛 ArithmeticException：折叠会崩编译期，故不折叠
-            if (isMinOverNegOne(op, lv, rv)) return IrExpr.Arith(op, l, r)
+            // MIN_VALUE / -1 在 JVM 上结果为 MIN_VALUE、% -1 为 0（不抛异常），可安全折叠
         }
         return IrExpr.Const(compute(op, lv, rv))
-    }
-
-    /** `Int/Long.MIN_VALUE 除以 -1`：JVM 抛异常（IDIV 特殊情形），折叠会崩编译期。 */
-    private fun isMinOverNegOne(op: ArithOp, l: Number, r: Number): Boolean = when {
-        l is Int && r is Int -> (op == ArithOp.DIV || op == ArithOp.MOD) && l == Int.MIN_VALUE && r == -1
-        l is Long && r is Long -> (op == ArithOp.DIV || op == ArithOp.MOD) && l == Long.MIN_VALUE && r == -1L
-        else -> false
     }
 
     private fun foldCompare(op: CompareOp, l: IrExpr, r: IrExpr): IrExpr {
@@ -163,6 +155,16 @@ object BasicOpt {
     /** 数值/字符串序比较；不可比较类型返回 null（不折叠）。 */
     @Suppress("UNCHECKED_CAST")
     private fun compareOrder(op: CompareOp, l: Any, r: Any): Boolean? {
+        if (l is Long && r is Long) {
+            // Long 保留原类型比较（转 Double 会丢失 Long.MAX_VALUE 附近精度）
+            return when (op) {
+                CompareOp.LT -> l < r
+                CompareOp.LE -> l <= r
+                CompareOp.GT -> l > r
+                CompareOp.GE -> l >= r
+                else -> null
+            }
+        }
         if (l is Number && r is Number) {
             val lv = l.toDouble()
             val rv = r.toDouble()
@@ -255,7 +257,7 @@ object BasicOpt {
         return changed
     }
 
-    /** 未读取的纯 RHS 局部赋值移除（副作用表达式保留）。 */
+    /** 未读取的局部赋值移除：仅当 RHS 可安全丢弃（无副作用且不抛异常）。 */
     private fun removeUnusedAssigns(body: MutableList<IrStmt>): Boolean {
         val read = readLocals(body)
         var changed = false
@@ -263,9 +265,9 @@ object BasicOpt {
         for (stmt in body) {
             val keep = when (stmt) {
                 is IrStmt.LocalAssign -> {
-                    val sideEffect = hasSideEffect(stmt.value)
-                    if (!sideEffect && stmt.local !in read) changed = true
-                    sideEffect || stmt.local in read
+                    val discardable = isDiscardable(stmt.value)
+                    if (discardable && stmt.local !in read) changed = true
+                    !discardable || stmt.local in read
                 }
                 else -> true
             }
@@ -276,6 +278,26 @@ object BasicOpt {
             body.addAll(out)
         }
         return changed
+    }
+
+    /**
+     * 表达式可丢弃判定：可安全丢弃 = 无副作用且不抛异常。
+     * 可能抛异常者不可丢弃：除/模（除零）、可空接收者字段读取（NPE）、
+     * 强制 Convert（CCE）、Invoke/New/StringTemplate（任意被调代码）。
+     */
+    private fun isDiscardable(e: IrExpr): Boolean = when (e) {
+        is IrExpr.Const, is IrExpr.This, is IrExpr.LocalRead -> true
+        is IrExpr.FieldRead -> e.receiver == null || e.receiver is IrExpr.This // 静态/this 字段读安全；其他接收者可能 NPE
+        is IrExpr.Arith -> {
+            val throwingDiv = e.op == ArithOp.DIV || e.op == ArithOp.MOD
+            !throwingDiv && isDiscardable(e.l) && isDiscardable(e.r)
+        }
+        is IrExpr.Compare -> isDiscardable(e.l) && isDiscardable(e.r)
+        is IrExpr.Not -> isDiscardable(e.operand)
+        is IrExpr.Neg -> isDiscardable(e.operand)
+        is IrExpr.IsType -> isDiscardable(e.expr)
+        is IrExpr.NullGuard -> isDiscardable(e.expr) // 守卫吞掉 NPE，可丢弃（结果未用）
+        else -> false // Invoke/New/Convert/StringTemplate 不保证安全
     }
 
     /** 收集整个方法体中所有被读取的局部（含 Try 子块）。 */
@@ -321,20 +343,7 @@ object BasicOpt {
         return read
     }
 
-    private fun hasSideEffect(e: IrExpr): Boolean = when (e) {
-        is IrExpr.Invoke -> true
-        is IrExpr.New -> true
-        is IrExpr.StringTemplate -> true
-        is IrExpr.NullGuard -> hasSideEffect(e.expr)
-        is IrExpr.FieldRead -> e.receiver?.let { hasSideEffect(it) } ?: false
-        is IrExpr.Arith -> hasSideEffect(e.l) || hasSideEffect(e.r)
-        is IrExpr.Compare -> hasSideEffect(e.l) || hasSideEffect(e.r)
-        is IrExpr.Not -> hasSideEffect(e.operand)
-        is IrExpr.Neg -> hasSideEffect(e.operand)
-        is IrExpr.Convert -> hasSideEffect(e.expr)
-        is IrExpr.IsType -> hasSideEffect(e.expr)
-        else -> false
-    }
+
 
     // ── 冗余跳转消除 ───────────────────────────────────────────────────────────
 
@@ -353,8 +362,8 @@ object BasicOpt {
                     continue
                 }
             }
-            // Branch(c, L, L) → 删 Branch（两侧同目标）
-            if (stmt is IrStmt.Branch && stmt.then.name == stmt.elseLabel.name) {
+            // Branch(c, L, L) → 删 Branch（两侧同目标）；条件有副作用/可抛异常则保留
+            if (stmt is IrStmt.Branch && stmt.then.name == stmt.elseLabel.name && isDiscardable(stmt.cond)) {
                 changed = true
                 i++
                 continue

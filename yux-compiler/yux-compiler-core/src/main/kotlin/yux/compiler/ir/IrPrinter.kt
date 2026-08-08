@@ -25,7 +25,8 @@ object IrPrinter {
             cls.isFileClass -> " (file)"
             else -> ""
         }
-        append(line(depth, "class ${cls.name}$kind {"))
+        val typeParams = if (cls.typeParams.isEmpty()) "" else "<${cls.typeParams.joinToString(", ")}>"
+        append(line(depth, "class ${cls.name}$typeParams$kind {"))
         cls.fields.forEach { append(line(depth + 1, "field ${it.name}: ${it.type.render()}")) }
         cls.properties.forEach { append(renderProperty(it, depth + 1)) }
         cls.methods.forEach { append(renderMethod(it, depth + 1)) }
@@ -52,7 +53,7 @@ object IrPrinter {
             append("method ")
         }
         val params = method.params.joinToString(", ") { "${it.name}: ${it.type.render()}" }
-        append(line(depth, "$prefix${method.name}($params): ${method.returnType.render()}"))
+        append(line(depth, "$prefix${method.name}($params): ${method.returnType.render()} {"))
         method.body.forEach { append(renderStmt(it, depth + 1)) }
         append(line(depth, "}"))
     }

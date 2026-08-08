@@ -1,8 +1,8 @@
 module {
  class Interop (file) {
-  static synthetic method $clinit(): Unit
+  static synthetic method $clinit(): Unit {
   }
-  static method main(): Unit
+  static method main(): Unit {
    LocalAssign #0: UUID? = Invoke java.util.UUID.randomUUID []
    LocalAssign #1: Long = Invoke java.lang.System.currentTimeMillis []
    LocalAssign #2: Int = Invoke java.lang.Math.max [Const(1), Const(2)]

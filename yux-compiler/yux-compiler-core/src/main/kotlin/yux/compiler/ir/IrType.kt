@@ -139,7 +139,8 @@ sealed class IrType {
         /** 数字类型的默认零值（02-§9.4：NullGuard null 分支产生类型默认值）。 */
         fun defaultValue(type: IrType): Any? = when (val t = type.nonNull()) {
             is Basic -> when (t.name) {
-                "Int", "Byte" -> 0
+                "Int" -> 0
+                "Byte" -> 0.toByte()
                 "Long" -> 0L
                 "Float" -> 0.0f
                 "Double" -> 0.0

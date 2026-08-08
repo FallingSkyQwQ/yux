@@ -36,6 +36,7 @@ yux/
 ./gradlew :yux-compiler:yux-compiler-cli:run --args="lex <file.yux>"   # M1 词法
 ./gradlew :yux-compiler:yux-compiler-cli:run --args="ast <file.yux>"   # M2 语法
 ./gradlew :yux-compiler:yux-compiler-cli:run --args="check <file.yux>" # M3 语义
+./gradlew :yux-compiler:yux-compiler-cli:run --args="ir <file.yux>"    # M4 IR
 ```
 
 ## 里程碑状态

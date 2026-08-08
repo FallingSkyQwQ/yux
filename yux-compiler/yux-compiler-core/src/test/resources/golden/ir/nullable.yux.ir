@@ -1,8 +1,8 @@
 module {
  class Nullable (file) {
-  static synthetic method $clinit(): Unit
+  static synthetic method $clinit(): Unit {
   }
-  static method main(): Unit
+  static method main(): Unit {
    LocalAssign #0: Any? = Const(null)
    Branch IsType(LocalRead(#0), Sword) L0 L1
    Label L0
@@ -27,13 +27,13 @@ module {
  class Sword {
   field damage: Int
   property damage: Int [get: getDamage(), set: setDamage(Int)]
-  synthetic method getDamage(): Int
+  synthetic method getDamage(): Int {
    Return FieldRead(this.damage)
   }
-  synthetic method setDamage(value: Int): Unit
+  synthetic method setDamage(value: Int): Unit {
    FieldWrite this.damage = LocalRead(#0)
   }
-  synthetic method <init>(damage: Int): Unit
+  synthetic method <init>(damage: Int): Unit {
    FieldWrite this.damage = LocalRead(#0)
   }
  }

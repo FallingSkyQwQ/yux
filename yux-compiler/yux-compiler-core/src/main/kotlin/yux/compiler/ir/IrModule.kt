@@ -21,6 +21,8 @@ class IrClass(
     val isFileClass: Boolean,
     val isData: Boolean,
     val isService: Boolean,
+    /** 类型参数名列表（01-§4.3.3；泛型类如 `data Result T`）。 */
+    val typeParams: List<String> = emptyList(),
     /** 单继承父类型（S-8.7.1）。 */
     val superType: IrType?,
     val interfaces: List<IrType>,
@@ -61,8 +63,11 @@ data class IrParam(
     val type: IrType,
 )
 
-/** 局部变量（方法作用域，[index] 为方法内槽位，从 0 起：参数优先）。 */
-data class IrLocal(
+/**
+ * 局部变量（方法作用域）。[index] 为**编译期序号**（0 起：参数优先），
+ * 非 JVM 槽位（Long/Double 双槽与实例接收者槽由后端 M5 另行分配）。
+ */
+class IrLocal(
     val name: String,
     val type: IrType,
     val index: Int,

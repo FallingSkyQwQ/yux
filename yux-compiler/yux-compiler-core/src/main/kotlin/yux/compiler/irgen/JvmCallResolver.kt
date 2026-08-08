@@ -71,10 +71,8 @@ class JvmCallResolver(
         }
         is SemaType.Declared -> {
             val sym = iterable.symbol
+            // JvmClassSymbol.isIterable() 覆盖 Iterable 本身与所有实现类（List/Set/...）
             when {
-                sym is JvmClassSymbol && sym.qualifiedName == "java.lang.Iterable" -> iterable.args.getOrNull(0) ?: SemaType.ANY
-                sym is JvmClassSymbol && sym.qualifiedName == "java.util.List" -> iterable.args.getOrNull(0) ?: SemaType.ANY
-                sym is JvmClassSymbol && sym.qualifiedName == "java.util.Set" -> iterable.args.getOrNull(0) ?: SemaType.ANY
                 sym is JvmClassSymbol && sym.isIterable() -> iterable.args.getOrNull(0) ?: SemaType.ANY
                 sym is yux.compiler.sema.YxClassSymbol && iterable.args.isNotEmpty() -> iterable.args[0]
                 else -> null
