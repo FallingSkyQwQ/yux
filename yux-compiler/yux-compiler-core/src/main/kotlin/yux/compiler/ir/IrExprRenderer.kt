@@ -21,9 +21,13 @@ internal object IrExprRenderer {
         is IrExpr.Convert -> "Convert(${render(expr.expr)}, ${expr.to.render()})"
         is IrExpr.IsType -> "IsType(${render(expr.expr)}, ${expr.type.render()})"
         is IrExpr.Invoke -> renderInvoke(expr)
+        is IrExpr.FnInvoke -> "FnInvoke ${render(expr.fn)} [${exprList(expr.args)}]"
         is IrExpr.StringTemplate -> "StringTemplate [${exprList(expr.parts)}]"
         is IrExpr.NullGuard -> "NullGuard(${render(expr.expr)})"
-        is IrExpr.Lambda -> "Lambda ${expr.target.method.name}"
+        is IrExpr.Lambda -> {
+            val suffix = if (expr.captures.isEmpty()) "" else " [${exprList(expr.captures)}]"
+            "Lambda ${expr.target.method.name}$suffix"
+        }
     }
 
     private fun renderInvoke(expr: IrExpr.Invoke): String {

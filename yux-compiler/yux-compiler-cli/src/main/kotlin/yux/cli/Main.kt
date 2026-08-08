@@ -115,10 +115,16 @@ private fun runIr(path: String?): Int {
         printDiagnostics(diagnostics)
         return 1
     }
-    val module = IRGen(analysis).generate(mapOf(source.path to decls))
-    BasicOpt.optimize(module)
-    print(IrPrinter.dump(module))
-    return 0
+    try {
+        val module = IRGen(analysis).generate(mapOf(source.path to decls))
+        BasicOpt.optimize(module)
+        print(IrPrinter.dump(module))
+        return 0
+    } catch (e: IllegalStateException) {
+        // IRGen 对语义合法但不支持的输入以 error() 抛异常：转为诊断而非堆栈
+        System.err.println("IRGen 错误: ${e.message}")
+        return 1
+    }
 }
 
 private fun printDiagnostics(diagnostics: DiagnosticSink) {

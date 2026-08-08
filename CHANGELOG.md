@@ -2,6 +2,19 @@
 
 本文件记录各里程碑的显著变更（含 breaking changes，见 06-§3）。
 
+## [Unreleased]
+
+### 变更
+- 严格 Git Workflow（M5 起，06-§7.4）：开发统一在 `feature/m5-jvm-backend` 上进行，`main` 仅接受 PR 合入；新增 `AGENTS.md` 固化约定；清理本地与远端旧里程碑分支。
+
+### 修复
+- IRGen 高阶函数/闭包正确性（M5 前端准备，CodeRabbit 审查后回归）：
+  - 函数类型局部/参数调用在 Lambda 体内可解析并捕获（sema 登记 `resolvedRefs[callee]`）；语句位置 `g(3)` 发 `Eval(FnInvoke)` 而非报错；
+  - `IrExpr.isDiscardable()` 统一表达式语句门与优化器可丢弃判定（递归检查操作数，`a() == b()` 语句不再丢失调用副作用）；
+  - 闭包捕获分析作用域化（`bound` 随块/循环/嵌套 Lambda 保存恢复），循环变量/内层参数不再压制同名外层变量捕获；
+  - 块 Lambda 非 Unit 返回校验（S-7.4.3）：末条语句必须是表达式且类型匹配（sema E0015 + IRGen 防御性报错）；
+  - 顶层属性自定义访问器生效（不再静默退化为字段读取）；捕获变量未登记时以诊断替代 NPE。
+
 ## [v0.1.0-m4] - 2026-08-08 — M4 IR
 
 ### 新增

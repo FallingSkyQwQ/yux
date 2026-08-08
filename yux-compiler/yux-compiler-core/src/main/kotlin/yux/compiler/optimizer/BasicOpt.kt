@@ -19,7 +19,7 @@ import yux.compiler.ir.IrType
  * 4. **空守卫折叠**（02-§8.4）：接收者静态非空时去守卫；接收者静态为 null 时
  *    折叠为类型默认值。
  *
- * 在 [IrModule] 方法体上**原地**操作，重复迭代至不动点（最多 3 轮）。
+ * 在 [IrModule] 方法体上**原地**操作，重复迭代至不动点（最多 3 轮；收敛即提前退出）。
  */
 object BasicOpt {
 
@@ -27,9 +27,9 @@ object BasicOpt {
     fun optimize(module: IrModule) {
         for (cls in module.classes) {
             for (method in cls.methods) {
-                // 迭代至不动点（折叠→DCE→折叠 可互相激活；最多 3 轮）
-                repeat(3) {
-                    if (!optimizeBody(method.body)) return@repeat
+                // 迭代至不动点（折叠→DCE→折叠 可互相激活；最多 3 轮，收敛提前退出）
+                for (i in 0 until 3) {
+                    if (!optimizeBody(method.body)) break
                 }
             }
         }
@@ -61,8 +61,9 @@ object BasicOpt {
 
     private fun foldStmt(stmt: IrStmt): IrStmt = when (stmt) {
         is IrStmt.LocalAssign -> IrStmt.LocalAssign(stmt.local, foldExpr(stmt.value))
-        is IrStmt.Call -> IrStmt.Call(stmt.callee, stmt.receiver, stmt.args.map(::foldExpr), stmt.ret)
+        is IrStmt.Call -> IrStmt.Call(stmt.callee, stmt.receiver?.let(::foldExpr), stmt.args.map(::foldExpr), stmt.ret)
         is IrStmt.New -> IrStmt.New(stmt.type, stmt.args.map(::foldExpr))
+        is IrStmt.Eval -> IrStmt.Eval(foldExpr(stmt.expr))
         is IrStmt.FieldAccess -> stmt.value?.let { IrStmt.FieldAccess(stmt.receiver, stmt.field, stmt.write, foldExpr(it)) } ?: stmt
         is IrStmt.Branch -> foldBranch(stmt)
         is IrStmt.Return -> stmt.value?.let { IrStmt.Return(foldExpr(it)) } ?: stmt
@@ -110,6 +111,8 @@ object BasicOpt {
             is IrExpr.NullGuard -> foldNullGuard(expr)
             is IrExpr.New -> IrExpr.New(expr.type, expr.args.map(::foldExpr))
             is IrExpr.Invoke -> IrExpr.Invoke(expr.target, expr.receiver?.let(::foldExpr), expr.args.map(::foldExpr))
+            is IrExpr.FnInvoke -> IrExpr.FnInvoke(foldExpr(expr.fn), expr.args.map(::foldExpr))
+            is IrExpr.Lambda -> IrExpr.Lambda(expr.target, expr.captures.map(::foldExpr))
             is IrExpr.FieldRead -> expr.receiver?.let { IrExpr.FieldRead(foldExpr(it), expr.field) } ?: expr
             is IrExpr.StringTemplate -> IrExpr.StringTemplate(expr.parts.map(::foldExpr))
             is IrExpr.IsType -> IrExpr.IsType(foldExpr(expr.expr), expr.type)
@@ -265,7 +268,7 @@ object BasicOpt {
         for (stmt in body) {
             val keep = when (stmt) {
                 is IrStmt.LocalAssign -> {
-                    val discardable = isDiscardable(stmt.value)
+                    val discardable = stmt.value.isDiscardable()
                     if (discardable && stmt.local !in read) changed = true
                     !discardable || stmt.local in read
                 }
@@ -281,26 +284,8 @@ object BasicOpt {
     }
 
     /**
-     * 表达式可丢弃判定：可安全丢弃 = 无副作用且不抛异常。
-     * 可能抛异常者不可丢弃：除/模（除零）、可空接收者字段读取（NPE）、
-     * 强制 Convert（CCE）、Invoke/New/StringTemplate（任意被调代码）。
+     * 收集整个方法体中所有被读取的局部（含 Try 子块）。
      */
-    private fun isDiscardable(e: IrExpr): Boolean = when (e) {
-        is IrExpr.Const, is IrExpr.This, is IrExpr.LocalRead -> true
-        is IrExpr.FieldRead -> e.receiver == null || e.receiver is IrExpr.This // 静态/this 字段读安全；其他接收者可能 NPE
-        is IrExpr.Arith -> {
-            val throwingDiv = e.op == ArithOp.DIV || e.op == ArithOp.MOD
-            !throwingDiv && isDiscardable(e.l) && isDiscardable(e.r)
-        }
-        is IrExpr.Compare -> isDiscardable(e.l) && isDiscardable(e.r)
-        is IrExpr.Not -> isDiscardable(e.operand)
-        is IrExpr.Neg -> isDiscardable(e.operand)
-        is IrExpr.IsType -> isDiscardable(e.expr)
-        is IrExpr.NullGuard -> isDiscardable(e.expr) // 守卫吞掉 NPE，可丢弃（结果未用）
-        else -> false // Invoke/New/Convert/StringTemplate 不保证安全
-    }
-
-    /** 收集整个方法体中所有被读取的局部（含 Try 子块）。 */
     private fun readLocals(body: List<IrStmt>): Set<yux.compiler.ir.IrLocal> {
         val read = HashSet<yux.compiler.ir.IrLocal>()
         fun walkExpr(e: IrExpr?) {
@@ -316,6 +301,8 @@ object BasicOpt {
                 is IrExpr.Convert -> walkExpr(e.expr)
                 is IrExpr.IsType -> walkExpr(e.expr)
                 is IrExpr.Invoke -> { walkExpr(e.receiver); e.args.forEach(::walkExpr) }
+                is IrExpr.FnInvoke -> { walkExpr(e.fn); e.args.forEach(::walkExpr) }
+                is IrExpr.Lambda -> e.captures.forEach(::walkExpr)
                 is IrExpr.StringTemplate -> e.parts.forEach(::walkExpr)
                 is IrExpr.NullGuard -> walkExpr(e.expr)
                 else -> Unit
@@ -326,6 +313,7 @@ object BasicOpt {
                 is IrStmt.LocalAssign -> walkExpr(s.value)
                 is IrStmt.Call -> { walkExpr(s.receiver); s.args.forEach(::walkExpr) }
                 is IrStmt.New -> s.args.forEach(::walkExpr)
+                is IrStmt.Eval -> walkExpr(s.expr)
                 is IrStmt.FieldAccess -> { walkExpr(s.receiver); walkExpr(s.value) }
                 is IrStmt.Branch -> walkExpr(s.cond)
                 is IrStmt.Return -> walkExpr(s.value)
@@ -363,7 +351,7 @@ object BasicOpt {
                 }
             }
             // Branch(c, L, L) → 删 Branch（两侧同目标）；条件有副作用/可抛异常则保留
-            if (stmt is IrStmt.Branch && stmt.then.name == stmt.elseLabel.name && isDiscardable(stmt.cond)) {
+            if (stmt is IrStmt.Branch && stmt.then.name == stmt.elseLabel.name && stmt.cond.isDiscardable()) {
                 changed = true
                 i++
                 continue
@@ -439,7 +427,7 @@ object BasicOpt {
         is Long -> -v
         is Float -> -v
         is Double -> -v
-        is Byte -> -v
+        is Byte -> (-v).toByte() // Kotlin `-v` 对 Byte 返回 Int，回转为 Byte 保持 IR 类型
         else -> v
     }
 }

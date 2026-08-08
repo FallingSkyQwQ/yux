@@ -9,6 +9,7 @@ import yux.compiler.ir.IrField
 import yux.compiler.ir.IrLabel
 import yux.compiler.ir.IrLocal
 import yux.compiler.ir.IrMethod
+import yux.compiler.ir.IrMethodRef
 import yux.compiler.ir.IrModule
 import yux.compiler.ir.IrStmt
 import yux.compiler.ir.IrType
@@ -25,10 +26,10 @@ class BasicOptTest {
     private val local0 = IrLocal("x", IrType.INT, 0)
     private val local1 = IrLocal("y", IrType.INT, 1)
 
-    /** 构造单方法模块并对 body 执行优化。 */
-    private fun optimize(body: List<IrStmt>): List<IrStmt> {
+    /** 构造单方法（Main.main，owner 为新建 Main 类）。 */
+    private fun buildMethod(): IrMethod {
         val cls = IrClass("Main", isFileClass = true, isData = false, isService = false, superType = null, interfaces = emptyList())
-        val method = IrMethod(
+        return IrMethod(
             name = "main",
             params = emptyList(),
             returnType = IrType.Void,
@@ -39,11 +40,19 @@ class BasicOptTest {
             isSynthetic = false,
             owner = cls,
         )
-        method.body.addAll(body)
-        cls.methods.add(method)
-        BasicOpt.optimize(IrModule(mutableListOf(cls)))
-        return method.body
     }
+
+    /** 构造单方法模块并对 body 执行优化；返回已优化方法（body 就地优化）。 */
+    private fun optimizeMethod(body: List<IrStmt>): IrMethod {
+        val method = buildMethod()
+        method.body.addAll(body)
+        method.owner!!.methods.add(method)
+        BasicOpt.optimize(IrModule(mutableListOf(method.owner!!)))
+        return method
+    }
+
+    /** 构造单方法模块并对 body 执行优化。 */
+    private fun optimize(body: List<IrStmt>): List<IrStmt> = optimizeMethod(body).body
 
     @Test
     fun `2+3 folds to 5`() {
@@ -249,5 +258,68 @@ class BasicOptTest {
             listOf(IrStmt.LocalAssign(boolLocal, IrExpr.Const(true)), IrStmt.Return(IrExpr.LocalRead(boolLocal))),
             body,
         )
+    }
+
+    @Test
+    fun `negate byte keeps byte type`() {
+        val body = optimize(
+            listOf(
+                IrStmt.LocalAssign(local0, IrExpr.Neg(IrExpr.Const(128.toByte()))),
+                IrStmt.Return(IrExpr.LocalRead(local0)),
+            ),
+        )
+        assertEquals(IrExpr.Const((-128).toByte()), (body[0] as IrStmt.LocalAssign).value)
+    }
+
+    @Test
+    fun `call statement receiver is folded`() {
+        val target = yux.compiler.ir.IrJvmCall("print", "yux.core.CoreLib", static = true, params = emptyList(), retType = IrType.Void)
+        val body = optimize(
+            listOf(
+                IrStmt.Call(target, IrExpr.Arith(ArithOp.ADD, IrExpr.Const(1), IrExpr.Const(2)), emptyList(), IrType.Void),
+            ),
+        )
+        assertEquals(IrExpr.Const(3), (body[0] as IrStmt.Call).receiver)
+    }
+
+    @Test
+    fun `eval with discardable pure expr is kept`() {
+        val body = optimize(listOf(IrStmt.Eval(IrExpr.Const(1))))
+        // Eval 是语句：即使表达式可丢弃，语句本身必须保留（副作用载体）
+        assertEquals(listOf(IrStmt.Eval(IrExpr.Const(1))), body)
+    }
+
+    @Test
+    fun `fn invoke is never removed`() {
+        val body = optimize(
+            listOf(
+                IrStmt.LocalAssign(local0, IrExpr.FnInvoke(IrExpr.LocalRead(local0), listOf(IrExpr.Const(1)))),
+                IrStmt.Return(null),
+            ),
+        )
+        // FnInvoke 可能有副作用：赋值必须保留
+        assertTrue(body[0] is IrStmt.LocalAssign, "FnInvoke 赋值不得删除: $body")
+    }
+
+    @Test
+    fun `lambda captures are folded`() {
+        val method = buildMethod()
+        method.body.addAll(
+            listOf(
+                IrStmt.LocalAssign(
+                    local0,
+                    IrExpr.Lambda(
+                        IrMethodRef(method),
+                        listOf(IrExpr.Arith(ArithOp.ADD, IrExpr.Const(1), IrExpr.Const(2))),
+                    ),
+                ),
+                IrStmt.Return(IrExpr.LocalRead(local0)),
+            ),
+        )
+        method.owner!!.methods.add(method)
+        BasicOpt.optimize(IrModule(mutableListOf(method.owner!!)))
+        val lambda = (method.body[0] as IrStmt.LocalAssign).value as IrExpr.Lambda
+        // IrMethodRef 为普通类（引用相等），断言捕获实参折叠结果而非整个 Lambda
+        assertEquals(listOf(IrExpr.Const(3)), lambda.captures)
     }
 }

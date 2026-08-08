@@ -63,6 +63,7 @@ module {
    FieldWrite this.health = LocalRead(#0)
   }
   synthetic method <init>(name: String, health: Int): Unit {
+   FieldWrite this.health = Const(20)
    FieldWrite this.name = LocalRead(#0)
    FieldWrite this.health = LocalRead(#1)
   }

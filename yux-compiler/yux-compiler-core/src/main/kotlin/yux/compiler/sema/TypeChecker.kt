@@ -891,6 +891,9 @@ class TypeChecker(
                 if (varSym != null) {
                     val t = varSym.type ?: SemaType.ErrorT
                     if (t is SemaType.Function) {
+                        // B3：函数类型局部/参数调用——登记解析符号，供 IRGen 捕获分析
+                        // （自由变量识别）与 FnInvoke 生成使用（与 typeOfIdentifier 一致）
+                        resolvedRefs[callee] = varSym
                         checkFunctionCallArgs(t.params, t.ret, call)
                     } else {
                         diagnostics.error("'${callee.name}' 不是可调用函数", call.span.start, ErrorCodes.UNRESOLVED_REFERENCE)
@@ -1233,6 +1236,23 @@ class TypeChecker(
             varStack.last()["it"] = itSym
         }
         checkStatements(expr.body)
+        // S-7.4.3：非 Unit 返回时，末条语句必须是表达式且类型匹配（与箭头 Lambda 对称）
+        if (SemaType.resolveVar(ret) != SemaType.UnitT) {
+            val last = expr.body.statements.lastOrNull()
+            when (last) {
+                is YxExprStmt -> {
+                    val tailType = typeOf(last.expr, expected = ret)
+                    if (!tailType.isError) {
+                        inference.expectAssignable(tailType, ret, last.expr.span.start, "Lambda 返回")
+                    }
+                }
+                else -> diagnostics.error(
+                    "块 Lambda 返回类型非 Unit 时末条语句必须是表达式（S-7.4.3）",
+                    expr.span.start,
+                    ErrorCodes.RETURN_TYPE_MISMATCH,
+                )
+            }
+        }
         varStack.removeLast()
         smartCast.exitBlock()
         return expectedFn ?: SemaType.ErrorT

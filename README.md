@@ -57,6 +57,7 @@ yux/
 - [`docs/02-Yux-编译器架构.md`](docs/02-Yux-编译器架构.md) — 编译器架构
 - [`docs/03-YuxPlugin-SDK-设计.md`](docs/03-YuxPlugin-SDK-设计.md) — SDK 设计
 - [`docs/06-开发计划.md`](docs/06-开发计划.md) — 里程碑开发计划
+- [`AGENTS.md`](AGENTS.md) — 开发与 Git 协作约定
 
 ## License
 

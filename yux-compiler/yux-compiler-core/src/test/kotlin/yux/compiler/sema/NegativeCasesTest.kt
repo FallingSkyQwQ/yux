@@ -150,6 +150,10 @@ class NegativeCasesTest {
 
         // ── E0026 service 属性缺初始值 ──────────────────────────────────────
         c("service 非注入属性缺初始值", "service Config {\n  port:Int\n}", ErrorCodes.SERVICE_PROPERTY_NO_INIT)
+
+        // ── E0015 块 Lambda 非 Unit 返回缺末条表达式（S-7.4.3）────────────────
+        c("块 Lambda if 末语句非表达式", "fun f() {\n  g:(Int)->Int = {\n    if true { 1 } else { 2 }\n  }\n}", ErrorCodes.RETURN_TYPE_MISMATCH)
+        c("块 Lambda var 末语句非表达式", "fun f() {\n  g:(Int)->Int = {\n    x = 1\n  }\n}", ErrorCodes.RETURN_TYPE_MISMATCH)
     }
 
     @Test

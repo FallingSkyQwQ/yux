@@ -76,6 +76,7 @@ object IrPrinter {
             }] : ${stmt.ret.render()}")
         }
         is IrStmt.New -> line(depth, "New ${stmt.type.render()} [${exprList(stmt.args)}]")
+        is IrStmt.Eval -> line(depth, "Eval ${IrExprRenderer.render(stmt.expr)}")
         is IrStmt.FieldAccess -> renderFieldAccess(stmt, depth)
         is IrStmt.Branch ->
             line(depth, "Branch ${IrExprRenderer.render(stmt.cond)} ${stmt.then.name} ${stmt.elseLabel.name}")
