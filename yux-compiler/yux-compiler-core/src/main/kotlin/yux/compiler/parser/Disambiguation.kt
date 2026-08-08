@@ -75,7 +75,7 @@ object DeclarationsCollector {
         "Set" to 1, "MutableSet" to 1,
     )
 
-    fun collect(tokens: List<Token>): PreSymbolTable {
+    fun collect(tokens: List<Token>, extensionKeywords: Set<String> = emptySet()): PreSymbolTable {
         val table = PreSymbolTable()
         BUILTIN_TYPES.forEach { name ->
             table.declare(Sym(name, SymKind.TYPE, topLevel = true, position = SourcePosition(0, 1, 1)))
@@ -84,11 +84,11 @@ object DeclarationsCollector {
             table.declare(Sym(name, SymKind.TYPE, topLevel = true, position = SourcePosition(0, 1, 1), typeParamCount = arity))
         }
         val s = TokenScanner(tokens)
-        scanTopLevel(s, table)
+        scanTopLevel(s, table, extensionKeywords)
         return table
     }
 
-    private fun scanTopLevel(s: TokenScanner, table: PreSymbolTable) {
+    private fun scanTopLevel(s: TokenScanner, table: PreSymbolTable, extensionKeywords: Set<String>) {
         while (true) {
             s.skipNewlines()
             val t = s.peek()
@@ -132,7 +132,9 @@ object DeclarationsCollector {
                         else -> s.skipLine()
                     }
                 }
-                t.kind == IDENTIFIER -> scanIdentDecl(s, table)
+                t.kind == IDENTIFIER -> {
+                    if (extensionKeywords.contains(t.text)) s.skipLine() else scanIdentDecl(s, table)
+                }
                 t.kind == RBRACE -> s.advance()
                 else -> s.skipLine()
             }

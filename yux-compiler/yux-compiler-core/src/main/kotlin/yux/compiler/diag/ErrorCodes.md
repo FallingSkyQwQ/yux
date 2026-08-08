@@ -41,6 +41,10 @@
 | E0026 | `SERVICE_PROPERTY_NO_INIT` | 01-S-5.4.1 | service 属性（非注入类型）缺少初始值 |
 | E0027 | `AMBIGUOUS_REFERENCE` | 02-§6 | 名称解析歧义（多个候选） |
 | E0028 | `ILLEGAL_ASSIGN_TARGET` | 01-S-6.1.1 | 赋值目标不合法 |
+| E0029 | `DUPLICATE_PLUGIN_ID` | 02-§10.4 | 插件 id 重复注册 |
+| E0030 | `DUPLICATE_EXTENSION_KEYWORD` | 02-§10.4 | 扩展关键字冲突（已被其他插件注册） |
+| E0031 | `RESERVED_EXTENSION_KEYWORD` | 02-§10.4 | 插件注册了内置关键字（隔离性） |
+| E0032 | `EXTENSION_NOT_LOWERED` | 02-§10.4 | 扩展节点未下沉（无匹配 SyntaxTransform） |
 
 ## W 系列：警告
 

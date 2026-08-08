@@ -1,12 +1,9 @@
 package yux.cli
 
 import yux.backend.jvm.AsmBackend
+import yux.compiler.Compiler
 import yux.compiler.diag.DiagnosticSink
-import yux.compiler.irgen.IRGen
-import yux.compiler.optimizer.BasicOpt
-import yux.compiler.parser.CstToAst
-import yux.compiler.parser.Parser
-import yux.compiler.sema.SemanticAnalyzer
+import yux.compiler.plugin.PluginManager
 import yux.compiler.source.SourceFile
 import java.lang.reflect.InvocationTargetException
 
@@ -45,21 +42,33 @@ class Runner {
     }
 
     companion object {
-        /** 编译单个 .yux 文件为类字节。 */
-        fun compile(path: String, source: SourceFile): Compiled {
-            val diagnostics = DiagnosticSink()
-            val program = Parser(source, diagnostics).parse()
-            val decls = CstToAst().convert(program)
-            if (diagnostics.hasErrors) return Compiled(emptyMap(), mainName(path), diagnostics)
-            val analysis = SemanticAnalyzer().analyze(mapOf(path to decls), diagnostics)
-            if (diagnostics.hasErrors) return Compiled(emptyMap(), mainName(path), diagnostics)
-            val module = IRGen(analysis).generate(mapOf(path to decls))
-            BasicOpt.optimize(module)
-            val artifacts = AsmBackend().generate(module, diagnostics)
+        /** 编译单个 .yux 文件为类字节（含插件管线，T-M6-5/6）。 */
+        fun compile(
+            path: String,
+            source: SourceFile,
+            pluginManager: PluginManager = PluginManager(),
+        ): Compiled {
+            val compiler = Compiler(DiagnosticSink(), pluginManager)
+            val decls = compiler.parseToDecls(source)
+            if (compiler.diagnostics.hasErrors) {
+                return Compiled(emptyMap(), mainName(path), compiler.diagnostics)
+            }
+            val analysis = compiler.analyze(mapOf(path to decls))
+            if (compiler.diagnostics.hasErrors) {
+                return Compiled(emptyMap(), mainName(path), compiler.diagnostics)
+            }
+            val module = compiler.generate(mapOf(path to decls), analysis)
+            val artifacts = AsmBackend().generate(module, compiler.diagnostics).toMutableList()
+            // T-M6-5：插件 CodegenHook 附加产物（与后端产物同容器，供 MemoryClassLoader 定义）
+            for (hook in pluginManager.hooks) {
+            for (artifact in hook.generate(module, compiler.diagnostics)) {
+                artifacts += AsmBackend.OutputArtifact(artifact.name, artifact.bytes)
+            }
+            }
             return Compiled(
                 artifacts.associate { it.className to it.bytes },
                 mainName(path),
-                diagnostics,
+                compiler.diagnostics,
             )
         }
 
