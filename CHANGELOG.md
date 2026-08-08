@@ -2,6 +2,25 @@
 
 本文件记录各里程碑的显著变更（含 breaking changes，见 06-§3）。
 
+## [v0.1.0-m7] - 2026-08-09 — M7 构建管线（build.yml → Gradle）
+
+### 新增
+- `build-tool` 模块（T-M7-1..7，02-§11/§12）：
+  - `BuildConfig` 模型 + `BuildYmlParser`（T-M7-1）：SnakeYAML 解析 `build.yml` → `BuildConfig`（name/version/language/target/source/resources/tests/dependencies.maven/dependencies.minecraft.paper/plugins/main）；schema 校验缺字段/类型错误抛 `BuildConfigException`（中文说明）；未知顶层字段忽略（前向兼容）；文档示例的未加引号 YAML 数字版本（`yux: 1.0`/`paper: 1.21`/`version: 1.0`）转字符串接受，`name` 保持严格。
+  - `GradleGenerator`（T-M7-2）：按 02-§11.3 / 05-§6 模板生成 `build.gradle.kts`/`settings.gradle`（plugins/java 工具链/application/dependencies/sourceSets 条件渲染）+ `plugin.yml`（`plugins.minecraft` 启用时，主类缺省回退项目名）；golden 快照（pure/mixed/minecraft 三场景）。
+  - `BuildPlanner`（T-M7-3）：递归收集 `.yux/.java/.kt` 三类源码（按文件名排序）、编译顺序编排（`yux` 先行，其后 `java`/`kotlin`，05-§4）；无 Yux 源码报错。
+  - `YuxSymbols`（T-M7-7）：IDE 映射 `yux-symbols.json`（文件 → 文件类名 + 顶层符号 function/class/data/service/property），确定性格式，写入 `build/yux-symbols.json`。
+  - `YuxCache`（T-M7-6）：文件级增量缓存 `build/yux-cache/manifest.json`（源文件 SHA-256 清单 + 编译器版本）；源文件未变更时跳过 Yux 编译，且 jar 已存在时跳过 Gradle 调用。
+  - `GradleRunner`（T-M7-4）：托管 Gradle 调用（`-p` 项目目录 + `--offline`/`--no-daemon`）；定位顺序 `YUX_GRADLE` 环境变量 → `GRADLE_HOME` → 项目树向上 `gradlew` → PATH。
+  - `YuxBuild` 编排器（T-M7-3/5/7）：`yuxc build` 完整流水线（解析 → 计划 → 增量 → 进程内 Yux 编译 → 生成 Gradle 工程 → 托管打包 → 拷贝 jar 到 `build/libs/<name>-<version>.jar`）；`compile()` 供 `yuxc run -p` 进程内运行；`--clean` 删除全部产物后全量重建。
+- `yuxc` CLI（T-M7-5，02-§14）：新增 `build [-p <dir>] [--clean] [--offline]`、`test [-p <dir>]` 命令与 `run -p <dir>` 项目模式；参数解析扩展 `-p/--project/--clean/--offline`（`--plugin` 兼容保留）；`--plugin` 可作用于项目命令。
+- `samples/helloworld`：M7 验收示例工程（`build.yml` + `src/main.yux` + `resources/message.txt`），`yuxc build -p samples/helloworld` → `build/libs/helloworld-0.1.0.jar`（含 Main.class + 资源）。
+
+### 说明
+- 测试：build-tool 新增 35 例（解析器 14 / golden 生成器 3 / 规划器 5 / 符号 3 / 增量缓存 4 / GradleRunner 集成 1 / YuxBuild 集成 5）+ CLI 项目命令 6 例，累计 490+ 例全绿；`./gradlew build lint` 通过。
+- 验收：`yuxc build -p samples/helloworld/` → 构建成功 + jar；`yuxc build --clean` → 全量重建通过；二次构建增量命中跳过编译（06-§M7）。
+- 已知限制：Yux 编译 classpath = CLI 运行时（JDK + stdlib），`dependencies.maven` 尚未进入 yuxc 编译期 classpath（混合项目 M10 完善）；生成的 Gradle 脚本不含 05-§6 的 `compileYux` Exec 任务（Yux 编译由 yuxc 进程内先行）；`yuxc test` 为 v0.1 最小实现（构建成功即通过，yux.test 框架 M11 落地）。
+
 ## [v0.1.0-m6] - 2026-08-08 — M6 编译器插件 API
 
 ### 新增
