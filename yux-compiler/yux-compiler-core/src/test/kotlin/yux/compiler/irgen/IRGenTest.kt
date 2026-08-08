@@ -231,6 +231,32 @@ class IRGenTest {
     }
 
     @Test
+    fun `expression position assignment evaluates receiver once before value`() {
+        // 接收者副作用只求值一次，且先于右值（getReceiver() 不得重复执行）
+        val module = ir(
+            """
+            Box {
+                n:Int
+            }
+            fun getReceiver():Box {
+                print "r"
+                return Box(1)
+            }
+            fun f() { print (getReceiver().n = 5) }
+            """.trimIndent(),
+        )
+        val body = methodBody(module, "Main", "f")
+        val receiverAssigns = body.filterIsInstance<IrStmt.LocalAssign>().filter {
+            (it.value as? IrExpr.Invoke)?.target?.displayName?.contains("getReceiver") == true
+        }
+        assertEquals(1, receiverAssigns.size, "接收者只应求值一次: $body")
+        // 接收者求值（LocalAssign）必须先于右值写入（setter Call）
+        val receiverIndex = body.indexOfFirst { it == receiverAssigns.single() }
+        val setterIndex = body.indexOfFirst { it is IrStmt.Call }
+        assertTrue(receiverIndex < setterIndex, "接收者应先于右值求值: $body")
+    }
+
+    @Test
     fun `literal decoding produces typed constants`() {
         val module = ir("fun f() { a = 0x1F\n b = 1_000L\n c = 3.14F\n d = '\\n'\n e = \"x\\ty\" }")
         val body = methodBody(module, "Main", "f")

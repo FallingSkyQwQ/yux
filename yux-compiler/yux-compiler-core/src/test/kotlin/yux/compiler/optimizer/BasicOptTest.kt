@@ -222,14 +222,15 @@ class BasicOptTest {
 
     @Test
     fun `long min value fold keeps exact semantics`() {
+        val longLocal = IrLocal("l", IrType.LONG, 0)
         val div = optimize(
             listOf(
-                IrStmt.LocalAssign(local0, IrExpr.Arith(ArithOp.DIV, IrExpr.Const(Long.MIN_VALUE), IrExpr.Const(-1L))),
-                IrStmt.Return(IrExpr.LocalRead(local0)),
+                IrStmt.LocalAssign(longLocal, IrExpr.Arith(ArithOp.DIV, IrExpr.Const(Long.MIN_VALUE), IrExpr.Const(-1L))),
+                IrStmt.Return(IrExpr.LocalRead(longLocal)),
             ),
         )
         assertEquals(
-            listOf(IrStmt.LocalAssign(local0, IrExpr.Const(Long.MIN_VALUE)), IrStmt.Return(IrExpr.LocalRead(local0))),
+            listOf(IrStmt.LocalAssign(longLocal, IrExpr.Const(Long.MIN_VALUE)), IrStmt.Return(IrExpr.LocalRead(longLocal))),
             div,
         )
     }
@@ -237,14 +238,15 @@ class BasicOptTest {
     @Test
     fun `long compare near max keeps exact ordering`() {
         // Long 必须保留原类型比较：转 Double 会丢失 Long.MAX_VALUE 附近精度
+        val boolLocal = IrLocal("b", IrType.BOOLEAN, 0)
         val body = optimize(
             listOf(
-                IrStmt.LocalAssign(local0, IrExpr.Compare(CompareOp.GT, IrExpr.Const(Long.MAX_VALUE), IrExpr.Const(Long.MAX_VALUE - 1))),
-                IrStmt.Return(IrExpr.LocalRead(local0)),
+                IrStmt.LocalAssign(boolLocal, IrExpr.Compare(CompareOp.GT, IrExpr.Const(Long.MAX_VALUE), IrExpr.Const(Long.MAX_VALUE - 1))),
+                IrStmt.Return(IrExpr.LocalRead(boolLocal)),
             ),
         )
         assertEquals(
-            listOf(IrStmt.LocalAssign(local0, IrExpr.Const(true)), IrStmt.Return(IrExpr.LocalRead(local0))),
+            listOf(IrStmt.LocalAssign(boolLocal, IrExpr.Const(true)), IrStmt.Return(IrExpr.LocalRead(boolLocal))),
             body,
         )
     }

@@ -295,13 +295,13 @@ class ExprGen(
     }
 
     /** 表达式位置赋值：发射写入语句后返回写入值（S-6.1 赋值即表达式）。 */
-    private fun genAssignValue(expr: yux.compiler.ast.YxAssign, g: MethodGen, fileScope: FileScope): IrExpr {
-        val value = gen(expr.value, g, fileScope)
-        return when (val t = expr.target) {
+    private fun genAssignValue(expr: yux.compiler.ast.YxAssign, g: MethodGen, fileScope: FileScope): IrExpr =
+        when (val t = expr.target) {
             is YxIdentifier -> when (val sym = irGen.resolvedRefs[t]) {
                 is VariableSymbol -> {
                     val local = g.lookupLocal(sym.name)
                         ?: error("IRGen: 赋值目标未登记: ${sym.name}")
+                    val value = gen(expr.value, g, fileScope)
                     g.emit(IrStmt.LocalAssign(local, value))
                     IrExpr.LocalRead(local)
                 }
@@ -310,6 +310,7 @@ class ExprGen(
                         ?: error("IRGen: 属性访问器未登记: ${sym.name}")
                     val setter = accessor.setter ?: error("IRGen: 属性 setter 未登记: ${sym.name}")
                     val getter = accessor.getter ?: error("IRGen: 属性 getter 未登记: ${sym.name}")
+                    val value = gen(expr.value, g, fileScope)
                     g.emit(IrStmt.Call(IrMethodRef(setter), IrExpr.This, listOf(value), IrType.Void))
                     IrExpr.Invoke(IrMethodRef(getter), IrExpr.This, emptyList())
                 }
@@ -317,23 +318,29 @@ class ExprGen(
             }
             is YxMemberAccess -> {
                 val receiverType = SemaType.resolveVar(irGen.exprTypes[t.receiver] ?: SemaType.ErrorT)
-                val receiver = if (t.receiver is YxTypeReference) null else gen(t.receiver, g, fileScope)
-                if (receiverType is SemaType.Declared && receiverType.symbol is YxClassSymbol) {
-                    val prop = (receiverType.symbol as YxClassSymbol).property(t.name)
-                        ?: error("IRGen: 赋值目标属性不存在: ${t.name}")
-                    val accessor = irGen.propertyAccessors[prop]
-                        ?: error("IRGen: 属性访问器不存在: ${t.name}")
-                    val setter = accessor.setter ?: error("IRGen: 属性 setter 不存在: ${t.name}")
-                    val getter = accessor.getter ?: error("IRGen: 属性 getter 不存在: ${t.name}")
-                    g.emit(IrStmt.Call(IrMethodRef(setter), receiver, listOf(value), IrType.Void))
-                    IrExpr.Invoke(IrMethodRef(getter), receiver, emptyList())
-                } else {
+                if (receiverType !is SemaType.Declared || receiverType.symbol !is YxClassSymbol) {
                     error("IRGen: 不支持的表达式位置赋值目标: ${t.name}")
                 }
+                val prop = (receiverType.symbol as YxClassSymbol).property(t.name)
+                    ?: error("IRGen: 赋值目标属性不存在: ${t.name}")
+                val accessor = irGen.propertyAccessors[prop]
+                    ?: error("IRGen: 属性访问器不存在: ${t.name}")
+                val setter = accessor.setter ?: error("IRGen: 属性 setter 不存在: ${t.name}")
+                val getter = accessor.getter ?: error("IRGen: 属性 getter 不存在: ${t.name}")
+                // 接收者先求值一次存入临时（副作用安全），再生成右值；setter/getter 复用该临时
+                val receiverLocal = if (t.receiver is YxTypeReference) {
+                    null
+                } else {
+                    val local = g.newLocal("receiver", TypeBridge.toIr(receiverType))
+                    g.emit(IrStmt.LocalAssign(local, gen(t.receiver, g, fileScope)))
+                    local
+                }
+                val value = gen(expr.value, g, fileScope)
+                g.emit(IrStmt.Call(IrMethodRef(setter), receiverLocal?.let { IrExpr.LocalRead(it) }, listOf(value), IrType.Void))
+                IrExpr.Invoke(IrMethodRef(getter), receiverLocal?.let { IrExpr.LocalRead(it) }, emptyList())
             }
             else -> error("IRGen: 不支持的赋值目标: ${t::class.simpleName}")
         }
-    }
 
     // ── 字面量解码（01-§2.3/§2.5；词法器已验证合法转义）────────────────────────
 
