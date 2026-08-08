@@ -90,6 +90,17 @@ class YxService(
     override val span: SourceSpan,
 ) : YxDecl
 
+/**
+ * 扩展声明（02-§10.1 / T-M6）：由编译器插件的 [ExtensionParser] 在解析钩子处产出，
+ * 携带插件 id、关键字与不透明载荷 [payload]；必须在 PluginLowering 前全部下沉为普通 AST。
+ */
+class YxExtensionDecl(
+    val keyword: String,
+    val pluginId: String,
+    val payload: Any?,
+    override val span: SourceSpan,
+) : YxDecl
+
 /** 类成员：属性、函数、初始化块（ClassMember ::= PropertyDecl | FunctionDecl | BlockDecl）。 */
 sealed interface YxClassMember : YxNode
 

@@ -27,6 +27,8 @@ import yux.compiler.lexer.TokenKind.STRING_END
 import yux.compiler.lexer.TokenKind.STRING_START
 import yux.compiler.lexer.TokenKind.STRING_TEXT
 import yux.compiler.lexer.TokenKind.IDENTIFIER as ID
+import yux.compiler.plugin.KeywordBinding
+import yux.compiler.plugin.PluginManager
 import yux.compiler.source.SourceFile
 
 /**
@@ -38,10 +40,12 @@ import yux.compiler.source.SourceFile
 class Parser(
     val source: SourceFile,
     val diagnostics: DiagnosticSink = DiagnosticSink(),
+    val pluginManager: PluginManager? = null,
 ) {
     internal val tokens: List<Token> = yux.compiler.lexer.Lexer(source, diagnostics).tokenize()
     internal var index = 0
-    internal val symbols: PreSymbolTable = DeclarationsCollector.collect(tokens)
+    internal val symbols: PreSymbolTable =
+        DeclarationsCollector.collect(tokens, pluginManager?.registeredKeywords ?: emptySet())
     internal val pratt = PrattParser(this)
     internal val lambda = LambdaParser(this)
 
@@ -67,68 +71,68 @@ class Parser(
         val names = mutableSetOf<String>()
     }
 
-    // ── token 游标 ────────────────────────────────────────────────────────────
+    // ── token 游标（ExtensionParser 公开 API，02-§10.2.1）───────────────────
 
-    internal val current: Token get() = tokens[index.coerceAtMost(tokens.lastIndex)]
+    val current: Token get() = tokens[index.coerceAtMost(tokens.lastIndex)]
 
-    internal fun peek(rel: Int): Token {
+    fun peek(rel: Int): Token {
         val i = (index + rel).coerceIn(0, tokens.lastIndex)
         return tokens[i]
     }
 
-    internal fun advance(): Token {
+    fun advance(): Token {
         val t = current
         if (index < tokens.lastIndex) index++
         return t
     }
 
-    internal fun at(kind: TokenKind): Boolean = current.kind == kind
+    fun at(kind: TokenKind): Boolean = current.kind == kind
 
-    internal fun atKeyword(word: String): Boolean = current.kind == KEYWORD && current.text == word
+    fun atKeyword(word: String): Boolean = current.kind == KEYWORD && current.text == word
 
-    internal fun atSoft(word: String): Boolean = current.kind == SOFT_KEYWORD && current.text == word
+    fun atSoft(word: String): Boolean = current.kind == SOFT_KEYWORD && current.text == word
 
-    internal fun atStatementEnd(): Boolean = when (current.kind) {
+    fun atStatementEnd(): Boolean = when (current.kind) {
         NEWLINE, SEMICOLON, RBRACE, EOF -> true
         KEYWORD -> current.text == "else" || current.text == "catch" || current.text == "finally"
         else -> false
     }
 
-    internal fun expect(kind: TokenKind, what: String): Token {
+    fun expect(kind: TokenKind, what: String): Token {
         if (at(kind)) return advance()
         error("expected $what, found '${current.text}'")
         return advance()
     }
 
-    internal fun expectIdent(what: String): Token {
+    fun expectIdent(what: String): Token {
         if (at(IDENTIFIER)) return advance()
         error("expected $what, found '${current.text}'")
         return advance()
     }
 
-    internal fun error(message: String, position: yux.compiler.lexer.SourcePosition = current.position) {
+    fun error(message: String, position: yux.compiler.lexer.SourcePosition = current.position) {
         diagnostics.error(message, position)
     }
 
-    internal fun skipNewlines() {
+    fun skipNewlines() {
         while (at(NEWLINE) || at(SEMICOLON)) advance()
     }
 
-    // ── 作用域 ────────────────────────────────────────────────────────────────
+    // ── 作用域（ExtensionParser 可用）────────────────────────────────────────
 
-    internal fun pushScope() {
+    fun pushScope() {
         scope = Scope(scope)
     }
 
-    internal fun popScope() {
+    fun popScope() {
         scope = scope?.parent
     }
 
-    internal fun declareLocal(name: String) {
+    fun declareLocal(name: String) {
         scope?.names?.add(name)
     }
 
-    internal fun isDeclared(name: String): Boolean {
+    fun isDeclared(name: String): Boolean {
         var s = scope
         while (s != null) {
             if (name in s.names) return true
@@ -157,6 +161,11 @@ class Parser(
     private fun parseTopLevelDecl(): CstDecl? {
         val annotations = parseAnnotations()
         skipNewlines()
+        // 扩展关键字钩子（T-M6-4 / 02-§10.2.1）：插件注册的关键字优先于内置语法
+        val binding = pluginManager?.parserFor(current.text)
+        if (binding != null && current.kind == IDENTIFIER) {
+            return parseExtensionDecl(binding)
+        }
         return when {
             atKeyword("package") -> parsePackageDecl()
             atKeyword("import") -> parseImportDecl()
@@ -204,6 +213,14 @@ class Parser(
         val override: Token? = null,
         val modifier: Token? = null,
     )
+
+    /** 扩展关键字委托（T-M6-4）：消费关键字 token，交由插件解析器接管剩余语法。 */
+    private fun parseExtensionDecl(binding: KeywordBinding): CstDecl {
+        val keyword = advance()
+        val payload = binding.parser.parse(this, keyword)
+        val span = spanOf(keyword, current)
+        return CstExtensionDecl(keyword, binding.pluginId, payload, span)
+    }
 
     private fun parseDeclFlags(): DeclFlags {
         var async: Token? = null
@@ -526,7 +543,7 @@ class Parser(
      * （`System.currentTimeMillis` 是静态成员访问，01-§7.7 规则 3），
      * 类型位置允许（`java.util.List`）。
      */
-    internal fun parseType(allowDotted: Boolean = true): CstType {
+    fun parseType(allowDotted: Boolean = true): CstType {
         if (at(LPAREN)) {
             val lparen = advance()
             val params = mutableListOf<CstType>()
@@ -739,9 +756,9 @@ class Parser(
     private fun parseCondition(): CstExpr = pratt.parseExpression(suppressBlock = true)
 
     /** 语句体：块或单行语句（if/when/for/while 的 then 分支）。 */
-    private fun parseStatementBody(): CstStmt = if (at(LBRACE)) parseBlock() else parseStatement()
+    fun parseStatementBody(): CstStmt = if (at(LBRACE)) parseBlock() else parseStatement()
 
-    internal fun parseBlock(): CstBlock {
+    fun parseBlock(): CstBlock {
         val lbrace = expect(LBRACE, "'{'")
         pushScope()
         val statements = mutableListOf<CstStmt>()
@@ -758,7 +775,7 @@ class Parser(
         return CstBlock(lbrace, statements, rbrace, SourceSpan(lbrace.position, rbrace.position))
     }
 
-    internal fun finishStatement() {
+    fun finishStatement() {
         if (at(NEWLINE) || at(SEMICOLON)) {
             advance()
             skipNewlines()
@@ -792,7 +809,7 @@ class Parser(
     // ── 主表达式（01-§7，Pratt 前缀）──────────────────────────────────────────
 
     /** 解析一个 Primary 表达式（含构造/类型引用消歧，01-§7.7）。 */
-    internal fun parsePrimaryExpr(): CstExpr {
+    fun parsePrimaryExpr(): CstExpr {
         val t = current
         return when {
             t.kind == TokenKind.INT_LITERAL -> CstIntLiteral(advance(), spanOf(t))
@@ -855,9 +872,9 @@ class Parser(
     }
 
     /** `(` 之后的实参列表 + 收尾 `)`。 */
-    internal class CallArgs(val args: List<CstExpr>, val rparen: Token)
+    class CallArgs(val args: List<CstExpr>, val rparen: Token)
 
-    internal fun parseCallArguments(): CallArgs {        val args = mutableListOf<CstExpr>()
+    fun parseCallArguments(): CallArgs {        val args = mutableListOf<CstExpr>()
         skipNewlines()
         if (!at(RPAREN)) {
             while (true) {

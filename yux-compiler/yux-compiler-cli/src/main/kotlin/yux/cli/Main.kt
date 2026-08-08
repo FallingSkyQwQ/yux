@@ -1,16 +1,14 @@
 package yux.cli
 
+import yux.compiler.Compiler
 import yux.compiler.diag.DiagnosticSink
 import yux.compiler.ir.IrPrinter
-import yux.compiler.irgen.IRGen
 import yux.compiler.lexer.Lexer
 import yux.compiler.lexer.TokenPrinter
-import yux.compiler.optimizer.BasicOpt
 import yux.compiler.parser.AstPrinter
-import yux.compiler.parser.CstToAst
-import yux.compiler.parser.Parser
+import yux.compiler.plugin.PluginLoader
+import yux.compiler.plugin.PluginManager
 import yux.compiler.sema.AnalysisPrinter
-import yux.compiler.sema.SemanticAnalyzer
 import yux.compiler.source.SourceFile
 import java.nio.file.Files
 import java.nio.file.Path
@@ -24,6 +22,7 @@ import java.nio.file.Path
  * - `yuxc check <file>` M3 语义：输出类型推导与诊断
  * - `yuxc ir   <file>`  M4 IR：输出 IrModule（含最小优化）
  * - `yuxc run  <file>`  M5 运行：编译 → 自定义类加载器 → main 执行（T-M5-10）
+ * - `--plugin <jar>`     M6 插件：加载编译器插件（T-M6-3）
  */
 fun main(args: Array<String>) {
     // System.exit 会终止 JVM，测试通过 [runCli] 直接取退出码，避免杀测试进程。
@@ -31,29 +30,79 @@ fun main(args: Array<String>) {
 }
 
 /** 执行命令并返回进程退出码（0=成功，1=失败）；供 main 与测试复用。 */
-internal fun runCli(args: Array<String>): Int = when (val cmd = args.getOrNull(0)) {
-    "lex" -> runLex(args.getOrNull(1))
-    "ast" -> runAst(args.getOrNull(1))
-    "check" -> runCheck(args.getOrNull(1))
-    "ir" -> runIr(args.getOrNull(1))
-    "run" -> runRun(args.getOrNull(1))
-    else -> {
-        System.err.println(
-            """
-            yuxc — Yux 编译器命令行
-            用法: yuxc <command> <file.yux>
-              lex   <file>   输出词法 token（M1）
-              ast   <file>   输出语法 AST（M2）
-              check <file>   输出语义分析（M3）
-              ir    <file>   输出 IR（M4）
-              run   <file>   编译并运行 main（M5）
-            """.trimIndent(),
-        )
-        if (cmd == "lex" || cmd == "ast" || cmd == "check" || cmd == "ir" || cmd == "run") {
-            System.err.println("错误: 缺少源文件参数")
+internal fun runCli(args: Array<String>): Int {
+    val (pluginJars, positional) = parseArgs(args)
+    val pluginManager = loadPlugins(pluginJars) ?: return 1
+    return when (val cmd = positional.getOrNull(0)) {
+        "lex" -> runLex(positional.getOrNull(1))
+        "ast" -> runAst(positional.getOrNull(1), pluginManager)
+        "check" -> runCheck(positional.getOrNull(1), pluginManager)
+        "ir" -> runIr(positional.getOrNull(1), pluginManager)
+        "run" -> runRun(positional.getOrNull(1), pluginManager)
+        else -> {
+            System.err.println(
+                """
+                yuxc — Yux 编译器命令行
+                用法: yuxc [--plugin <jar>]... <command> <file.yux>
+                  lex   <file>   输出词法 token（M1）
+                  ast   <file>   输出语法 AST（M2）
+                  check <file>   输出语义分析（M3）
+                  ir    <file>   输出 IR（M4）
+                  run   <file>   编译并运行 main（M5）
+                  --plugin <jar> 加载编译器插件（M6）
+                """.trimIndent(),
+            )
+            if (cmd == "lex" || cmd == "ast" || cmd == "check" || cmd == "ir" || cmd == "run") {
+                System.err.println("错误: 缺少源文件参数")
+            }
+            1
         }
-        1
     }
+}
+
+/** 拆分 `--plugin <jar>` 选项与位置参数（command/file）。 */
+private fun parseArgs(args: Array<String>): Pair<List<Path>, List<String>> {
+    val jars = mutableListOf<Path>()
+    val positional = mutableListOf<String>()
+    var i = 0
+    while (i < args.size) {
+        when (args[i]) {
+            "--plugin" -> {
+                if (i + 1 < args.size) {
+                    jars.add(Path.of(args[i + 1]))
+                    i += 2
+                } else {
+                    System.err.println("错误: --plugin 缺少 jar 路径")
+                    i++
+                }
+            }
+            else -> {
+                positional += args[i]
+                i++
+            }
+        }
+    }
+    return jars to positional
+}
+
+/** 加载插件并注册；失败返回 null（诊断已输出）。 */
+private fun loadPlugins(jars: List<Path>): PluginManager? {
+    val manager = PluginManager()
+    if (jars.isEmpty()) return manager
+    val plugins = try {
+        PluginLoader.loadFromJars(jars)
+    } catch (e: Exception) {
+        System.err.println("错误: 插件加载失败: ${e.message}")
+        return null
+    }
+    for (plugin in plugins) {
+        manager.register(plugin)
+    }
+    if (manager.diagnostics.hasErrors) {
+        printDiagnostics(manager.diagnostics)
+        return null
+    }
+    return manager
 }
 
 private fun loadSource(path: String?): SourceFile? {
@@ -84,43 +133,44 @@ private fun runLex(path: String?): Int {
     return if (diagnostics.hasErrors) 1 else 0
 }
 
-private fun runAst(path: String?): Int {
+private fun runAst(path: String?, pluginManager: PluginManager): Int {
     val source = loadSource(path) ?: return 1
-    val diagnostics = DiagnosticSink()
-    val parser = Parser(source, diagnostics)
-    val program = parser.parse()
-    val decls = CstToAst().convert(program)
+    val compiler = Compiler(DiagnosticSink(), pluginManager)
+    val decls = compiler.parseToDecls(source)
     print(AstPrinter.dump(decls))
-    printDiagnostics(diagnostics)
-    return if (diagnostics.hasErrors) 1 else 0
+    printDiagnostics(compiler.diagnostics)
+    return if (compiler.diagnostics.hasErrors) 1 else 0
 }
 
-private fun runCheck(path: String?): Int {
+private fun runCheck(path: String?, pluginManager: PluginManager): Int {
     val source = loadSource(path) ?: return 1
-    val diagnostics = DiagnosticSink()
-    val parser = Parser(source, diagnostics)
-    val program = parser.parse()
-    val decls = CstToAst().convert(program)
-    val result = SemanticAnalyzer().analyze(mapOf(source.path to decls), diagnostics)
+    val compiler = Compiler(DiagnosticSink(), pluginManager)
+    val decls = compiler.parseToDecls(source)
+    if (compiler.diagnostics.hasErrors) {
+        printDiagnostics(compiler.diagnostics)
+        return 1
+    }
+    val result = compiler.analyze(mapOf(source.path to decls))
     print(AnalysisPrinter.dumpTypes(result.exprTypes))
-    printDiagnostics(diagnostics)
-    return if (diagnostics.hasErrors) 1 else 0
+    printDiagnostics(compiler.diagnostics)
+    return if (compiler.diagnostics.hasErrors) 1 else 0
 }
 
-private fun runIr(path: String?): Int {
+private fun runIr(path: String?, pluginManager: PluginManager): Int {
     val source = loadSource(path) ?: return 1
-    val diagnostics = DiagnosticSink()
-    val parser = Parser(source, diagnostics)
-    val program = parser.parse()
-    val decls = CstToAst().convert(program)
-    val analysis = SemanticAnalyzer().analyze(mapOf(source.path to decls), diagnostics)
-    if (diagnostics.hasErrors) {
-        printDiagnostics(diagnostics)
+    val compiler = Compiler(DiagnosticSink(), pluginManager)
+    val decls = compiler.parseToDecls(source)
+    if (compiler.diagnostics.hasErrors) {
+        printDiagnostics(compiler.diagnostics)
+        return 1
+    }
+    val analysis = compiler.analyze(mapOf(source.path to decls))
+    if (compiler.diagnostics.hasErrors) {
+        printDiagnostics(compiler.diagnostics)
         return 1
     }
     try {
-        val module = IRGen(analysis).generate(mapOf(source.path to decls))
-        BasicOpt.optimize(module)
+        val module = compiler.generate(mapOf(source.path to decls), analysis)
         print(IrPrinter.dump(module))
         return 0
     } catch (e: IllegalStateException) {
@@ -130,9 +180,9 @@ private fun runIr(path: String?): Int {
     }
 }
 
-private fun runRun(path: String?): Int {
+private fun runRun(path: String?, pluginManager: PluginManager): Int {
     val source = loadSource(path) ?: return 1
-    val compiled = Runner.compile(path!!, source)
+    val compiled = Runner.compile(path!!, source, pluginManager)
     printDiagnostics(compiled.diagnostics)
     if (compiled.diagnostics.hasErrors) return 1
     return Runner().run(compiled)

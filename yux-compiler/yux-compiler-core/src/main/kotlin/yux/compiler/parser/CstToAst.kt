@@ -25,6 +25,7 @@ import yux.compiler.ast.YxElseCondition
 import yux.compiler.ast.YxExpr
 import yux.compiler.ast.YxExprCondition
 import yux.compiler.ast.YxExprStmt
+import yux.compiler.ast.YxExtensionDecl
 import yux.compiler.ast.YxFloatLiteral
 import yux.compiler.ast.YxFor
 import yux.compiler.ast.YxFunction
@@ -90,6 +91,12 @@ class CstToAst {
         is CstServiceDecl -> convertService(decl)
         is CstFunctionDecl -> convertFunction(decl)
         is CstPropertyDecl -> convertProperty(decl, isTopLevel = true)
+        is CstExtensionDecl -> YxExtensionDecl(
+            keyword = decl.keyword.text,
+            pluginId = decl.pluginId,
+            payload = decl.payload,
+            span = decl.span,
+        )
     }
 
     private fun convertClass(decl: CstClassDecl): YxClass {

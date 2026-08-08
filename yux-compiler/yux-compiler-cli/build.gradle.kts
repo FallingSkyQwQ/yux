@@ -17,6 +17,11 @@ dependencies {
     testImplementation(libs.kotlin.test)
 }
 
+// M6 e2e：PluginE2eTest 需要 samples/extension 插件 jar（T-M6-6）
+tasks.test {
+    dependsOn(":samples:extension:jar")
+}
+
 application {
     mainClass.set("yux.cli.MainKt")
     applicationName = "yuxc"

@@ -168,6 +168,14 @@ class CstInitBlock(
     override val span: SourceSpan,
 ) : CstClassMember
 
+/** 扩展声明（T-M6）：插件 ExtensionParser 在解析钩子处的产出（载荷不透明）。 */
+class CstExtensionDecl(
+    val keyword: Token,
+    val pluginId: String,
+    val payload: Any?,
+    override val span: SourceSpan,
+) : CstDecl
+
 // ── 类型（01-§4）──────────────────────────────────────────────────────────────
 
 sealed interface CstType : CstNode

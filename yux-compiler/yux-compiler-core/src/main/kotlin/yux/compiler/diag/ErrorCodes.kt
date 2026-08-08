@@ -33,6 +33,10 @@ object ErrorCodes {
     const val SERVICE_PROPERTY_NO_INIT = "E0026"
     const val AMBIGUOUS_REFERENCE = "E0027"
     const val ILLEGAL_ASSIGN_TARGET = "E0028"
+    const val DUPLICATE_PLUGIN_ID = "E0029"
+    const val DUPLICATE_EXTENSION_KEYWORD = "E0030"
+    const val RESERVED_EXTENSION_KEYWORD = "E0031"
+    const val EXTENSION_NOT_LOWERED = "E0032"
 
     // ── W 系列：警告 ──────────────────────────────────────────────────────────
     const val TYPE_FALLBACK = "W0001"

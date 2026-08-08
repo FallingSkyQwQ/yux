@@ -38,6 +38,10 @@ yux/
 ./gradlew :yux-compiler:yux-compiler-cli:run --args="check <file.yux>" # M3 语义
 ./gradlew :yux-compiler:yux-compiler-cli:run --args="ir <file.yux>"    # M4 IR
 ./gradlew :yux-compiler:yux-compiler-cli:run --args="run <file.yux>"   # M5 运行（编译 + 执行 main）
+
+# M6 插件：--plugin <jar> 加载编译器插件（扩展关键字 → 解析 → 下沉 → 字节码）
+./gradlew :yux-compiler:yux-compiler-cli:run --args="run --plugin samples/extension/build/libs/extension-0.1.0-SNAPSHOT.jar samples/extension/greet.yux"
+# 期望输出: Hello, Yux plugin!
 ```
 
 ## 里程碑状态
@@ -50,7 +54,7 @@ yux/
 | M3 语义分析 | ✅ | 类型系统/符号表/类型检查/推断/智能转型/空守卫 + 86 负向用例 + `.sema` golden |
 | M4 IR | ✅ | IrModule/IrStmt/IrExpr/IrType + IRGen + 最小优化 + golden `.ir` + `yuxc ir` |
 | M5 JVM 后端 | ✅ | ASM 发射（类/属性/data/Lambda/注解/互操作/空守卫）+ `yuxc run` + samples 端到端 |
-| M6+ | ⏳ | 见 [`docs/06-开发计划.md`](docs/06-开发计划.md) |
+| M6 编译器插件 API | ✅ | 插件 SPI（`YuxCompilerPlugin`/`PluginContext`/`ExtensionParser`）+ `--plugin` 加载 + 下沉管线 + hello-extension 示例 |
 
 ## 文档索引
 

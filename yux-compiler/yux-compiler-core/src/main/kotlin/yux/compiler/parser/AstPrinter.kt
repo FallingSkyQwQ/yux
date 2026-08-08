@@ -69,6 +69,7 @@ import yux.compiler.ast.YxWhen
 import yux.compiler.ast.YxWhenBranch
 import yux.compiler.ast.YxWhile
 import yux.compiler.ast.YxNode
+import yux.compiler.ast.YxExtensionDecl
 
 /**
  * AST 文本 dump（golden 快照与 `yuxc ast` 用，T-M2-10）。
@@ -111,6 +112,7 @@ object AstPrinter {
             }
             is YxFunction -> append(renderFunction(decl, depth))
             is YxProperty -> append(renderProperty(decl, depth))
+            is YxExtensionDecl -> appendLine(this, depth, "extension ${decl.keyword} [${decl.pluginId}]")
         }
     }
 

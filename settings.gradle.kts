@@ -37,3 +37,6 @@ include(":yux-plugin-minecraft:yux-minecraft-runtime")
 // ── 其他 ──────────────────────────────────────────────────────────────────────
 include(":yux-stdlib")
 include(":build-tool")
+
+// ── samples ───────────────────────────────────────────────────────────────────
+include(":samples:extension")
