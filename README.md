@@ -37,6 +37,7 @@ yux/
 ./gradlew :yux-compiler:yux-compiler-cli:run --args="ast <file.yux>"   # M2 语法
 ./gradlew :yux-compiler:yux-compiler-cli:run --args="check <file.yux>" # M3 语义
 ./gradlew :yux-compiler:yux-compiler-cli:run --args="ir <file.yux>"    # M4 IR
+./gradlew :yux-compiler:yux-compiler-cli:run --args="run <file.yux>"   # M5 运行（编译 + 执行 main）
 ```
 
 ## 里程碑状态
@@ -48,7 +49,8 @@ yux/
 | M2 语法分析器 | ✅ | CST/Pratt 表达式/消歧/错误恢复 + CstToAst + golden `.ast` |
 | M3 语义分析 | ✅ | 类型系统/符号表/类型检查/推断/智能转型/空守卫 + 86 负向用例 + `.sema` golden |
 | M4 IR | ✅ | IrModule/IrStmt/IrExpr/IrType + IRGen + 最小优化 + golden `.ir` + `yuxc ir` |
-| M5+ | ⏳ | 见 [`docs/06-开发计划.md`](docs/06-开发计划.md) |
+| M5 JVM 后端 | ✅ | ASM 发射（类/属性/data/Lambda/注解/互操作/空守卫）+ `yuxc run` + samples 端到端 |
+| M6+ | ⏳ | 见 [`docs/06-开发计划.md`](docs/06-开发计划.md) |
 
 ## 文档索引
 
