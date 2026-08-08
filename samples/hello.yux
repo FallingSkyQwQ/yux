@@ -1,0 +1,4 @@
+// M5-11 端到端样例：hello
+fun main() {
+    print "Hello Yux"
+}

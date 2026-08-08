@@ -1,0 +1,26 @@
+// M5-11 端到端样例：控制流（if/for/while/when）
+fun main() {
+    health = 10
+    if health <= 0 {
+        print "died"
+    } else if health < 10 {
+        print "low"
+    } else {
+        print "ok"
+    }
+
+    total = 0
+    for i in 0..5 {
+        total += i
+    }
+    print total
+
+    x = 3
+    while x > 0 {
+        x -= 1
+    }
+    when x {
+        0 -> print "zero"
+        else -> print "other"
+    }
+}

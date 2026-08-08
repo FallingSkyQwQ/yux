@@ -1,0 +1,12 @@
+// M5-11 端到端样例：类/属性/方法/字符串模板
+Player {
+    name:String
+    health:Int = 20
+    fun greet() = "Hi " + name
+}
+
+fun main() {
+    p = Player("Alex", 20)
+    print p.greet()
+    print p.health
+}

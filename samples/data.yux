@@ -1,0 +1,10 @@
+// M5-11 端到端样例：data 类（S-5.3.1 自动方法）
+data User {
+    id:Int
+    name:String
+}
+
+fun main() {
+    u = User(1, "Steve")
+    print u.toString
+}

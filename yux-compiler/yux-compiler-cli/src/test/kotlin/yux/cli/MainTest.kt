@@ -101,4 +101,65 @@ class MainTest {
         assertEquals(1, code)
         assertTrue(err.contains("yuxc"), err)
     }
+
+    @Test
+    fun `run command executes main`() {
+        val file = Files.createTempFile("yux", ".yux")
+        Files.writeString(file, "fun main() {\n  print \"Hello Yux\"\n}")
+        val (out, err, code) = capture("run", file.toString())
+        assertEquals(0, code, err)
+        assertEquals("Hello Yux", out)
+    }
+
+    @Test
+    fun `run command with data class toString`() {
+        val file = Files.createTempFile("yux", ".yux")
+        Files.writeString(
+            file,
+            "data User {\n  id:Int\n  name:String\n}\nfun main() {\n  u = User(1, \"Steve\")\n  print u.toString\n}",
+        )
+        val (out, err, code) = capture("run", file.toString())
+        assertEquals(0, code, err)
+        assertEquals("User(id=1, name=Steve)", out)
+    }
+
+    @Test
+    fun `run command reports compile errors`() {
+        val file = Files.createTempFile("yux", ".yux")
+        Files.writeString(file, "fun main() {\n  x:Int = \"str\"\n}")
+        val (_, err, code) = capture("run", file.toString())
+        assertEquals(1, code)
+        assertTrue(err.contains("E0004"), err)
+    }
+
+    @Test
+    fun `run command reports runtime exceptions`() {
+        val file = Files.createTempFile("yux", ".yux")
+        Files.writeString(file, "fun main() {\n  x = 1 / 0\n}")
+        val (_, err, code) = capture("run", file.toString())
+        assertEquals(1, code)
+        assertTrue(err.contains("运行时异常"), err)
+    }
+
+    @Test
+    fun `run command missing file`() {
+        val (_, err, code) = capture("run", "/nonexistent/run.yux")
+        assertEquals(1, code)
+        assertTrue(err.contains("文件不存在"), err)
+    }
+
+    @Test
+    fun `samples directory e2e compares stdout`() {
+        // T-M5-11 端到端：samples/*.yux 逐一运行并比对 .stdout 快照
+        val samplesDir = java.nio.file.Path.of("samples").toAbsolutePath().normalize()
+        if (!java.nio.file.Files.isDirectory(samplesDir)) return
+        java.nio.file.Files.list(samplesDir).use { stream ->
+            stream.filter { it.toString().endsWith(".yux") }.sorted().forEach { file ->
+                val expected = java.nio.file.Files.readString(file.resolveSibling(file.fileName.toString().substringBeforeLast('.') + ".stdout"))
+                val (out, err, code) = capture("run", file.toString())
+                assertEquals(0, code, "${file.fileName} 应运行成功: $err")
+                assertEquals(expected, out, "${file.fileName} stdout 不匹配")
+            }
+        }
+    }
 }

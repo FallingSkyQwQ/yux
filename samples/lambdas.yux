@@ -1,0 +1,9 @@
+// M5-11 端到端样例：Lambda 闭包（S-7.4）
+fun main() {
+    x = 5
+    g:(Int)->Int = v -> v + x
+    print g(3)
+
+    h:(Int)->Int = { it * 2 }
+    print h(21)
+}
