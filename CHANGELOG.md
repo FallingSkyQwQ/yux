@@ -2,6 +2,26 @@
 
 本文件记录各里程碑的显著变更（含 breaking changes，见 06-§3）。
 
+## [v0.1.0-m6] - 2026-08-08 — M6 编译器插件 API
+
+### 新增
+- `yux-compiler-core` 插件 SPI（T-M6-1/2，02-§10）：
+  - `yux.compiler.plugin` 包：`YuxCompilerPlugin`/`PluginContext`（registerKeyword/registerSyntaxTransform/registerSemanticRule/registerCodegenHook/addRuntimeDependency）/`ExtensionParser`/`SyntaxTransform`/`SemanticRule`/`CodegenHook`/`PluginArtifact`；
+  - `PluginManager`（T-M6-2）：插件注册表 + 调用链记录；冲突/隔离校验（02-§10.4）：插件 id 重复 E0029、扩展关键字冲突 E0030、注册内置关键字 E0031；
+  - `PluginLoader`（T-M6-3）：`ServiceLoader` 类路径加载 + `URLClassLoader` jar 加载（父加载器 = 编译核心，隔离插件实现类）；
+  - `YxExtensionDecl : YxDecl` + `CstExtensionDecl : CstDecl` 占位节点（插件解析器产出，下沉前驻留 AST）。
+- 扩展关键字接入（T-M6-4，02-§10.2.1）：`Parser` 构造接受 `PluginManager`，`parseTopLevelDecl` 在钩子处暂停并委托 `ExtensionParser`；`DeclarationsCollector` 预收集跳过扩展关键字；token 游标/`parseType`/`parseBlock`/`parsePrimaryExpr`/`parseStatementBody` 等公开为 ExtensionParser API。
+- 下沉管线（T-M6-5，02-§10.4）：`lowering/PluginLowering` 在 CstToAst 之后、语义分析之前将全部 `YxExtensionDecl` 下沉为普通 AST；未匹配 SyntaxTransform 报 E0032；后端（sema/IRGen/ASM）不接触领域语法。
+- 集中管线 `yux.compiler.Compiler`（parse→lower→sema→IRGen→opt），插件注入点唯一；`Runner.compile`/CLI 各命令统一接入。
+- `--plugin <jar>` CLI 选项（T-M6-3）：`yuxc run/ast/check/ir --plugin x.jar file.yux`（选项可置于文件前后）；codegen hook 产物与后端产物合并进入类加载器。
+- `yux-compiler-plugin-api` 以 typealias 再导出 SPI（`yux.plugin.api.*`），保持文档 import 路径；SPI 实现在 core（避免 core→plugin-api 依赖环，02-§10 接口签名不变）。
+- `samples/extension`（T-M6-6）：hello-extension 示例插件——注册 `greet` 扩展关键字，`greet "World"` → 下沉为 `fun main() { print "Hello, World!" }` → 字节码运行；含 `META-INF/services` 与单测。
+
+### 说明
+- 测试：core 插件测试 14 例（注册通道/关键字解析/下沉无泄漏/冲突隔离/jar 加载）+ plugin-api 2 例 + samples/extension 3 例 + CLI e2e 6 例（`--plugin` 运行/ir/ast、缺 jar 报错），累计 430+ 例全绿。
+- 验收：`yuxc run --plugin samples/extension/build/libs/*.jar samples/extension/greet.yux` → `Hello, Yux plugin!`（06-§M6 链路用例）。
+- 设计偏差：SPI 接口定义于 core 的 `yux.compiler.plugin`（而非 plugin-api 模块），因 core 的 Parser/PluginLowering 须引用 SPI 类型而 plugin-api 依赖 core；plugin-api 以 typealias 再导出保持 `yux.plugin.api` 文档命名空间。
+
 ## [v0.1.0-m5] - 2026-08-08 — M5 JVM 后端
 
 ### 新增
