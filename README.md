@@ -61,6 +61,11 @@ yux/
 ./yux-compiler/yux-compiler-cli/build/install/yuxc/bin/yuxc build -p samples/mixed
 ./yux-compiler/yux-compiler-cli/build/install/yuxc/bin/yuxc run  -p samples/mixed
 # 期望: 构建产出 MixedServer-1.0.0.jar（含三语言类）；运行输出余额系统三方协作结果（05-§9）
+
+# M11 标准库：yux.collection/yux.core/yux.async（成员调用降级为 stdlib 静态调用）
+./yux-compiler/yux-compiler-cli/build/install/yuxc/bin/yuxc run samples/stdlib.yux
+# 期望输出: 60.030306030.012.0ABCabc3HELLOyux=42async!done（map/filter/sum/uppercase/split/format/launch）
+./bench/run-bench.sh --out bench/RESULTS.md   # M11 基准复跑
 ```
 
 ## 里程碑状态
@@ -78,6 +83,7 @@ yux/
 | M8 YuxPlugin SDK | ✅ | 注解契约 @YuxEvent/@YuxCommand/@YuxConfig/@YuxTask（T-M8-1）+ 语言扩展下沉 plugin/event/command/config/permission/task（T-M8-2..6）+ PluginBootstrap 扫描注册（T-M8-7）+ ConfigManager（T-M8-8）+ NBT 序列化（T-M8-9）+ TaskScheduler（T-M8-10）+ ItemBuilder/PlayerUtil/LocationUtil（T-M8-11）+ plugin.yml 生成（T-M8-12） |
 | M9 Paper 示例 | ✅ | Home 插件 samples/home-plugin（T-M9-1，04 全篇：4 命令 + tab + 3 事件 + 配置 + YAML 落盘 + 冷却 + 定时保存）+ 编译器扩展（扩展函数/索引/if 表达式/顶层属性/泛型构造/字符串拼接/JVM 互操作）+ HomePluginE2eTest 集成测试（T-M9-3）+ verify.sh（T-M9-2）+ Java 对照 samples/java-equivalent（T-M9-4，行数对比） |
 | M10 混合项目 | ✅ | 三方互操作 samples/mixed（T-M10-1/3，05-§9 余额系统：Yux→Kotlin/Java）+ 编译顺序编排（T-M10-2，compileMixed 双向自适应：Yux→Java/Kotlin 先 gradle classes；Kotlin/Java→Yux 先 Yux）+ 编译器 classLoader 注入 + 生成脚本（仓库声明/kotlin 工具链/files() 依赖）+ MixedProjectE2eTest（含反向互操作） |
+| M11 标准库完善 | ✅ | yux.io.IO / yux.net.Http（T-M11-1）+ yux.async Task/Tasks（T-M11-2，launch/parallel/await/sleep 真并发）+ yux.collection.Colls / yux.core.Text（T-M11-3）+ 编译器成员调用降级（JvmExtensions 注册表 `xs.map {}`/`s.uppercase()` + FunctionN 桥接 + Unit-Lambda 修复）+ fuzz 5000 例（T-M11-4）+ bench/ 基准（T-M11-5）+ core 覆盖率 ≥70% 门禁（T-M11-6，实际 84.3%）+ samples/stdlib 端到端样例 |
 
 ## 文档索引
 
