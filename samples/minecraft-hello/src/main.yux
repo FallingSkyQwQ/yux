@@ -1,0 +1,39 @@
+// M8 示例：YuxPlugin SDK（plugin/event/command/config/permission/task 全语法）
+import org.bukkit.event.player.PlayerJoinEvent
+plugin MyServer {
+    description = "YuxPlugin SDK 示例"
+
+    onEnable {
+        print "MyServer 已启用"
+    }
+}
+
+event PlayerJoin(player) {
+    player.sendMessage "欢迎 ${player.name} 加入服务器"
+}
+
+command "/hello" {
+    permission = "myserver.hello"
+    description = "打招呼"
+    aliases = ["hi"]
+
+    execute(sender, args) {
+        sender.sendMessage "Hello from YuxPlugin!"
+    }
+}
+
+config ServerConfig {
+    motd = "Welcome to MyServer"
+    maxPlayers = 100
+}
+
+permission "myserver.admin" {
+    description = "管理员权限"
+    default = OP
+    children = ["myserver.hello"]
+}
+
+task repeat(interval:20) {
+    // 每 20 tick 的周期任务示例
+    print "tick"
+}

@@ -1,0 +1,18 @@
+name: minecraft-hello
+version: 1.0.0
+
+language:
+  yux: 1.0
+
+target:
+  jvm: 21
+
+dependencies:
+  minecraft:
+    paper: 1.21
+
+plugins:
+  minecraft: true
+
+source:
+  main: src

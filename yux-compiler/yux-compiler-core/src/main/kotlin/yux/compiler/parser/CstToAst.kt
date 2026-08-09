@@ -276,7 +276,8 @@ class CstToAst {
         is CstUnsafeStmt -> YxUnsafeBlock(convertBlock(stmt.block), stmt.span)
     }
 
-    private fun convertBlock(block: CstBlock): YxBlock =
+    /** 公开转换入口：扩展关键字解析器下沉用（M8，把 `parseBlock()` 产出的块转为 AST）。 */
+    fun convertBlock(block: CstBlock): YxBlock =
         YxBlock(block.statements.map { convertStmt(it) }, block.span)
 
     private fun convertWhenCondition(condition: CstWhenCondition): YxWhenConditionX = when (condition) {
