@@ -4,8 +4,10 @@ import yux.backend.jvm.AsmBackend
 import yux.compiler.Compiler
 import yux.compiler.ast.YxDecl
 import yux.compiler.diag.DiagnosticSink
+import yux.compiler.plugin.PluginArtifact
 import yux.compiler.plugin.PluginManager
 import yux.compiler.source.SourceFile
+import org.yaml.snakeyaml.Yaml
 import java.io.IOException
 import java.nio.file.Files
 import java.nio.file.Path
@@ -38,6 +40,8 @@ data class CompiledProject(
     val success: Boolean,
     /** true = 增量命中（未重新编译，产物从磁盘加载）。 */
     val upToDate: Boolean,
+    /** 非 .class 附加产物（如编译器插件的 plugin.yml，T-M8-12）；M8 起并入打包流程。 */
+    val resourceArtifacts: List<PluginArtifact> = emptyList(),
 )
 
 /**
@@ -71,7 +75,7 @@ class YuxBuild(
         }
         val generatedDir = BuildPaths.resolve(projectDir, BuildPaths.GENERATED_DIR)
         try {
-            writeGradleProject(plan.config, generatedDir)
+            writeGradleProject(plan.config, generatedDir, compiled.resourceArtifacts)
         } catch (e: IOException) {
             return BuildResult(false, message = "生成 Gradle 工程失败: ${e.message}")
         }
@@ -163,10 +167,16 @@ class YuxBuild(
         }
         val module = compiler.generate(declsByFile, analysis)
         val artifacts = AsmBackend().generate(module, compiler.diagnostics).toMutableList()
-        // T-M6-5：插件 CodegenHook 附加产物（与 CLI Runner.kt 的合并模式一致）。
+        val resourceArtifacts = mutableListOf<PluginArtifact>()
+        // T-M6-5：插件 CodegenHook 附加产物（与 CLI Runner.kt 的合并模式一致）；
+        // M8（T-M8-12）：非 .class 产物（plugin.yml 等）与类分离，进入打包流程。
         for (hook in pluginManager.hooks) {
             for (artifact in hook.generate(module, compiler.diagnostics)) {
-                artifacts += AsmBackend.OutputArtifact(artifact.name, artifact.bytes)
+                if (artifact.name.endsWith(".class")) {
+                    artifacts += AsmBackend.OutputArtifact(artifact.name, artifact.bytes)
+                } else {
+                    resourceArtifacts += artifact
+                }
             }
         }
         if (compiler.diagnostics.hasErrors) {
@@ -185,11 +195,16 @@ class YuxBuild(
             diagnostics = compiler.diagnostics,
             success = true,
             upToDate = false,
+            resourceArtifacts = resourceArtifacts,
         )
     }
 
-    /** 生成 Gradle 工程：源路径一律为绝对路径（生成工程从 build/generated 运行）。 */
-    private fun writeGradleProject(config: BuildConfig, generatedDir: Path) {
+    /**
+     * 生成 Gradle 工程：源路径一律为绝对路径（生成工程从 build/generated 运行）。
+     * M8（T-M8-12）：编译器插件产出的 plugin.yml（main/permissions）与 build.yml 派生
+     * 的 plugin.yml（name/version/api-version）以 YAML 合并——插件内容优先。
+     */
+    private fun writeGradleProject(config: BuildConfig, generatedDir: Path, resourceArtifacts: List<PluginArtifact>) {
         val absConfig = config.copy(
             sourceJava = config.sourceJava?.let { BuildPaths.resolve(projectDir, it).toString() },
             sourceKotlin = config.sourceKotlin?.let { BuildPaths.resolve(projectDir, it).toString() },
@@ -202,13 +217,40 @@ class YuxBuild(
         Files.createDirectories(generatedDir)
         Files.writeString(generatedDir.resolve("settings.gradle"), generated.settingsGradle)
         Files.writeString(generatedDir.resolve("build.gradle.kts"), generated.buildGradleKts)
-        val pluginYml = generated.pluginYml
-        if (pluginYml != null) {
+        val hookPluginYml = resourceArtifacts.firstOrNull { it.name == "plugin.yml" }?.bytes?.toString(Charsets.UTF_8)
+        val basePluginYml = generated.pluginYml
+        val merged = mergePluginYml(basePluginYml, hookPluginYml)
+        if (merged != null) {
             val pluginFile = generatedDir.resolve("src/main/resources/plugin.yml")
             Files.createDirectories(pluginFile.parent)
-            Files.writeString(pluginFile, pluginYml)
+            Files.writeString(pluginFile, merged)
         }
     }
+
+    /** 合并两份 plugin.yml：基础（build.yml 派生）为底，钩子产物（编译器插件）逐键覆盖。 */
+    private fun mergePluginYml(base: String?, hook: String?): String? {
+        if (base == null && hook == null) return null
+        val merged = linkedMapOf<String, Any?>()
+        base?.let { merged.putAll(parseYamlMap(it)) }
+        hook?.let { merged.putAll(parseYamlMap(it)) }
+        return renderYaml(merged)
+    }
+
+    /** SnakeYAML 安全解析为有序 Map；解析失败回退为空 Map（不阻塞构建）。 */
+    private fun parseYamlMap(text: String): Map<String, Any?> {
+        val root = try {
+            Yaml().load<Any?>(text)
+        } catch (e: RuntimeException) {
+            return emptyMap()
+        }
+        if (root !is Map<*, *>) return emptyMap()
+        return root.entries.mapNotNull { (k, v) ->
+            (k as? String)?.let { it to v }
+        }.toMap(linkedMapOf())
+    }
+
+    /** 以块式风格渲染 YAML（snakeyaml DumperOptions 默认即块式）。 */
+    private fun renderYaml(map: Map<String, Any?>): String = Yaml().dump(map)
 
     /** 拷贝 Gradle 产出的 jar 到 `build/libs/<name>-<version>.jar`；无产物 → 失败结果。 */
     private fun copyArtifact(generatedDir: Path, targetJar: Path): BuildResult {

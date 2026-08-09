@@ -4,7 +4,7 @@ plugins {
     alias(libs.plugins.detekt)
 }
 
-description = "YuxPlugin SDK 语言扩展层（编译期：event/command/config 等）"
+description = "YuxPlugin SDK 语言扩展层（编译期：plugin/event/command/config/permission/task 下沉）"
 
 dependencies {
     implementation(project(":yux-compiler:yux-compiler-plugin-api"))

@@ -8,6 +8,7 @@ junit = "5.11.4"
 kotlinx-coroutines = "1.8.1"
 jackson-databind = "2.17.2"
 snakeyaml = "2.2"
+paper-api = "1.21-R0.1-SNAPSHOT"
 
 [libraries]
 # JVM 字节码生成（ADR-04）
@@ -24,6 +25,9 @@ kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-c
 # 序列化 / 配置
 jackson-databind = { module = "com.fasterxml.jackson.core:jackson-databind", version.ref = "jackson-databind" }
 snakeyaml = { module = "org.yaml:snakeyaml", version.ref = "snakeyaml" }
+
+# Paper API（03-§2：SDK 编译期/运行期依赖，M8）
+paper-api = { module = "io.papermc.paper:paper-api", version.ref = "paper-api" }
 
 [plugins]
 kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
