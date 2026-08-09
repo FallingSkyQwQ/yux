@@ -30,7 +30,7 @@ class TokenKindTest {
     @Test
     fun `soft keywords are contextual`() {
         assertEquals(
-            setOf("extends", "implements", "override", "private", "protected"),
+            setOf("extends", "implements", "override", "private", "protected", "then"),
             Keywords.SOFT,
         )
     }

@@ -145,9 +145,51 @@ object TypeAssignability {
         if (from is SemaType.NothingT) return true
         val f = from.nonNull()
         val t = to.nonNull()
-        if (!from.nullable && to.nullable) return sameBase(f, t)
+        if (!from.nullable && to.nullable) {
+            if (sameBase(f, t)) return true
+            // Java 互操作：非空基本类型可赋给可空 JVM 接口（String→CharSequence?，S-8.1/8.5）
+            if (f is SemaType.Basic && t is SemaType.Declared && t.symbol is JvmClassSymbol) {
+                val boxed = jvmBoxedName(f.name) ?: return false
+                return jvmImplements(boxed, (t.symbol as JvmClassSymbol).qualifiedName)
+            }
+            return false
+        }
         if (from.nullable && !to.nullable) return false
-        return sameBase(f, t)
+        if (sameBase(f, t)) return true
+        // Java 互操作（S-8.5 / M9）：基础类型装箱后是否可实现目标 JVM 接口
+        // （String→CharSequence、Int→Number 等，`replace(CharSequence, CharSequence)` 依赖）
+        if (f is SemaType.Basic && t is SemaType.Declared && t.symbol is JvmClassSymbol) {
+            val boxed = jvmBoxedName(f.name) ?: return false
+            return jvmImplements(boxed, (t.symbol as JvmClassSymbol).qualifiedName)
+        }
+        return false
+    }
+
+    /** 基础类型 → JVM 装箱类名（Int→java.lang.Integer）。 */
+    private fun jvmBoxedName(name: String): String? = when (name) {
+        "String" -> "java.lang.String"
+        "Int" -> "java.lang.Integer"
+        "Long" -> "java.lang.Long"
+        "Float" -> "java.lang.Float"
+        "Double" -> "java.lang.Double"
+        "Boolean" -> "java.lang.Boolean"
+        "Char" -> "java.lang.Character"
+        "Byte" -> "java.lang.Byte"
+        "Any" -> "java.lang.Object"
+        else -> null
+    }
+
+    /** 装箱类是否实现/继承目标 JVM 类型（反射判定，失败按 false）。 */
+    private fun jvmImplements(boxed: String, target: String): Boolean = try {
+        val boxedClass = Class.forName(boxed, false, JvmClassSymbol::class.java.classLoader)
+        val targetClass = Class.forName(target, false, JvmClassSymbol::class.java.classLoader)
+        targetClass.isAssignableFrom(boxedClass)
+    } catch (_: ClassNotFoundException) {
+        false
+    } catch (_: NoClassDefFoundError) {
+        false
+    } catch (_: LinkageError) {
+        false
     }
 
     /** 类型精确相等（重载选择用：`Math.max(1,2)` 不得命中 double 重载）。 */
@@ -184,8 +226,11 @@ object TypeAssignability {
         a is SemaType.TypeParam && b is SemaType.Basic -> true
         a is SemaType.Basic && b is SemaType.TypeParam -> true
         a is SemaType.Declared && b is SemaType.Declared ->
-            a.symbol === b.symbol && a.args.size == b.args.size &&
-                a.args.zip(b.args).all { (x, y) -> sameBase(x, y) }
+            a.symbol === b.symbol && (
+                // JVM 擦除裸类型（Map 无实参）接受任意泛型实参（M9：互操作），否则精确比较
+                a.args.isEmpty() || b.args.isEmpty() ||
+                    (a.args.size == b.args.size && a.args.zip(b.args).all { (x, y) -> sameBase(x, y) })
+                )
         a is SemaType.Function && b is SemaType.Function ->
             a.params.size == b.params.size &&
                 a.params.zip(b.params).all { (x, y) -> sameBase(x, y) } &&

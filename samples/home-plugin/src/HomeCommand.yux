@@ -1,0 +1,98 @@
+// T-M9-1：命令（04-§7，sethome/home/delhome/homes + tab 补全）
+import org.bukkit.entity.Player
+import java.util.ArrayList
+import java.util.List
+
+command "/sethome" {
+    permission = "homeplugin.set"
+
+    execute(sender, args) {
+        player = sender as Player
+        name = if args.isEmpty() then "default" else (args.get(0) as String)
+        if name == "default" && player.hasHome("default") {
+            player.sendMessage "覆盖默认家"
+        }
+        hd = loadHomeData(player.name as String)
+        cfg = config()
+        if hd.homes.size() >= (cfg.maxHomes as Int) && !hd.homes.containsKey(name) {
+            player.sendMessage "已达最大家数 ${cfg.maxHomes as Int}"
+            return true
+        }
+        homes = hd.homes
+        homes[name] = player.location.toData()
+        saveHomeData(HomeData(player.name as String, homes))
+        player.sendMessage "已设置家：$name"
+        return true
+    }
+}
+
+command "/home" {
+    permission = "homeplugin.home"
+
+    execute(sender, args) {
+        player = sender as Player
+        name = if args.isEmpty() then "default" else (args.get(0) as String)
+        hd = loadHomeData(player.name as String)
+        loc = hd.homes.get(name)
+        if loc == null {
+            player.sendMessage "没有名为 $name 的家"
+            return true
+        }
+        if cooldownActive(player) {
+            player.sendMessage "冷却中"
+            return true
+        }
+        player.teleport((loc as LocationData).toLocation())
+        player.sendMessage "已传送"
+        return true
+    }
+
+    tab(sender, args) {
+        player = sender as Player
+        hd = loadHomeData(player.name as String)
+        list = ArrayList() as List String
+        for k in hd.homes.keySet() {
+            list.add(k)
+        }
+        return list
+    }
+}
+
+command "/delhome" {
+    permission = "homeplugin.set"
+
+    execute(sender, args) {
+        player = sender as Player
+        name = if args.isEmpty() then "default" else (args.get(0) as String)
+        hd = loadHomeData(player.name as String)
+        if !hd.homes.containsKey(name) {
+            player.sendMessage "没有名为 $name 的家"
+            return true
+        }
+        homes = hd.homes
+        homes.remove(name)
+        saveHomeData(HomeData(player.name as String, homes))
+        player.sendMessage "已删除家：$name"
+        return true
+    }
+}
+
+command "/homes" {
+    permission = "homeplugin.home"
+
+    execute(sender, args) {
+        player = sender as Player
+        hd = loadHomeData(player.name as String)
+        sb = StringBuilder()
+        first = true
+        for k in hd.homes.keySet() {
+            if !first {
+                sb.append(", ")
+            }
+            sb.append(k)
+            first = false
+        }
+        player.sendMessage "你的家：" + sb.toString()
+        return true
+    }
+}

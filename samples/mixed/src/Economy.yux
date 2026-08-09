@@ -1,0 +1,27 @@
+// T-M10-3：余额系统（05-§9 控制台版，函数式账本）
+// 三方互操作：Yux data/函数 → Kotlin object（Currency.format）+ Java 单例（Logger.log）
+import com.example.Currency
+import com.example.Logger
+
+data Account {
+    player: String
+    balance: Double
+}
+
+// 存款：账本读写（Yux Map 索引 + as 转换）+ 返回新余额 + 日志（Kotlin 格式化 + Java 日志）
+fun deposit(accounts: Map String Any, player: String, amount: Double): Double {
+    acc = accounts.get(player) as Account
+    newBalance = if acc == null then amount else ((acc as Account).balance + amount)
+    accounts[player] = Account(player, newBalance)
+    Logger.getInstance().log("${player} 存入 ${Currency.format(amount)}")
+    return newBalance
+}
+
+// 查询余额；无记录返回 0
+fun balance(accounts: Map String Any, player: String): Double {
+    acc = accounts.get(player) as Account
+    if acc == null {
+        return 0.0
+    }
+    return (acc as Account).balance
+}

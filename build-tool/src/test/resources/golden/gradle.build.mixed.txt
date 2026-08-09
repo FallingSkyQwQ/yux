@@ -1,7 +1,7 @@
 // 由 yuxc 生成（T-M7-2，02-§11.3 / 05-§6）——手动修改会被下次构建覆盖
 plugins {
     java
-    kotlin("jvm") version "2.0.21"
+    kotlin("jvm") version "2.3.21"
     application
 }
 
@@ -11,6 +11,10 @@ java {
     }
 }
 
+kotlin {
+    jvmToolchain(21)
+}
+
 application {
     mainClass.set("com.example.Main")
 }
@@ -18,6 +22,8 @@ application {
 dependencies {
     implementation("com.example:shared-api:2.0")
     implementation("io.papermc.paper:paper-api:1.21-R0.1-SNAPSHOT")
+    // M10（05-§4）：Yux 编译产物加入编译 classpath（Yux 类型对 Java/Kotlin 可见）
+    implementation(files("build/yux-classes"))
 }
 
 sourceSets {

@@ -17,6 +17,7 @@ import yux.compiler.lexer.TokenKind.IDENTIFIER
 import yux.compiler.lexer.TokenKind.INT_LITERAL
 import yux.compiler.lexer.TokenKind.KEYWORD
 import yux.compiler.lexer.TokenKind.LBRACE
+import yux.compiler.lexer.TokenKind.LBRACKET
 import yux.compiler.lexer.TokenKind.LE
 import yux.compiler.lexer.TokenKind.LPAREN
 import yux.compiler.lexer.TokenKind.LT
@@ -168,6 +169,12 @@ internal class PrattParser(private val p: Parser) {
                 t.kind == QUESTION -> {
                     p.advance()
                     result = CstNullable(result, t, spanOf(result, t))
+                }
+                t.kind == LBRACKET -> {
+                    val lbracket = p.advance()
+                    val index = parseExpression()
+                    val rbracket = p.expect(RBRACKET, "']'")
+                    result = CstIndexExpr(result, lbracket, index, rbracket, spanOf(result, rbracket))
                 }
                 isNoParenArgStart(t) -> {
                     val arg = parsePostfixChain(p.parsePrimaryExpr())

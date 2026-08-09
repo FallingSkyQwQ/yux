@@ -77,6 +77,7 @@ object Keywords {
 
     val SOFT: Set<String> = setOf(
         "extends", "implements", "override", "private", "protected",
+        "then", // M9（T-M9-1）：if 表达式 `if c then a else b`（01-§7 扩展，04-§7 用法）
     )
 }
 

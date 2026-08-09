@@ -30,6 +30,8 @@ import yux.compiler.ast.YxFunctionBody
 import yux.compiler.ast.YxFunctionType
 import yux.compiler.ast.YxIdentifier
 import yux.compiler.ast.YxIf
+import yux.compiler.ast.YxIfExpr
+import yux.compiler.ast.YxIndexExpr
 import yux.compiler.ast.YxImport
 import yux.compiler.ast.YxInitBlock
 import yux.compiler.ast.YxIntLiteral
@@ -311,6 +313,8 @@ object AstPrinter {
         is YxNullable -> "Nullable(${renderExpr(expr.expr)})"
         is YxRange -> "Range(${renderExpr(expr.from)}, ${renderExpr(expr.to)})"
         is YxAssign -> "Assign(${renderExpr(expr.target)}, ${expr.op}, ${renderExpr(expr.value)})"
+        is YxIfExpr -> "IfExpr(${renderExpr(expr.condition)}, ${renderExpr(expr.thenExpr)}, ${renderExpr(expr.elseExpr)})"
+        is YxIndexExpr -> "Index(${renderExpr(expr.base)}, ${renderExpr(expr.index)})"
     }
 
     /** 块 Lambda 体：语句以 `; ` 连接的单行形式。 */

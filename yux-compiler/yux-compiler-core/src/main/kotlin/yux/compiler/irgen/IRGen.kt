@@ -51,14 +51,17 @@ import yux.compiler.sema.YxClassSymbol
  */
 class IRGen(
     private val analysis: AnalysisResult,
+    classLoader: ClassLoader = ClassPathSymbolProvider::class.java.classLoader,
 ) {
     private val module = IrModule()
-    private val classPath = ClassPathSymbolProvider()
+    private val classPath = ClassPathSymbolProvider(classLoader)
     private val typeResolver = TypeResolver(analysis.symbolTable, classPath, DiagnosticSink())
     val resolver = JvmCallResolver(classPath)
 
     /** Yux 函数符号 → 其 IrMethod（调用解析）。 */
     val functionMethods = mutableMapOf<FunctionSymbol, IrMethod>()
+    /** 扩展函数（M9）：当前函数体 receiver 局部名（非 null 时 `this` 读该局部）。 */
+    var extensionReceiverName: String? = null
 
     /** 属性符号 → backing 字段。 */
     val propertyFields = mutableMapOf<PropertySymbol, IrField>()
@@ -90,8 +93,16 @@ class IRGen(
 
     /** 文件类 + 文件级声明注册（骨架遍）。 */
     private fun registerFile(path: String, decls: List<YxDecl>, fileScope: FileScope) {
+        val baseName = fileClassName(path)
+        // 顶层类与文件类同名时（如 HomeData.yux 内 `data HomeData`），文件类名加 `_File` 后缀
+        // 避免 registerClass 的 data 类被文件类遮蔽（M9：构造解析 `classNamed` 命中非文件类）。
+        val topLevelTypeNames = decls.filterIsInstance<yux.compiler.ast.YxClass>()
+            .map { it.name }
+            .toSet() + decls.filterIsInstance<yux.compiler.ast.YxDataClass>().map { it.name } +
+            decls.filterIsInstance<yux.compiler.ast.YxService>().map { it.name }
+        val fileName = if (baseName in topLevelTypeNames) baseName + "_File" else baseName
         val fileClass = IrClass(
-            name = fileClassName(path),
+            name = fileName,
             isFileClass = true,
             isData = false,
             isService = false,
@@ -283,6 +294,7 @@ class IRGen(
     }
 
     private fun registerFunction(fnDecl: YxFunction, sym: FunctionSymbol, irClass: IrClass, fileScope: FileScope) {
+        // 扩展函数（M9）：receiver 已并入 sym.params（第 0 参数 `this`），编译为文件类静态方法
         val method = IrMethod(
             name = fnDecl.name,
             params = sym.params.map { IrParam(it.name, TypeBridge.toIr(it.type)) },
@@ -365,6 +377,9 @@ class IRGen(
     // ── 主体遍 ────────────────────────────────────────────────────────────────
 
     private fun generateFunctionBody(fnDecl: YxFunction, g: MethodGen, fileScope: FileScope) {
+        // 扩展函数（M9）：`this` 读 receiver 局部（第 0 参数，MethodGen 已按参数名登记）
+        val saved = extensionReceiverName
+        extensionReceiverName = if (fnDecl.receiver != null) "this" else null
         when (val body = fnDecl.body) {
             is yux.compiler.ast.YxFunctionBody.YxExpressionBody ->
                 g.emit(IrStmt.Return(genExpr(body.expr, g, fileScope)))
@@ -374,6 +389,7 @@ class IRGen(
                 g.exitScope()
             }
         }
+        extensionReceiverName = saved
     }
 
     private fun generateConstructor(

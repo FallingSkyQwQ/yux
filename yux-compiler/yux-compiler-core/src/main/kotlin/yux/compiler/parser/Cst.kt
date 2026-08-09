@@ -94,6 +94,7 @@ class CstFunctionDecl(
     val overrideKw: Token?,
     val modifier: Token?, // private/protected
     val funKw: Token?, // `fun`（service 成员可省略，01-§5.4 示例）
+    val receiverType: CstType?, // 扩展函数接收者（M9：`fun <Receiver>.<name>`）
     val name: Token,
     val typeParams: List<Token>,
     val params: List<CstParameter>,
@@ -448,6 +449,26 @@ class CstBinary(
     val left: CstExpr,
     val op: Token,
     val right: CstExpr,
+    override val span: SourceSpan,
+) : CstExpr
+
+/** if 表达式（M9）：`if <cond> then <thenExpr> else <elseExpr>`。 */
+class CstIfExpr(
+    val ifKw: Token,
+    val condition: CstExpr,
+    val thenKw: Token,
+    val thenExpr: CstExpr,
+    val elseKw: Token?,
+    val elseExpr: CstExpr?,
+    override val span: SourceSpan,
+) : CstExpr
+
+/** 索引访问（M9）：`expr[index]`（读 / 赋值目标，04-§7 用法）。 */
+class CstIndexExpr(
+    val base: CstExpr,
+    val lbracket: Token,
+    val index: CstExpr,
+    val rbracket: Token,
     override val span: SourceSpan,
 ) : CstExpr
 

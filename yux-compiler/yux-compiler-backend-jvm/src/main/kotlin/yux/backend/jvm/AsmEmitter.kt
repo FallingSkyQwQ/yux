@@ -74,6 +74,14 @@ class AsmEmitter(
     // ── 方法 ──────────────────────────────────────────────────────────────────
 
     private fun emitMethod(cw: ClassWriter, method: IrMethod) {
+        try {
+            emitMethodInner(cw, method)
+        } catch (e: RuntimeException) {
+            throw RuntimeException("ASM 方法生成失败: ${method.owner?.name}.${method.name}(${methodDescriptor(method)}): ${e.message}", e)
+        }
+    }
+
+    private fun emitMethodInner(cw: ClassWriter, method: IrMethod) {
         val jvmName = when {
             method.isConstructor -> "<init>"
             method.name == "\$clinit" -> "<clinit>"
@@ -103,7 +111,6 @@ class AsmEmitter(
         mv.visitMaxs(0, 0) // COMPUTE_FRAMES 自动计算
         mv.visitEnd()
     }
-
     private fun buildAccess(method: IrMethod): Int {
         var access = Opcodes.ACC_PUBLIC
         if (method.isStatic || method.name == "\$clinit") access = access or Opcodes.ACC_STATIC

@@ -21,8 +21,10 @@ class JvmCallResolver(
 ) {
 
     /** 实例方法（JavaBean getter 优先，与 TypeChecker.memberLookup 一致）：`s.length` → `String#length()`。 */
-    fun resolveInstanceMethod(receiverType: SemaType, name: String): IrJvmCall? {
+    fun resolveInstanceMethod(receiverType: SemaType, name: String, argTypes: List<SemaType> = emptyList()): IrJvmCall? {
         val jc = jvmClassOf(receiverType) ?: return null
+        if (name == "sendMessage") {
+        }
         // JavaBean 属性读取优先：getX() / isX()（S-8.5.2；镜像 memberLookup 的 propertyType 在前）
         val cap = name.replaceFirstChar { it.uppercaseChar() }
         jc.methods.firstOrNull { it.name == "get$cap" && it.params.isEmpty() }?.let {
@@ -30,8 +32,21 @@ class JvmCallResolver(
         }
         jc.methods.firstOrNull { it.name == "is$cap" && it.params.isEmpty() && it.returnType == SemaType.BOOLEAN }
             ?.let { return jvmCall(it, jc.qualifiedName) }
-        jc.methodNamed(name)?.let { return jvmCall(it, jc.qualifiedName) }
-        return null
+        // 重载选择（M9）：按实参类型精确（sameBase 忽略可空）/可赋值匹配
+        // （`sendMessage(String)` 不落到 BaseComponent；`String.replace(CharSequence)` 正确）
+        val byName = jc.methods.filter { it.name == name }
+        val chosen = if (argTypes.isEmpty()) {
+            byName.firstOrNull()
+        } else {
+            byName.firstOrNull { m ->
+                m.params.size == argTypes.size &&
+                    m.params.indices.all { i -> TypeAssignability.sameBase(argTypes[i], m.params[i]) }
+            } ?: byName.firstOrNull { m ->
+                m.params.size == argTypes.size &&
+                    m.params.indices.all { i -> TypeAssignability.isAssignable(argTypes[i], m.params[i]) }
+            } ?: byName.firstOrNull()
+        }
+        return chosen?.let { jvmCall(it, jc.qualifiedName) }
     }
 
     /** 静态方法：`System.currentTimeMillis()`。按实参类型匹配重载（Math.max 等）。 */
@@ -48,7 +63,12 @@ class JvmCallResolver(
                 m.params.indices.all { i -> TypeAssignability.isAssignable(argTypes[i], m.params[i]) }
             }
         }
-        return chosen?.let { jvmCall(it, jc.qualifiedName) }
+        if (chosen != null) return jvmCall(chosen, jc.qualifiedName)
+        // JavaBean getter 属性调用（M9）：`Bukkit.onlinePlayers()` → `getOnlinePlayers()`（Paper API）
+        val cap = name.replaceFirstChar { it.uppercaseChar() }
+        val getter = jc.staticMethods.firstOrNull { it.name == "get$cap" && it.params.isEmpty() } ?:
+            jc.staticMethods.firstOrNull { it.name == "is$cap" && it.params.isEmpty() }
+        return getter?.let { jvmCall(it, jc.qualifiedName) }
     }
 
     /** 静态字段：`System.out`。 */

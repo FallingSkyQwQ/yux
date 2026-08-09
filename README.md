@@ -51,6 +51,16 @@ yux/
 ./gradlew :yux-plugin-minecraft:yux-compiler-minecraft:jar
 ./gradlew :yux-compiler:yux-compiler-cli:run --args="build -p samples/minecraft-hello --plugin yux-plugin-minecraft/yux-compiler-minecraft/build/libs/yux-compiler-minecraft-0.1.0-SNAPSHOT.jar"
 # 期望: 构建成功 + samples/minecraft-hello/build/libs/minecraft-hello-1.0.0.jar（含 plugin.yml + 下沉类）
+
+# M9 Home 插件：--plugin 加载 minecraft 扩展，编译完整 Paper 插件（命令/事件/配置/存储/定时）
+./gradlew :yux-compiler:yux-compiler-cli:installDist
+./samples/home-plugin/verify.sh
+# 期望: yuxc build/test -p samples/home-plugin 通过 + jar 含 18 个下沉类 + plugin.yml（04-§10）
+
+# M10 混合项目：Yux + Kotlin + Java 三方互操作（Kotlin 格式化 + Java 日志 + Yux 输出）
+./yux-compiler/yux-compiler-cli/build/install/yuxc/bin/yuxc build -p samples/mixed
+./yux-compiler/yux-compiler-cli/build/install/yuxc/bin/yuxc run  -p samples/mixed
+# 期望: 构建产出 MixedServer-1.0.0.jar（含三语言类）；运行输出余额系统三方协作结果（05-§9）
 ```
 
 ## 里程碑状态
@@ -66,11 +76,12 @@ yux/
 | M6 编译器插件 API | ✅ | 插件 SPI（`YuxCompilerPlugin`/`PluginContext`/`ExtensionParser`）+ `--plugin` 加载 + 下沉管线 + hello-extension 示例 |
 | M7 构建管线 | ✅ | build.yml → BuildConfig 解析（T-M7-1）+ Gradle 脚本生成（T-M7-2）+ 编译顺序编排与 yux-symbols.json（T-M7-3/7）+ 托管 Gradle 打包（T-M7-4）+ yuxc build/run/test（T-M7-5）+ 文件级增量缓存（T-M7-6） |
 | M8 YuxPlugin SDK | ✅ | 注解契约 @YuxEvent/@YuxCommand/@YuxConfig/@YuxTask（T-M8-1）+ 语言扩展下沉 plugin/event/command/config/permission/task（T-M8-2..6）+ PluginBootstrap 扫描注册（T-M8-7）+ ConfigManager（T-M8-8）+ NBT 序列化（T-M8-9）+ TaskScheduler（T-M8-10）+ ItemBuilder/PlayerUtil/LocationUtil（T-M8-11）+ plugin.yml 生成（T-M8-12） |
+| M9 Paper 示例 | ✅ | Home 插件 samples/home-plugin（T-M9-1，04 全篇：4 命令 + tab + 3 事件 + 配置 + YAML 落盘 + 冷却 + 定时保存）+ 编译器扩展（扩展函数/索引/if 表达式/顶层属性/泛型构造/字符串拼接/JVM 互操作）+ HomePluginE2eTest 集成测试（T-M9-3）+ verify.sh（T-M9-2）+ Java 对照 samples/java-equivalent（T-M9-4，行数对比） |
+| M10 混合项目 | ✅ | 三方互操作 samples/mixed（T-M10-1/3，05-§9 余额系统：Yux→Kotlin/Java）+ 编译顺序编排（T-M10-2，compileMixed 双向自适应：Yux→Java/Kotlin 先 gradle classes；Kotlin/Java→Yux 先 Yux）+ 编译器 classLoader 注入 + 生成脚本（仓库声明/kotlin 工具链/files() 依赖）+ MixedProjectE2eTest（含反向互操作） |
 
 ## 文档索引
 
-- [`docs/00-总览.md`](docs/00-总览.md) — 路线图与 ADR
-- [`docs/01-Yux-语法规范.md`](docs/01-Yux-语法规范.md) — 完整语法规范
+- [`docs/00-总览.md`](docs/00-总览.md) — 路线图与 ADR- [`docs/01-Yux-语法规范.md`](docs/01-Yux-语法规范.md) — 完整语法规范
 - [`docs/02-Yux-编译器架构.md`](docs/02-Yux-编译器架构.md) — 编译器架构
 - [`docs/03-YuxPlugin-SDK-设计.md`](docs/03-YuxPlugin-SDK-设计.md) — SDK 设计
 - [`docs/06-开发计划.md`](docs/06-开发计划.md) — 里程碑开发计划

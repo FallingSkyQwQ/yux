@@ -1,0 +1,32 @@
+// T-M9-1：插件入口 + 事件（04-§8）
+import org.bukkit.event.player.PlayerJoinEvent
+import org.bukkit.event.player.PlayerQuitEvent
+import org.bukkit.event.entity.PlayerDeathEvent
+import org.bukkit.entity.Player
+import yux.minecraft.config.ConfigManager
+
+plugin HomePlugin {
+    description = "Home 传送插件示例（04）"
+    onEnable {
+        print "HomePlugin v1.0.0 已启用"
+    }
+    onDisable {
+        print "HomePlugin 已卸载"
+    }
+}
+
+event PlayerJoin(player) {
+    cfg = config()
+    msg = cfg.welcomeMessage as String
+    welcome = msg.replace("\$name", player.name as String) as String
+    player.sendMessage welcome
+    player.playSound(player.location, cfg.teleportSound as String, 1.0, 1.0)
+}
+
+event PlayerQuit(player) {
+    print "${player.name as String} 离开"
+}
+
+event PlayerDeath(player) {
+    player.sendMessage "你的家数据已保留"
+}

@@ -10,6 +10,7 @@ import yux.compiler.parser.CstToAst
 import yux.compiler.parser.Parser
 import yux.compiler.plugin.PluginManager
 import yux.compiler.sema.AnalysisResult
+import yux.compiler.sema.ClassPathSymbolProvider
 import yux.compiler.sema.SemanticAnalyzer
 import yux.compiler.source.SourceFile
 
@@ -25,6 +26,8 @@ import yux.compiler.source.SourceFile
 class Compiler(
     val diagnostics: DiagnosticSink = DiagnosticSink(),
     val pluginManager: PluginManager = PluginManager(),
+    /** 外部类解析加载器（M10 混合项目：项目 Java/Kotlin 编译产物目录的 URLClassLoader）。 */
+    val classLoader: ClassLoader = ClassPathSymbolProvider::class.java.classLoader,
 ) {
 
     /** 解析单个源文件为 AST（含插件下沉）。 */
@@ -38,7 +41,7 @@ class Compiler(
 
     /** 语义分析（含插件语义规则）。 */
     fun analyze(declsByFile: Map<String, List<YxDecl>>): AnalysisResult {
-        val analysis = SemanticAnalyzer().analyze(declsByFile, diagnostics)
+        val analysis = SemanticAnalyzer(classLoader).analyze(declsByFile, diagnostics)
         for (rule in pluginManager.rules) {
             rule.check(analysis, diagnostics)
         }
@@ -47,7 +50,7 @@ class Compiler(
 
     /** IR 生成 + 最小优化。 */
     fun generate(declsByFile: Map<String, List<YxDecl>>, analysis: AnalysisResult): IrModule {
-        val module = IRGen(analysis).generate(declsByFile)
+        val module = IRGen(analysis, classLoader).generate(declsByFile)
         BasicOpt.optimize(module)
         return module
     }

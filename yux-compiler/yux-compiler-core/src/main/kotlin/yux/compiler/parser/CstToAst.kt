@@ -33,6 +33,8 @@ import yux.compiler.ast.YxFunctionBody
 import yux.compiler.ast.YxFunctionType
 import yux.compiler.ast.YxIdentifier
 import yux.compiler.ast.YxIf
+import yux.compiler.ast.YxIfExpr
+import yux.compiler.ast.YxIndexExpr
 import yux.compiler.ast.YxImport
 import yux.compiler.ast.YxInitBlock
 import yux.compiler.ast.YxIntLiteral
@@ -172,6 +174,7 @@ class CstToAst {
             isOverride = decl.overrideKw != null,
             visibility = convertVisibility(decl.modifier),
             annotations = decl.annotations.map { convertAnnotation(it) },
+            receiver = decl.receiverType?.let { convertType(it) },
             span = decl.span,
         )
     }
@@ -321,6 +324,13 @@ class CstToAst {
         is CstNullable -> YxNullable(convertExpr(expr.expr), expr.span)
         is CstRangeExpr -> YxRange(convertExpr(expr.from), convertExpr(expr.to), expr.span)
         is CstAssignmentExpr -> YxAssign(convertExpr(expr.target), expr.op.text, convertExpr(expr.value), expr.span)
+        is CstIfExpr -> YxIfExpr(
+            convertExpr(expr.condition),
+            convertExpr(expr.thenExpr),
+            convertExpr(expr.elseExpr!!),
+            expr.span,
+        )
+        is CstIndexExpr -> YxIndexExpr(convertExpr(expr.base), convertExpr(expr.index), expr.span)
     }
 }
 

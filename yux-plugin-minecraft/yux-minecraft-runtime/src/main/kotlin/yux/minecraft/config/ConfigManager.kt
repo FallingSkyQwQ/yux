@@ -58,7 +58,8 @@ object ConfigManager {
         return load(plugin, defaults)
     }
 
-    /** 按 name 取缓存实例（未加载返回 null）。 */
+    /** 按 name 取缓存实例（未加载返回 null）。@JvmStatic 供 Yux 侧调用（M9）。 */
+    @JvmStatic
     fun get(name: String): Any? = cache[name]
 
     // ── 注解与路径 ──────────────────────────────────────────────────────────

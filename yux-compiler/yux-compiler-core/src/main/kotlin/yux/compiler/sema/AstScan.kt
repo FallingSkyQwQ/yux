@@ -81,6 +81,15 @@ object AstScan {
                 visit(e.to, onNode)
             }
             is yux.compiler.ast.YxThrow -> visit(e.expr, onNode)
+            is yux.compiler.ast.YxIfExpr -> {
+                visit(e.condition, onNode)
+                visit(e.thenExpr, onNode)
+                visit(e.elseExpr, onNode)
+            }
+            is yux.compiler.ast.YxIndexExpr -> {
+                visit(e.base, onNode)
+                visit(e.index, onNode)
+            }
             is yux.compiler.ast.YxTypeReference -> Unit
             is yux.compiler.ast.YxIdentifier,
             is yux.compiler.ast.YxIntLiteral,

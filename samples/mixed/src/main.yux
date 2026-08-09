@@ -1,0 +1,13 @@
+// T-M10：混合项目入口——Kotlin 格式化 + Java 日志 + Yux 输出三方协作
+import com.example.Currency
+
+fun main() {
+    accounts = Map String Any() as Map String Any
+    deposit(accounts, "Steve", 50.0)
+    deposit(accounts, "Steve", 25.5)
+    deposit(accounts, "Alex", 100.0)
+    println "=== Yux 余额系统（Kotlin + Java + Yux 混合项目）==="
+    println "Steve 余额: ${Currency.format(balance(accounts, "Steve"))}"
+    println "Alex 余额: ${Currency.format(balance(accounts, "Alex"))}"
+    println "Kotlin 格式化样例: ${Currency.format(12345.678)}"
+}
