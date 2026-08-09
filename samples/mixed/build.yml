@@ -1,0 +1,15 @@
+# T-M10-1：混合项目（05-§3）——同一构建单元混用 Yux/Kotlin/Java
+# 依赖方向（05-§4，v0.1 无环）：Yux → {Kotlin, Java}
+name: MixedServer
+version: 1.0.0
+
+language:
+  yux: 1.0
+
+target:
+  jvm: 21
+
+source:
+  main: src
+  kotlin: kotlin
+  java: java

@@ -12,6 +12,7 @@ import yux.compiler.sema.AnalysisPrinter
 import yux.compiler.source.SourceFile
 import yux.buildtool.YuxBuild
 import java.lang.reflect.InvocationTargetException
+import java.net.URLClassLoader
 import java.nio.file.Files
 import java.nio.file.Path
 
@@ -315,16 +316,25 @@ private fun runProject(projectDir: Path, pluginManager: PluginManager): Int {
             System.err.println("错误: 未生成任何类")
             return 1
         }
-        executeMain(result.classes, result.mainClassName)
+        executeMain(result.classes, result.mainClassName, result.projectClasspath)
     } catch (e: Exception) {
         System.err.println("错误: 构建异常: ${e.message}")
         1
     }
 }
 
-/** 进程内执行编译产物主类（镜像 Runner.run 的反射异常处理，T-M5-10）。 */
-private fun executeMain(classes: Map<String, ByteArray>, mainClassName: String): Int {
-    val loader = MemoryClassLoader(classes, Runner::class.java.classLoader)
+/**
+ * 进程内执行编译产物主类（镜像 Runner.run 的反射异常处理，T-M5-10）。
+ * M10：混合项目经 [projectClasspath]（Yux/Java/Kotlin 三方产物目录）构造单一 URLClassLoader，
+ * 使三方类互相引用可解析（05-§5 三方互调）；纯 Yux 项目沿用 [MemoryClassLoader]。
+ */
+private fun executeMain(classes: Map<String, ByteArray>, mainClassName: String, projectClasspath: List<Path> = emptyList()): Int {
+    val loader: ClassLoader = if (projectClasspath.isEmpty()) {
+        MemoryClassLoader(classes, Runner::class.java.classLoader)
+    } else {
+        val urls = projectClasspath.map { it.toUri().toURL() }.toTypedArray()
+        URLClassLoader(urls, Runner::class.java.classLoader)
+    }
     return try {
         val mainClass = Class.forName(mainClassName, true, loader)
         val main = mainClass.getMethod("main")

@@ -24,22 +24,41 @@ data class GeneratedProject(
 class GradleGenerator {
 
     /** 生成工程脚本文本；[yuxClassesDir] 为 Yux 编译产物目录，缺省 `build/yux-classes`。 */
-    fun generate(config: BuildConfig, yuxClassesDir: String = BuildPaths.YUX_CLASSES_DIR): GeneratedProject =
+    fun generate(
+        config: BuildConfig,
+        yuxClassesDir: String = BuildPaths.YUX_CLASSES_DIR,
+        shadeJars: List<String> = emptyList(),
+    ): GeneratedProject =
         GeneratedProject(
-            settingsGradle = "rootProject.name = \"${config.name}\"",
-            buildGradleKts = renderBuildGradleKts(config, yuxClassesDir),
+            settingsGradle = renderSettingsGradle(config),
+            buildGradleKts = renderBuildGradleKts(config, yuxClassesDir, shadeJars),
             pluginYml = if ("minecraft" in config.pluginsEnabled) renderPluginYml(config) else null,
         )
 
+    /** settings.gradle：声明仓库，供 kotlin 插件解析 kotlin-stdlib 与 maven 依赖（M10 混合项目必需）。 */
+    private fun renderSettingsGradle(config: BuildConfig): String = buildString {
+        append("rootProject.name = \"${config.name}\"\n")
+        append("dependencyResolutionManagement {\n")
+        append("    repositories {\n")
+        append("        mavenCentral()\n")
+        append("        gradlePluginPortal()\n")
+        if (config.paperVersion != null) {
+            append("        maven { url = 'https://repo.papermc.io/repository/maven-public/' }\n")
+        }
+        append("    }\n")
+        append("}")
+    }
+
     /** 渲染 build.gradle.kts：各节按模板顺序输出，节间空一行，末节后无空行。 */
-    private fun renderBuildGradleKts(config: BuildConfig, yuxClassesDir: String): String {
+    private fun renderBuildGradleKts(config: BuildConfig, yuxClassesDir: String, shadeJars: List<String>): String {
         val sections = listOf(
             pluginsSection(config),
             javaSection(config),
+            kotlinSection(config),
             applicationSection(config),
-            dependenciesSection(config),
+            dependenciesSection(config, yuxClassesDir),
             sourceSetsSection(config, yuxClassesDir),
-            jarSection(config, yuxClassesDir),
+            jarSection(config, yuxClassesDir, shadeJars),
         )
         return sections.filterNotNull().joinToString("\n\n")
     }
@@ -50,7 +69,7 @@ class GradleGenerator {
         append("plugins {\n")
         append("    java\n")
         if (config.sourceKotlin != null) {
-            append("    kotlin(\"jvm\") version \"2.0.21\"\n")
+            append("    kotlin(\"jvm\") version \"2.3.21\"\n")
         }
         if (config.mainClass != null) {
             append("    application\n")
@@ -67,6 +86,20 @@ class GradleGenerator {
         append("}")
     }
 
+    /**
+     * Kotlin 工具链块：kotlinc 固定运行于目标 JVM（M10：daemon 为更高版本 JDK 时
+     * 编译器版本解析会失败，jvmToolchain 保证编译进程使用 [BuildConfig.targetJvm]）。
+     */
+    private fun kotlinSection(config: BuildConfig): String? = if (config.sourceKotlin == null) {
+        null
+    } else {
+        buildString {
+            append("kotlin {\n")
+            append("    jvmToolchain(${config.targetJvm})\n")
+            append("}")
+        }
+    }
+
     /** 应用块：声明主类；无主类时整节省略。 */
     private fun applicationSection(config: BuildConfig): String? = config.mainClass?.let { main ->
         buildString {
@@ -76,9 +109,15 @@ class GradleGenerator {
         }
     }
 
-    /** 依赖块：maven 坐标在前、paper-api 在后；无任何依赖时整节省略。 */
-    private fun dependenciesSection(config: BuildConfig): String? {
-        if (config.mavenDeps.isEmpty() && config.paperVersion == null) return null
+    /**
+     * 依赖块：maven 坐标在前、paper-api 在后；混合项目（含 Java/Kotlin 源码）追加
+     * yux 产物目录为 files() 依赖——javac/kotlinc 的 compile classpath 由此可见 Yux 类型
+     * （M10，05-§5.3/5.4「Kotlin/Java → Yux」）。无任何依赖时整节省略。
+     */
+    private fun dependenciesSection(config: BuildConfig, yuxClassesDir: String): String? {
+        val hasExternal = config.mavenDeps.isNotEmpty() || config.paperVersion != null
+        val mixed = config.sourceJava != null || config.sourceKotlin != null
+        if (!hasExternal && !mixed) return null
         return buildString {
             append("dependencies {\n")
             for (dep in config.mavenDeps) {
@@ -86,6 +125,10 @@ class GradleGenerator {
             }
             if (config.paperVersion != null) {
                 append("    implementation(\"io.papermc.paper:paper-api:${config.paperVersion}-R0.1-SNAPSHOT\")\n")
+            }
+            if (mixed) {
+                append("    // M10（05-§4）：Yux 编译产物加入编译 classpath（Yux 类型对 Java/Kotlin 可见）\n")
+                append("    implementation(files(\"$yuxClassesDir\"))\n")
             }
             append("}")
         }
@@ -109,10 +152,19 @@ class GradleGenerator {
         append("}")
     }
 
-    /** 打包节：显式把 Yux 编译产物（.class）并入 jar（java.srcDir 仅作源码/类路径，不会进 jar）。 */
-    private fun jarSection(config: BuildConfig, yuxClassesDir: String): String = buildString {
+    /**
+     * 打包节：显式把 Yux 编译产物（.class）并入 jar；minecraft 项目附带 shade 运行时与第三方依赖。
+     */
+    private fun jarSection(config: BuildConfig, yuxClassesDir: String, shadeJars: List<String>): String = buildString {
         append("tasks.jar {\n")
         append("    from(\"$yuxClassesDir\")\n")
+        // M9（T-M9-1）：Paper 加载要求插件 jar 自包含 SDK 运行时与第三方依赖
+        // （PluginBootstrap/注解/HomeStore + snakeyaml/kotlin-stdlib，服务器不提供）
+        for (jar in shadeJars) {
+            append("    from(zipTree(\"$jar\")) {\n")
+            append("        exclude(\"META-INF/**\")\n")
+            append("    }\n")
+        }
         append("}")
     }
 

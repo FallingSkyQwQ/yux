@@ -16,8 +16,10 @@ import yux.compiler.lowering.GuardPoint
  * 3. [TypeChecker.checkAll] 类型检查 + 推断 + 智能转型 + 空守卫。
  */
 class SemanticAnalyzer(
-    private val classPath: ClassPathSymbolProvider = ClassPathSymbolProvider(),
+    classLoader: ClassLoader = ClassPathSymbolProvider::class.java.classLoader,
 ) {
+    private val classPath = ClassPathSymbolProvider(classLoader)
+
     fun analyze(declsByFile: Map<String, List<YxDecl>>, diagnostics: DiagnosticSink): AnalysisResult {
         val symbolTable = SymbolTable(classPath)
         symbolTable.collect(declsByFile, diagnostics)

@@ -17,6 +17,8 @@ class JvmClassSymbol(
     var staticMethods: List<JvmMethodSymbol>,
     var fields: List<JvmFieldSymbol>,
     var constructors: List<JvmConstructorSymbol>,
+    /** 该符号来源的类加载器（M10 混合项目：可解析项目 Java/Kotlin 类）。 */
+    private val loader: ClassLoader = ClassPathSymbolProvider::class.java.classLoader,
 ) : Symbol, TypeSymbol {    override val name: String get() = simpleName
     override val isYuxDeclared: Boolean = false
     override val span: SourceSpan? = null
@@ -47,8 +49,8 @@ class JvmClassSymbol(
     fun isIterable(): Boolean = qualifiedName == "java.lang.Iterable" || isAssignableFrom("java.lang.Iterable")
 
     private fun isAssignableFrom(superType: String): Boolean = try {
-        Class.forName(qualifiedName, false, JvmClassSymbol::class.java.classLoader)
-            .let { superClass -> Class.forName(superType, false, JvmClassSymbol::class.java.classLoader).isAssignableFrom(superClass) }
+        Class.forName(qualifiedName, false, loader)
+            .let { superClass -> Class.forName(superType, false, loader).isAssignableFrom(superClass) }
     } catch (_: ClassNotFoundException) {
         false
     } catch (_: NoClassDefFoundError) {
@@ -89,7 +91,10 @@ class JvmConstructorSymbol(
  * 实现要点：先构造**空成员符号**并写入 [cache]，再填充成员——自引用方法/返回类型
  * 递归解析时命中同一符号实例（`===` 相等，类型一致性），无需事后修复。
  */
-class ClassPathSymbolProvider {
+class ClassPathSymbolProvider(
+    /** 类解析加载器（M10 混合项目：指向项目 Java/Kotlin 编译产物目录的 URLClassLoader）。 */
+    private val classLoader: ClassLoader = ClassPathSymbolProvider::class.java.classLoader,
+) {
     private val cache = mutableMapOf<String, JvmClassSymbol?>()
 
     /** 按完整限定名解析；失败返回 null。 */
@@ -121,6 +126,7 @@ class ClassPathSymbolProvider {
         staticMethods = emptyList(),
         fields = emptyList(),
         constructors = emptyList(),
+        loader = classLoader,
     )
 
     private fun fill(symbol: JvmClassSymbol, cls: Class<*>) {
@@ -149,7 +155,7 @@ class ClassPathSymbolProvider {
     }
 
     private fun forName(name: String): Class<*>? = try {
-        Class.forName(name, false, ClassPathSymbolProvider::class.java.classLoader)
+        Class.forName(name, false, classLoader)
     } catch (_: ClassNotFoundException) {
         null
     } catch (_: NoClassDefFoundError) {
