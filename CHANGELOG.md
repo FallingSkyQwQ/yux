@@ -2,6 +2,35 @@
 
 本文件记录各里程碑的显著变更（含 breaking changes，见 06-§3）。
 
+## [v0.1.0-m8] - 2026-08-09 — YuxPlugin SDK
+
+### 新增
+- `yux-minecraft-runtime` 运行时层（T-M8-1/7/8/9/10/11，03-§4/§6/§7/§9）：
+  - 注解契约（T-M8-1，03-§4.3）：`@YuxEvent(target)`/`@YuxCommand(path/permission/aliases)`/`@YuxConfig(name/path)`/`@YuxTask(delay/interval/async)`（aliases 为逗号分隔字符串——注解实参仅支持标量）。
+  - `PluginBootstrap`（T-M8-7，03-§4.2/§9.1）：`onEnable` 保留 `AnnotationScanner.registerAll` 注册逻辑后调用用户钩子 `onYuxEnable`/`onYuxDisable`（设计偏差：用户 `onEnable {}` 下沉为覆盖 onYuxEnable，避免覆盖父类注册逻辑）。
+  - `AnnotationScanner`（T-M8-7）：扫描插件 jar/classes 目录（codeSource），实例化带 SDK 注解的类并分派注册（event→EventBus / command→CommandRegistry / config→ConfigManager / task→TaskScheduler）；扫描与分派拆为 `scanClasses`/`dispatch` 内部函数供无服务器单测。
+  - `EventBus`：`registerEvents` 委托；`CommandRegistry`（T-M8-4 运行时侧）：反射适配 `execute(sender:CommandSender, args:List):Boolean` / `tab(sender,args):List` 为 CommandExecutor/TabCompleter（SAM + 方法缓存；设计偏差：paper-api 1.21 将 getCommand 从 Plugin 接口移除，内部安全向下转型 JavaPlugin）。
+  - `ConfigManager`（T-M8-8，03-§3.5/§4.3）：`dataFolder/<path>` YAML 覆盖默认值、`load/save/reload/get`（java.lang.reflect + SnakeYAML，嵌套 data 类递归）。
+  - `NbtIO`/`NbtTag`（T-M8-9，03-§6.2）：Int/Byte/Long/Float/Double/String/Boolean/List/Map/data 类 ↔ NBT 复合标签映射，round-trip 全类型。
+  - `TaskScheduler`（T-M8-10，03-§9.2）：`@YuxTask` + `run()` 反射 → BukkitScheduler 同步/异步 × 延迟/定时四象限。
+  - `ItemBuilder`/`PlayerUtil`/`LocationUtil`（T-M8-11，03-§7.3）：链式物品构建、UUID 玩家查询、坐标解析。
+- `yux-compiler-minecraft` 语言扩展层（T-M8-2..6/12，03-§3/§5/§8/§11）：
+  - `MinecraftCompilerPlugin`：注册 `plugin/event/command/config/permission/task` 六个扩展关键字（与内置关键字核对无冲突）；ExtensionParser 按 03-§3 语法解析，SyntaxTransform 下沉为普通 AST（经公开的 `CstToAst.convertBlock`）。
+  - `plugin X {}`（T-M8-2）→ `class X extends PluginBootstrap`（onEnable/onDisable → onYuxEnable/onYuxDisable override）。
+  - `event E(p) {…}`（T-M8-3）→ `@YuxEvent` + `E_Handler implements Listener` + `@EventHandler handle(e:E)`，参数按名绑定事件对象属性（`player = e.player`）；事件类名自动补 `Event` 后缀；SDK/固定包类型生成全限定名，事件类由源码 `import` 解析。
+  - `command "…" {…}`（T-M8-4）→ `@YuxCommand` + `execute(sender:CommandSender, args:List String):Boolean`（隐式追加 `return true`，03-§3.4）+ 可选 `tab`。
+  - `config C {…}`（T-M8-5）→ `@YuxConfig` + data 类（字段类型按字面量推导；v0.1 仅标量默认值，List 报诊断）。
+  - `permission "…"`（T-M8-6）→ plugin.yml permissions 元数据；`task [async] delay/repeat(interval:…)`（T-M8-6）→ `@YuxTask` + `fun run()`（设计偏差：async 修饰符位于 task 之后，03-§9.2 为 `async task`）。
+  - plugin.yml 生成（T-M8-12）：CodegenHook 产出 `plugin.yml` 产物（main + permissions + command 权限节点，纯文本渲染）；build-tool 以 YAML 合并——build.yml 派生（name/version/api-version）为底、插件产物逐键覆盖（main/permissions）。
+- build-tool 配套（M8-12）：`CompiledProject.resourceArtifacts` 承载非 .class 钩子产物；`YuxBuild` 合并两份 plugin.yml。
+- `samples/minecraft-hello`：全语法示例工程（plugin/event/command/config/permission/task），`yuxc build -p samples/minecraft-hello --plugin yux-compiler-minecraft.jar` → jar 含合并 plugin.yml 与六个下沉类。
+
+### 说明
+- 测试：runtime 26 例（ConfigManager 7 / NBT 6 / TaskScheduler 4 / CommandRegistry 4 / ItemBuilder+LocationUtil 3 / AnnotationScanner 2）+ compiler-minecraft 19 例（六关键字解析+下沉+plugin.yml），全仓累计 535 例全绿；`./gradlew build lint` 通过。
+- 验收：`yuxc build -p samples/minecraft-hello --plugin …` → 构建成功，plugin.yml（main: MyServer + permissions）与 Main/MyServer/PlayerJoinEvent_Handler/HelloCommand/ServerConfig/Task_0_20 类齐全。
+- 已知限制（R4）：`ItemBuilder.build()` 需运行中服务器（RegistryAccess），链式契约单测覆盖、build 产物由 M9 集成测试（MockBukkit）验证；`yuxc run/test` 对 minecraft 项目需真实服务器（M9）；`async task` 语法偏差；config List 默认值暂不支持；事件类需显式 `import`。
+- 环境要点：paper-api 1.21-R0.1-SNAPSHOT 加入版本目录（CLI 携带以便 sema 解析 Paper 类型；runtime compileOnly+testImplementation）；测试用 java.lang.reflect.Proxy 模拟 Bukkit 对象、反射设置 `Bukkit.server` 满足静态初始化（`Bukkit.setServer` 在纯 API 环境不可用）。
+
 ## [v0.1.0-m7] - 2026-08-09 — M7 构建管线（build.yml → Gradle）
 
 ### 新增

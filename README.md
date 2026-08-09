@@ -46,6 +46,11 @@ yux/
 # M7 构建管线：yuxc build -p <项目目录>（build.yml → Yux 编译 → Gradle 打包 → build/libs/*.jar）
 ./gradlew :yux-compiler:yux-compiler-cli:run --args="build -p samples/helloworld"
 # 期望: 构建成功 + samples/helloworld/build/libs/helloworld-0.1.0.jar
+
+# M8 YuxPlugin SDK：--plugin 加载 minecraft 扩展，编译 event/command/config 语法
+./gradlew :yux-plugin-minecraft:yux-compiler-minecraft:jar
+./gradlew :yux-compiler:yux-compiler-cli:run --args="build -p samples/minecraft-hello --plugin yux-plugin-minecraft/yux-compiler-minecraft/build/libs/yux-compiler-minecraft-0.1.0-SNAPSHOT.jar"
+# 期望: 构建成功 + samples/minecraft-hello/build/libs/minecraft-hello-1.0.0.jar（含 plugin.yml + 下沉类）
 ```
 
 ## 里程碑状态
@@ -60,6 +65,7 @@ yux/
 | M5 JVM 后端 | ✅ | ASM 发射（类/属性/data/Lambda/注解/互操作/空守卫）+ `yuxc run` + samples 端到端 |
 | M6 编译器插件 API | ✅ | 插件 SPI（`YuxCompilerPlugin`/`PluginContext`/`ExtensionParser`）+ `--plugin` 加载 + 下沉管线 + hello-extension 示例 |
 | M7 构建管线 | ✅ | build.yml → BuildConfig 解析（T-M7-1）+ Gradle 脚本生成（T-M7-2）+ 编译顺序编排与 yux-symbols.json（T-M7-3/7）+ 托管 Gradle 打包（T-M7-4）+ yuxc build/run/test（T-M7-5）+ 文件级增量缓存（T-M7-6） |
+| M8 YuxPlugin SDK | ✅ | 注解契约 @YuxEvent/@YuxCommand/@YuxConfig/@YuxTask（T-M8-1）+ 语言扩展下沉 plugin/event/command/config/permission/task（T-M8-2..6）+ PluginBootstrap 扫描注册（T-M8-7）+ ConfigManager（T-M8-8）+ NBT 序列化（T-M8-9）+ TaskScheduler（T-M8-10）+ ItemBuilder/PlayerUtil/LocationUtil（T-M8-11）+ plugin.yml 生成（T-M8-12） |
 
 ## 文档索引
 
