@@ -1031,10 +1031,16 @@ class TypeChecker(
         }
         if (receiver is SemaType.Declared && receiver.symbol is JvmClassSymbol) {
             val sym = receiver.symbol
+            // T-M11-3：注册表成员调用优先降级为 stdlib 静态调用——注册表定义语言级成员表面，
+            // JDK 同名实例方法（如 ArrayList.forEach(Consumer)/sort(Comparator)）不参与解析
+            if (JvmExtensions.find(sym.qualifiedName, name) != null) {
+                checkJvmExtension(receiverType, name, call)?.let { return it }
+            }
             val methods = sym.methods.filter { it.name == name }
             if (methods.isEmpty()) {
                 sym.propertyType(name)?.let { return applyFunctionType(it, call) }
                 lookupExtensionCall(receiverType, name, call)?.let { return it }
+                checkJvmExtension(receiverType, name, call)?.let { return it }
                 diagnostics.error("方法 '${name}' 不存在于 '${receiverType.render()}'", call.span.start, ErrorCodes.UNRESOLVED_MEMBER)
                 return SemaType.ErrorT
             }
@@ -1043,8 +1049,13 @@ class TypeChecker(
         if (receiver is SemaType.Basic) {
             val jc = jvmForBasic(receiver.name)
             if (jc != null) {
+                // T-M11-3：注册表成员优先（如 String.split → Text.split 的字面语义与 List 返回值）
+                if (JvmExtensions.find(jc.qualifiedName, name) != null) {
+                    checkJvmExtension(receiverType, name, call)?.let { return it }
+                }
                 val methods = jc.methods.filter { it.name == name }
                 if (methods.isNotEmpty()) return checkJvmCall(methods, call)
+                checkJvmExtension(receiverType, name, call)?.let { return it }
             }
         }
         if (receiver is SemaType.Function) {
@@ -1201,6 +1212,48 @@ class TypeChecker(
         }
         return fn.returnType ?: SemaType.UnitT
     }
+
+    /**
+     * JVM 扩展函数调用（T-M11-3）：`xs.map {}` / `s.uppercase()` 经 [JvmExtensions]
+     * 注册表降级为 yux-stdlib 静态方法调用（receiver 前置为实参 0）。
+     * 未命中注册表 / 宿主类 / 静态方法时返回 null（维持 UNRESOLVED_MEMBER 路径）。
+     */
+    private fun checkJvmExtension(receiverType: SemaType, name: String, call: YxCall): SemaType? {
+        val jc = jvmClassOf(receiverType) ?: return null
+        val entry = JvmExtensions.find(jc.qualifiedName, name) ?: return null
+        val host = classPath.resolve(entry.first) as? JvmClassSymbol ?: return null
+        val method = host.staticMethods.firstOrNull { it.name == entry.second } ?: return null
+        // 实参数校验：静态方法参数 = receiver(param 0) + 实参
+        if (call.args.size != method.params.size - 1) {
+            diagnostics.error(
+                "扩展函数 '${name}' 实参数目不匹配: 需要 ${method.params.size - 1} 个，实际 ${call.args.size} 个",
+                call.span.start,
+                ErrorCodes.ARGUMENT_COUNT_MISMATCH,
+            )
+            return method.returnType
+        }
+        val elem = elementType(receiverType)
+        call.args.forEachIndexed { i, arg ->
+            val param = method.params[i + 1]
+            // FunctionN 形参：用接收者元素类型替换函数参数类型（`map { it * 10 }` 的 it 为元素类型）
+            val expected = (param as? SemaType.Declared)?.let { functionTypeOfJvm(it) }?.let { fn ->
+                if (elem != null && fn.params.isNotEmpty()) {
+                    SemaType.Function(List(fn.params.size) { elem }, fn.ret, nullable = false)
+                } else fn
+            } ?: param
+            val argType = typeOf(arg, expected = expected)
+            if (!argType.isError) inference.expectAssignable(argType, expected, arg.span.start, "实参 ${i + 1}")
+        }
+        return method.returnType
+    }
+
+    /** 语义类型 → JVM 类符号（镜像 JvmCallResolver.jvmClassOf）。 */
+    private fun jvmClassOf(receiverType: SemaType): JvmClassSymbol? = when (val t = SemaType.resolveVar(receiverType)) {
+        is SemaType.Declared -> t.symbol as? JvmClassSymbol
+        is SemaType.Basic -> jvmForBasic(t.name)
+        else -> null
+    }
+
     private fun typeOfIndexExpr(expr: YxIndexExpr): SemaType {
         val base = SemaType.resolveVar(typeOf(expr.base))
         val idx = typeOf(expr.index)
@@ -1362,7 +1415,9 @@ class TypeChecker(
     }
 
     private fun typeOfLambda(expr: YxLambda, expected: SemaType?): SemaType {
+        // T-M11-3：期望类型除 SemaType.Function 外，接受 FunctionN Declared（lambda 实参传 FunctionN 参数）
         val expectedFn = expected as? SemaType.Function
+            ?: (expected as? SemaType.Declared)?.let { functionTypeOfJvm(it) }
         if (expectedFn == null) {
             diagnostics.error("Lambda 参数类型必须由上下文提供（S-4.5.3）", expr.span.start, ErrorCodes.INFERENCE_FAILURE)
             expr.body.let { typeOf(it) }
@@ -1391,7 +1446,9 @@ class TypeChecker(
     }
 
     private fun typeOfBlockLambda(expr: YxBlockLambda, expected: SemaType?): SemaType {
+        // T-M11-3：期望类型除 SemaType.Function 外，接受 FunctionN Declared（块 Lambda 传 FunctionN 参数）
         val expectedFn = expected as? SemaType.Function
+            ?: (expected as? SemaType.Declared)?.let { functionTypeOfJvm(it) }
         val ret: SemaType = expectedFn?.ret ?: SemaType.UnitT
         smartCast.enterBlock()
         varStack.addLast(mutableMapOf())
@@ -1493,6 +1550,25 @@ class TypeChecker(
         }
         is SemaType.InferenceVar -> iterable.solution?.let { elementType(it) }
         else -> null
+    }
+
+    /**
+     * JVM FunctionN 声明类型 → Yux 函数类型（T-M11-3）：按后缀数字取 arity，
+     * 泛型实参（反射裸类型为空）缺省为 Any。
+     */
+    private fun functionTypeOfJvm(declared: SemaType.Declared): SemaType.Function? {
+        val sym = declared.symbol as? JvmClassSymbol ?: return null
+        val qn = sym.qualifiedName
+        val arity = when {
+            qn == "yux.core.function.Function0" -> 0
+            qn == "yux.core.function.Function1" -> 1
+            qn == "yux.core.function.Function2" -> 2
+            qn == "yux.core.function.Function3" -> 3
+            else -> return null
+        }
+        val params = (0 until arity).map { declared.args.getOrNull(it) ?: SemaType.ANY }
+        val ret = declared.args.getOrNull(arity) ?: SemaType.ANY
+        return SemaType.Function(params, ret, nullable = false)
     }
 
     private fun functionType(fn: FunctionSymbol): SemaType =
