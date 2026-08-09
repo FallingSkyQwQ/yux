@@ -161,6 +161,10 @@ object Builtins {
         "Throwable" to "java.lang.Throwable",
         "Exception" to "java.lang.Exception",
         "RuntimeException" to "java.lang.RuntimeException",
+        // yux-stdlib 静态工具类（T-M11-3）：`Text.uppercase("hello")` / `Colls.map(...)` 简单名可解析
+        "Text" to "yux.core.Text",
+        "Colls" to "yux.collection.Colls",
+        "Tasks" to "yux.async.Tasks",
     )
 
     val typeParamNames = BASIC.keys

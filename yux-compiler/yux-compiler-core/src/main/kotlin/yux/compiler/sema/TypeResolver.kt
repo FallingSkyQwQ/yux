@@ -145,6 +145,15 @@ object TypeAssignability {
         if (from is SemaType.NothingT) return true
         val f = from.nonNull()
         val t = to.nonNull()
+        // T-M11-3：Yux 函数类型 → JVM FunctionN SAM 接口（lambda 实参可传 FunctionN 参数）
+        if (f is SemaType.Function && t is SemaType.Declared && t.symbol is JvmClassSymbol) {
+            val qn = (t.symbol as JvmClassSymbol).qualifiedName
+            if (qn == "yux.core.function.Function0" || qn == "yux.core.function.Function1" ||
+                qn == "yux.core.function.Function2" || qn == "yux.core.function.Function3"
+            ) {
+                return true
+            }
+        }
         if (!from.nullable && to.nullable) {
             if (sameBase(f, t)) return true
             // Java 互操作：非空基本类型可赋给可空 JVM 接口（String→CharSequence?，S-8.1/8.5）

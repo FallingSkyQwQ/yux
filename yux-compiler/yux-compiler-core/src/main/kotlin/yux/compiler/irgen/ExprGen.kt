@@ -190,7 +190,26 @@ class ExprGen(
                 irGen.functionMethods[fn]?.let { IrExpr.Invoke(IrMethodRef(it), receiver, args) }
             } ?: objectMethodCall(sym.name, name, args)?.let { IrExpr.Invoke(it, receiver, args) }
         }
-        else -> resolver.resolveInstanceMethod(rt, name, argTypes)
+        else -> resolveMemberExprJvm(receiver, rt, name, args, argTypes)
+    }
+
+    /**
+     * JVM 接收者成员解析：注册表成员（T-M11-3）优先降级为 stdlib 静态调用
+     * （与 sema checkInstanceCall 优先级一致，receiver 前置为实参 0）；
+     * 未注册成员走实例方法 / JavaBean getter 解析。
+     */
+    private fun resolveMemberExprJvm(
+        receiver: IrExpr,
+        rt: SemaType,
+        name: String,
+        args: List<IrExpr>,
+        argTypes: List<SemaType>,
+    ): IrExpr? {
+        val ext = resolver.resolveJvmExtension(rt, name)
+        if (ext != null) {
+            return IrExpr.Invoke(ext, null, listOf(receiver) + args)
+        }
+        return resolver.resolveInstanceMethod(rt, name, argTypes)
             ?.let { IrExpr.Invoke(it, receiver, args) }
     }
 
@@ -424,7 +443,7 @@ class ExprGen(
         val method = newLambdaMethod(expr, fnType, g, captures)
         val lambdaG = MethodGen(method, g.owner)
         lambdaG.enterScope()
-        lambdaG.emit(IrStmt.Return(gen(expr.body, lambdaG, fileScope)))
+        emitLambdaTail(gen(expr.body, lambdaG, fileScope), lambdaG)
         lambdaG.exitScope()
         return IrExpr.Lambda(
             IrMethodRef(method),
@@ -451,7 +470,7 @@ class ExprGen(
             val isLast = i == statements.lastIndex
             if (isLast && nonUnit) {
                 when (stmt) {
-                    is YxExprStmt -> lambdaG.emit(IrStmt.Return(gen(stmt.expr, lambdaG, fileScope)))
+                    is YxExprStmt -> emitLambdaTail(gen(stmt.expr, lambdaG, fileScope), lambdaG)
                     // 末条非表达式：sema 的 S-7.4.3 校验已拒绝；防御性报错防降级
                     else -> error("IRGen: 块 Lambda 返回类型非 Unit 但末条语句非表达式（S-7.4.3）: $stmt")
                 }
@@ -459,11 +478,25 @@ class ExprGen(
                 irGen.genStmt(stmt, lambdaG, fileScope)
             }
         }
+        // T-M11-3：Unit 返回的 Lambda 合成方法返回 Object（SAM 擦除），需显式 `Return(null)` 收尾
+        if (!nonUnit) {
+            lambdaG.emit(IrStmt.Return(IrExpr.Const(null)))
+        }
         lambdaG.exitScope()
         return IrExpr.Lambda(
             IrMethodRef(method),
             captures.map { (name, _) -> IrExpr.LocalRead(captureLocal(g, name)) },
         )
+    }
+
+    /** 尾表达式作为返回值：体为 Unit/Void 值时（如 `print` 调用）作为语句发射并返回 null（T-M11-3）。 */
+    private fun emitLambdaTail(tail: IrExpr, lambdaG: MethodGen) {
+        if (tail.inferType() == IrType.Void) {
+            lambdaG.emit(IrStmt.Eval(tail))
+            lambdaG.emit(IrStmt.Return(IrExpr.Const(null)))
+        } else {
+            lambdaG.emit(IrStmt.Return(tail))
+        }
     }
 
     /** 捕获槽位解析：外层局部必须已登记；缺失即 IRGen 状态不一致，报错而非 NPE。 */
@@ -478,7 +511,8 @@ class ExprGen(
     ): yux.compiler.ir.IrMethod {
         val names = when (expr) {
             is YxLambda -> expr.params
-            is YxBlockLambda -> listOf("it")
+            // 块 Lambda 仅支持隐式 `it`；零参（Function0，如 `launch { }`）不生成参数（T-M11-3）
+            is YxBlockLambda -> if (fnType.params.isEmpty()) emptyList() else listOf("it")
             else -> emptyList()
         }
         val params = buildList {
@@ -493,7 +527,9 @@ class ExprGen(
         val method = irGen.newLambdaMethod(
             name = irGen.nextLambdaName(),
             params = params,
-            returnType = TypeBridge.toIr(fnType.ret),
+            // T-M11-3：Unit 返回的 Lambda 目标为 FunctionN SAM（擦除 `invoke()Ljava/lang/Object;`），
+            // 合成方法必须返回 Object 而非 void（体以 `Return(Const(null))` 收尾）
+            returnType = if (TypeBridge.toIr(fnType.ret) == IrType.Void) IrType.ANY else TypeBridge.toIr(fnType.ret),
             isStatic = g.method.isStatic,
             owner = g.owner,
         )

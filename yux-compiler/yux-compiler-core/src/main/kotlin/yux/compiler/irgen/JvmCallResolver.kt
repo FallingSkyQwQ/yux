@@ -5,6 +5,7 @@ import yux.compiler.ir.IrJvmCall
 import yux.compiler.ir.IrType
 import yux.compiler.sema.ClassPathSymbolProvider
 import yux.compiler.sema.JvmClassSymbol
+import yux.compiler.sema.JvmExtensions
 import yux.compiler.sema.JvmMethodSymbol
 import yux.compiler.sema.SemaType
 import yux.compiler.sema.TypeAssignability
@@ -76,6 +77,18 @@ class JvmCallResolver(
         val jc = jvmClassOf(receiverType) ?: return null
         return jc.fields.firstOrNull { it.name == name && it.isStatic }
             ?.let { IrField(it.name, TypeBridge.toIr(it.type), isStatic = true, isFinal = it.isFinal, owner = jc.qualifiedName) }
+    }
+
+    /**
+     * JVM 扩展（T-M11-3）：注册表成员调用降级为 stdlib 静态调用（receiver 由调用方前置为实参 0）。
+     * 注册表条目唯一（不按实参匹配）；未命中返回 null。
+     */
+    fun resolveJvmExtension(receiverType: SemaType, name: String): IrJvmCall? {
+        val jc = jvmClassOf(receiverType) ?: return null
+        val entry = JvmExtensions.find(jc.qualifiedName, name) ?: return null
+        val owner = classPath.resolve(entry.first) as? JvmClassSymbol ?: return null
+        val method = owner.staticMethods.firstOrNull { it.name == entry.second } ?: return null
+        return jvmCall(method, owner.qualifiedName)
     }
 
     /** JavaBean setter：`p.name = x` → `setName(x)`。 */

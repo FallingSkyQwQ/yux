@@ -275,29 +275,33 @@ class StmtGen(
                     return
                 }
                 val receiver = exprGen.gen(callee.receiver, g, fileScope)
-                val (irCall, receiverExpr) = resolveMemberCall(rt, callee.name, receiver, args, argTypes)
+                val (irCall, receiverExpr, callArgs) = resolveMemberCall(rt, callee.name, receiver, args, argTypes)
                     ?: error("IRGen: 成员方法不存在: ${callee.name} on ${rt.render()}")
-                g.emit(IrStmt.Call(irCall, receiverExpr, args, irCall.retType))
+                g.emit(IrStmt.Call(irCall, receiverExpr, callArgs, irCall.retType))
             }
             else -> error("IRGen: 不支持的调用目标: ${callee::class.simpleName}")
         }
     }
 
-    /** 成员调用解析：返回 (IrCallable, receiver) 或 null。 */
+    /**
+     * 成员调用解析：返回 (IrCallable, receiver, 实参列表) 或 null。
+     * JVM 扩展（T-M11-3）降级为静态调用时 receiver 前置为实参 0（receiver 为 null）。
+     */
     private fun resolveMemberCall(
         rt: SemaType,
         name: String,
         receiver: IrExpr,
         args: List<IrExpr>,
         argTypes: List<SemaType> = emptyList(),
-    ): Pair<yux.compiler.ir.IrCallable, IrExpr?>? = when {
+    ): Triple<yux.compiler.ir.IrCallable, IrExpr?, List<IrExpr>>? = when {
         rt is SemaType.Declared && rt.symbol is YxClassSymbol -> {
             val sym = rt.symbol as YxClassSymbol
             sym.functionsNamed(name).firstOrNull()?.let { fn ->
-                irGen.functionMethods[fn]?.let { IrMethodRef(it) to receiver }
-            } ?: objectMethodCall(sym.name, name)?.let { it to receiver }
+                irGen.functionMethods[fn]?.let { Triple(IrMethodRef(it), receiver, args) }
+            } ?: objectMethodCall(sym.name, name)?.let { Triple(it, receiver, args) }
         }
-        else -> irGen.resolver.resolveInstanceMethod(rt, name, argTypes)?.let { it to receiver }
+        else -> irGen.resolver.resolveJvmExtension(rt, name)?.let { Triple(it, null, listOf(receiver) + args) }
+            ?: irGen.resolver.resolveInstanceMethod(rt, name, argTypes)?.let { Triple(it, receiver, args) }
     }
 
     /** Object 方法回退（S-8.7.1，与 ExprGen 一致）：语句位置 `u.toString()`。 */

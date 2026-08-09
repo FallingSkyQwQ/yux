@@ -1,0 +1,24 @@
+// M11-11 端到端样例：标准库（yux.collection / yux.core / yux.async）
+// `xs.map { }` / `s.uppercase()` 等成员调用降级为 yux-stdlib 静态调用（T-M11-3）
+fun main() {
+    xs = List Int()
+    xs.add(3); xs.add(1); xs.add(2)
+    ys = xs.map { it * 10 }
+    print ys.sum()
+    print (ys.max() as Int)
+    print (ys.first() as Int)
+    print (ys.reduce((a, b -> (a as Int) + (b as Int))) as Int)
+    print ys.filter({ (it as Int) > 20 }).sum()
+    k = 2
+    print xs.map({ it * k }).sum()
+    print ("AbC".uppercase() as String)
+    print ("AbC".lowercase() as String)
+    print "a,b,c".split(",").size
+    print (Text.uppercase("hello") as String)
+    args:List Any = List Any() as List Any
+    args.add("yux"); args.add(42)
+    print (Text.format("%s=%d", args) as String)
+    t = Tasks.launch { print "async!" }
+    Tasks.await(t)
+    print "done"
+}

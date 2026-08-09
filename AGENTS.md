@@ -4,7 +4,7 @@
 
 ## 分支：开发统一在 feature 分支
 
-- 所有开发统一在当前里程碑 feature 分支上进行（当前：`feature/m10-mixed-project`）。
+- 所有开发统一在当前里程碑 feature 分支上进行（当前：`feature/m11-stdlib`）。
 - 禁止在 `main` 上直接开发、提交或 push；`main` 仅接受 PR 合入。
 - 每个里程碑只保留一个 `feature/<milestone>` 分支；禁止再创建 `m<里程碑>-<主题>` 临时分支。
 - 旧分支在合入后立即删除（本地 + 远端）；日常只保留当前 feature 分支与 `origin/main` 跟踪。

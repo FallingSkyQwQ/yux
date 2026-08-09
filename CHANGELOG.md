@@ -2,6 +2,32 @@
 
 本文件记录各里程碑的显著变更（含 breaking changes，见 06-§3）。
 
+## [v0.1.0-m11] - 2026-08-10 — 标准库完善与泛化测试
+
+### 新增
+- yux-stdlib 标准库四包（T-M11-1/2/3，01-§10，全部 Kotlin object + `@JvmStatic`，JDK 原生零新依赖）：
+  - `yux.io.IO`（T-M11-1）：`readText` / `writeText`（自动建父目录）/ `readLines` / `exists`，UTF-8；IOException 包装为带路径的 `RuntimeException`；9 例单测（@TempDir round-trip、多行/空文件、中文）。
+  - `yux.net.Http`（T-M11-1）：`get` / `post`（text/plain）/ `fetch`（§10.4 的 async fetch 在 v0.1 同步实现，KDoc 注明），JDK `HttpClient` 10s 超时，非 2xx 抛 `yux.net: HTTP <code> <url>`；5 例单测（JDK `HttpServer` mock：方法/路径/响应体/404/连接拒绝）。
+  - `yux.async`（T-M11-2）：`Task`（内部包装 `CompletableFuture<Any?>`，`await`/`cancel`/`isDone`）+ `Tasks`（`launch`/`parallel`/`sleep`/`await`，JDK 原生并发——ForkJoinPool 隐式 join、Thread.sleep，S-8.4）；7 例并发时序单测（双任务并行开始差 <50ms、await 阻塞至副作用生效、parallel 阻塞至完成且 ≥80ms、sleep ≥90ms、ExecutionException 解包、cancel 后块不执行）。
+  - `yux.collection.Colls`（T-M11-3）：`map`/`filter`/`forEach`/`sort`/`sum`/`max`/`first`/`reduce`（函数式：返回新 ArrayList，不修改入参）；`yux.core.Text`：`uppercase`/`lowercase`/`split`/`format`；27 例单测。
+- 编译器集合/字符串成员调用降级（T-M11-3，02-§9.1 扩展）：
+  - `JvmExtensions` 注册表：Yux 成员调用 `xs.map {}` / `s.uppercase()` 降级为 `yux.collection.Colls` / `yux.core.Text` 静态调用（receiver 前置为第 0 实参；按 JVM 接口/父类链匹配——`java.util.ArrayList` → `java.util.List` 键）。
+  - FunctionN↔SemaType.Function 桥接：lambda 实参可传给 `yux.core.function.Function0..3` 参数（`TypeAssignability` Function→FunctionN 规则 + `typeOfLambda`/`typeOfBlockLambda` 对 FunctionN 期望类型的推导）；注册表 lambda 参数用接收者元素类型（`List Int` 上 `map { it * 10 }` 的 `it` 推导为 `Int`）。
+  - 双路径接入：sema `checkInstanceCall`（JvmClassSymbol 与 Basic String 两分支）+ IRGen `ExprGen.resolveMemberExpr` / `StmtGen.resolveMemberCall`（语句位置）；`Text`/`Colls`/`Tasks` 注册为内置简单名（`SymbolTable.Builtins`，无需 `import` 即可 `Text.uppercase(...)`）。
+  - **修复 Unit 返回 Lambda**：FunctionN 目标 lambda 的合成方法返回类型由 void 改为 Object（SAM 擦除 `invoke()Ljava/lang/Object;`），体以 `Return(Const(null))` 收尾（`launch { print "async!" }`、`forEach { print it }` 此前 VerifyError）；后端 `emitReturn` 补 void→null 防御。
+- 泛化测试：
+  - **fuzz**（T-M11-4）：`LexerParserFuzzTest` 固定种子（20260810）5000 例随机输入（覆盖全运算符/引号/中文注释/空白，长度 0~80），词法→语法→CstToAst 三阶段 0 panic，约 0.7s。
+  - **基准**（T-M11-5）：`bench/run-bench.sh`（installDist yuxc + 冷/增量编译×3 中位数 + jar 体积，`--out` 落盘）+ `bench/RESULTS.md` 基线。
+  - **覆盖率**（T-M11-6）：`yux-compiler-core` 行覆盖 **84.3%**，新增模块专项门禁 LINE ≥ 0.70（06-§7.2「M11 起」；其余模块保持全局 0.60）。
+- `samples/stdlib.yux` + `.stdout`：标准库端到端样例（map/filter/sum/max/first/reduce/uppercase/lowercase/split/format/launch/await），纳入 `AsmBackendTest.samples directory e2e` 自动比对。
+
+### 说明
+- 设计偏差（详见 06-§M11）：§10.6 顶层 `async(block)` 因 `async` 为关键字以 `Tasks.launch` 替代（`Tasks.async` 不可用）；`fetch` 为同步实现（语言层协程仍 R3 后置）；`sum()` 泛型擦除后统一返回 `Double`；`Text.format` 用 `List<Any?>` 参数替代 vararg；`Text.split` 用字面分隔符（非 Java 正则语义）；`sort` 返回新列表（函数式，不改入参）；`parallel` 阻塞至完成（S-8.4.3 块尾隐式 join）。
+- 测试：yux-stdlib 48 例新增（Colls 27 / IO 9 / Http 5 / Async 7），编译器 core 新增 26 例（JvmExtensions 9 / JvmExtensionsSema 10 / TypeAssignability 6）+ fuzz 1，backend-jvm 新增 JvmExtensionsE2e 3 例；全仓 `./gradlew build lint` 通过。
+- 基准基线：helloworld 冷编译 0.802s / 增量 0.195s（jar 667B），mixed 冷 1.921s / 增量 1.379s（jar 4498B），`hello.yux` run 0.176s（见 `bench/RESULTS.md`，复跑 `./bench/run-bench.sh --out bench/RESULTS.md`）。
+- 已知限制：语言层 `async fun`/`async{}`/`parallel{}` 关键字仍同步降级（R3，REMIND 保留）；Yux `List Int` 变量传给 `List<Any?>` 参数需显式 `as List Any`（泛型擦除，M10 既有行为）；生成的构建 jar 运行时仍需 classpath 提供 yux-stdlib（M10 遗留，未 shade）。
+
+
 ## [v0.1.0-m10] - 2026-08-09 — 混合项目
 
 ### 新增

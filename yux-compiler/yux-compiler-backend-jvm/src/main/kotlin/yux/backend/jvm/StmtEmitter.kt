@@ -118,6 +118,15 @@ internal class StmtEmitter(
         }
         emitExpr(value)
         val desc = JvmTypeMapper.descriptor(method.returnType)
+        // T-M11-3：lambda 合成方法擦除返回 Object（FunctionN）而体为原语时装箱适配
+        //（如 `xs.map { it * 10 }` 的返回类型 Any → Object，体产生 Int）
+        val valueDesc = JvmTypeMapper.descriptor(value.inferType() ?: method.returnType)
+        if (valueDesc == "V" && desc != "V") {
+            // Unit 值（如 `print`）返回非空方法：补 null（防御，IRGen 正常路径已生成 Const(null)）
+            mv.visitInsn(Opcodes.ACONST_NULL)
+        } else if (valueDesc != desc) {
+            InvocationAdapter.adaptResult(mv, valueDesc, method.returnType)
+        }
         mv.visitInsn(returnOpcode(desc))
     }
 
