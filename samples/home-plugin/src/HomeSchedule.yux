@@ -1,0 +1,48 @@
+// T-M9-1：调度与辅助（04-§9）
+import java.util.HashMap
+import java.util.Map
+import org.bukkit.Bukkit
+import org.bukkit.entity.Player
+import yux.minecraft.config.ConfigManager
+
+// 每 5 分钟落盘一次所有在线玩家数据（幂等，防止异常中断丢失）
+task repeat(interval:6000) {
+    for p in Bukkit.onlinePlayers() {
+        player = p as Player
+        hd = loadHomeData(player.name as String)
+        saveHomeData(hd)
+    }
+}
+
+// 冷却时间记录（内存表，04-§9：cooldowns）
+cooldowns = HashMap() as Map String Int
+
+// 冷却判断（04-§9：cooldownActive）
+fun cooldownActive(player: Player): Boolean {
+    now = System.currentTimeMillis()
+    last = cooldowns[player.name as String]
+    cfg = config()
+    if last == null {
+        cooldowns[player.name as String] = now as Int
+        return false
+    }
+    if now - (last as Int) < (cfg.homeCooldown as Int) * 1000 {
+        return true
+    }
+    cooldowns[player.name as String] = now as Int
+    return false
+}
+
+// 配置读取（04-§7：HomeConfig.maxHomes 等；ConfigManager 桥接）
+fun config(): HomeConfig {
+    obj = ConfigManager.get("HomeConfig")
+    if obj != null {
+        return obj as HomeConfig
+    }
+    return HomeConfig("欢迎 \$name 回来！", 30, 5, "entity.enderman.teleport")
+}
+
+// 玩家是否有家（04-§7：player.hasHome）
+fun Player.hasHome(name: String): Boolean {
+    return loadHomeData(this.name as String).homes.containsKey(name)
+}

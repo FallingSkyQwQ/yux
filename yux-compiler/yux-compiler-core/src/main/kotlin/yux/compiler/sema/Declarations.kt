@@ -73,6 +73,10 @@ class Declarations(
         }
         val fn = buildFunction(file, owner = null, decl, enclosingTypeParams = emptyList())
         file.topLevelFunctions.getOrPut(decl.name) { mutableListOf() } += fn
+        // 扩展函数（M9）：按接收者类型登记，供 `receiver.name(args)` 成员调用查找
+        fn.receiverType?.let { receiver ->
+            file.extensionFunctions.getOrPut(receiver.render()) { mutableListOf() } += fn
+        }
     }
 
     private fun registerTopLevelProperty(file: FileScope, decl: YxProperty) {
@@ -223,12 +227,15 @@ class Declarations(
         val scope = enclosingTypeParams + decl.typeParams.map { it.name }
         return typeResolver.withTypeParams(scope) {
             // 函数参数类型由解析器结构性保证（`name:Type`，S-4.5.3）
-            val params = decl.params.map { p ->
+            val receiver = decl.receiver?.let { typeResolver.resolve(it, file) }
+            // 扩展函数（M9）：receiver 作为第 0 参数（隐式 this），供调用匹配与 IRGen 参数表
+            val receiverParam = receiver?.let { ParameterSymbol("this", it, hasDefault = false, decl.span) }
+            val params = listOfNotNull(receiverParam) + decl.params.map { p ->
                 Annotations.validate(p.annotations, setOf(AnnotationTarget.PARAMETER), diagnostics)
                 ParameterSymbol(p.name, typeResolver.resolve(p.type, file), p.defaultValue != null, p.span)
             }
             val ret = decl.returnType?.let { typeResolver.resolve(it, file) }
-            FunctionSymbol(decl.name, params, ret, decl.isAsync, decl.isOverride, owner, decl.span, decl)
+            FunctionSymbol(decl.name, params, ret, decl.isAsync, decl.isOverride, owner, receiver, decl.span, decl)
         }
     }
 

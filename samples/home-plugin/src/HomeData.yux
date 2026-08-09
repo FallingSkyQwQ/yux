@@ -1,0 +1,55 @@
+// T-M9-1：数据模型（04-§5）+ 存储与转换（04-§6）
+import java.util.HashMap
+import java.util.Map
+import java.io.File
+import org.bukkit.Location
+import org.bukkit.Bukkit
+import yux.minecraft.io.HomeStore
+
+data LocationData {
+    world: String
+    x: Double
+    y: Double
+    z: Double
+    yaw: Float
+    pitch: Float
+}
+
+data HomeData {
+    player: String
+    homes: Map String Any
+}
+
+// 玩家数据文件路径（04-§6：plugins/HomePlugin/data/<player>.json；M9 用 YAML 适配）
+fun dataFile(playerName: String): File {
+    return File("plugins/HomePlugin/data/" + playerName + ".yml")
+}
+
+// Location → LocationData（04-§6：`Location.toData()`）
+fun Location.toData(): LocationData {
+    w = this.world.name as String
+    return LocationData(w, this.x, this.y, this.z, this.yaw, this.pitch)
+}
+
+// LocationData → Location（04-§6：`LocationData.toLocation()`）
+fun LocationData.toLocation(): Location {
+    w = Bukkit.getWorld(this.world)
+    return Location(w, this.x, this.y, this.z, this.yaw, this.pitch)
+}
+
+// 读取玩家家数据；无文件返回空 HomeData（04-§6：loadHomeData）
+fun loadHomeData(playerName: String): HomeData {
+    file = dataFile(playerName)
+    sample = LocationData("", 0.0, 0.0, 0.0, 0.0, 0.0)
+    raw = HomeStore.loadMap(file.parentFile, file.name, sample) as Map String Any
+    if raw == null {
+        return HomeData(playerName, HashMap() as Map String Any)
+    }
+    return HomeData(playerName, raw)
+}
+
+// 落盘玩家家数据（04-§6：HomeData.save）
+fun saveHomeData(hd: HomeData) {
+    file = dataFile(hd.player)
+    HomeStore.saveMap(file.parentFile, file.name, hd.homes)
+}

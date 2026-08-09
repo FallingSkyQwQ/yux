@@ -1,0 +1,7 @@
+// T-M9-1：配置（04-§4，自动生成 config.yml）
+config HomeConfig {
+    welcomeMessage = "欢迎 \$name 回来！"
+    homeCooldown = 30
+    maxHomes = 5
+    teleportSound = "entity.enderman.teleport"
+}

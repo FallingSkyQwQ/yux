@@ -493,8 +493,10 @@ internal class StmtEmitter(
             "D" to "J" -> mv.visitInsn(Opcodes.D2L)
             "D" to "F" -> mv.visitInsn(Opcodes.D2F)
             else -> {
-                // `as T`：CHECKCAST
-                if (to.startsWith("L")) {
+                // 引用 ↔ 基本：委托 InvocationAdapter（CHECKCAST/box/unbox）
+                if (isPrimitiveDesc(from) != isPrimitiveDesc(to)) {
+                    InvocationAdapter.adaptResult(mv, from, e.to)
+                } else if (to.startsWith("L") && from.startsWith("L")) {
                     mv.visitTypeInsn(Opcodes.CHECKCAST, to.substring(1, to.length - 1))
                 }
             }
@@ -582,11 +584,19 @@ internal class StmtEmitter(
         val endL = Label()
         when (guarded) {
             is IrExpr.Invoke -> {
+                // 守卫对象：实例调用为 receiver，静态调用为第 0 实参（扩展函数 receiver，M9）
+                val guardExpr = guarded.receiver ?: guarded.args.firstOrNull()
+                if (guardExpr == null) {
+                    emitExpr(guarded)
+                    return
+                }
                 // 接收者已在栈上（DUP 守卫）：只发实参 + 调用
-                emitExpr(guarded.receiver!!)
+                emitExpr(guardExpr)
                 mv.visitInsn(Opcodes.DUP)
                 mv.visitJumpInsn(Opcodes.IFNULL, nullL)
                 guarded.args.forEachIndexed { i, arg ->
+                    // 静态守卫：第 0 实参（receiver）已发射，跳过
+                    if (guarded.receiver == null && i == 0) return@forEachIndexed
                     emitExpr(arg)
                     val real = resolvedParamDescs(guarded).getOrElse(i) { JvmTypeMapper.descriptor(arg.inferType() ?: IrType.ANY) }
                     InvocationAdapter.adaptArg(mv, argType(arg), real)

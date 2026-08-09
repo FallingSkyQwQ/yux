@@ -16,6 +16,8 @@ import yux.compiler.ast.YxFloatLiteral
 import yux.compiler.ast.YxFor
 import yux.compiler.ast.YxIdentifier
 import yux.compiler.ast.YxIf
+import yux.compiler.ast.YxIfExpr
+import yux.compiler.ast.YxIndexExpr
 import yux.compiler.ast.YxIntLiteral
 import yux.compiler.ast.YxIs
 import yux.compiler.ast.YxLambda
@@ -55,6 +57,7 @@ import yux.compiler.ir.IrStmt
 import yux.compiler.ir.IrType
 import yux.compiler.sema.FileScope
 import yux.compiler.sema.FunctionSymbol
+import yux.compiler.sema.JvmClassSymbol
 import yux.compiler.sema.ParameterSymbol
 import yux.compiler.sema.PropertySymbol
 import yux.compiler.sema.SemaType
@@ -82,7 +85,16 @@ class ExprGen(
         is YxBoolLiteral -> IrExpr.Const(expr.value)
         is YxNullLiteral -> IrExpr.Const(null)
         is YxIdentifier -> genIdentifier(expr, g)
-        is YxThis -> IrExpr.This
+        is YxThis -> {
+            // 扩展函数（M9）：`this` 为 receiver 局部；普通上下文为 JVM this
+            val recvName = irGen.extensionReceiverName
+            if (recvName != null) {
+                val local = g.lookupLocal(recvName) ?: error("IRGen: 扩展函数 receiver 局部未登记: $recvName")
+                IrExpr.LocalRead(local)
+            } else {
+                IrExpr.This
+            }
+        }
         is YxSuper -> IrExpr.This // M4 简化：super 视为 this（S-8.7 继承语义后置）
         is YxParen -> gen(expr.expr, g, fileScope)
         is YxNullable -> gen(expr.expr, g, fileScope)
@@ -91,10 +103,12 @@ class ExprGen(
         is YxCall -> genCall(expr, g, fileScope)
         is YxTypeCall -> IrExpr.New(
             TypeBridge.toIr(irGen.exprTypes[expr] ?: SemaType.ErrorT),
-            expr.args.map { gen(it, g, fileScope) },
+            expr.args.map { genLiteralAdapted(it, g, fileScope) },
         )
         is YxBinary -> genBinary(expr, g, fileScope)
         is YxUnary -> genUnary(expr, g, fileScope)
+        is YxIfExpr -> genIfExpr(expr, g, fileScope)
+        is YxIndexExpr -> genIndexExpr(expr, g, fileScope)
         is YxLambda -> genLambda(expr, g, fileScope)
         is YxBlockLambda -> genBlockLambda(expr, g, fileScope)
         is YxStringTemplate -> IrExpr.StringTemplate(
@@ -119,10 +133,16 @@ class ExprGen(
                 IrExpr.LocalRead(local)
             }
             is PropertySymbol -> {
-                // 隐式 this 属性读取走 getter（S-5.2/02-§9.1：自定义访问器语义）
-                val getter = irGen.propertyAccessors[sym]?.getter
+                // 顶层属性（M9）走静态 getter；实例属性走 this getter
+                val irProp = irGen.propertyAccessors[sym]
                     ?: error("IRGen: 属性 getter 未登记: ${sym.name}")
-                IrExpr.Invoke(IrMethodRef(getter), IrExpr.This, emptyList())
+                val getter = irProp.getter
+                    ?: error("IRGen: 属性 getter 未登记: ${sym.name}")
+                if (irProp.isStatic) {
+                    IrExpr.Invoke(IrMethodRef(getter), null, emptyList())
+                } else {
+                    IrExpr.Invoke(IrMethodRef(getter), IrExpr.This, emptyList())
+                }
             }
             is FunctionSymbol -> {
                 val method = irGen.functionMethods[sym]
@@ -155,7 +175,13 @@ class ExprGen(
     }
 
     /** 成员解析：Yux 属性→getter 调用；Yux 函数/JVM 方法→调用；Object 方法→JVM 调用回退。 */
-    private fun resolveMemberExpr(receiver: IrExpr, rt: SemaType, name: String, args: List<IrExpr>): IrExpr? = when {
+    private fun resolveMemberExpr(
+        receiver: IrExpr,
+        rt: SemaType,
+        name: String,
+        args: List<IrExpr>,
+        argTypes: List<SemaType> = emptyList(),
+    ): IrExpr? = when {
         rt is SemaType.Declared && rt.symbol is YxClassSymbol -> {
             val sym = rt.symbol as YxClassSymbol
             sym.property(name)?.let { prop ->
@@ -164,7 +190,8 @@ class ExprGen(
                 irGen.functionMethods[fn]?.let { IrExpr.Invoke(IrMethodRef(it), receiver, args) }
             } ?: objectMethodCall(sym.name, name, args)?.let { IrExpr.Invoke(it, receiver, args) }
         }
-        else -> resolver.resolveInstanceMethod(rt, name)?.let { IrExpr.Invoke(it, receiver, args) }
+        else -> resolver.resolveInstanceMethod(rt, name, argTypes)
+            ?.let { IrExpr.Invoke(it, receiver, args) }
     }
 
     /** Object 方法回退（S-8.7.1）：data 类生成 toString/equals/hashCode，普通类继承——统一虚拟调用。 */
@@ -176,8 +203,10 @@ class ExprGen(
     }
 
     private fun genCall(call: YxCall, g: MethodGen, fileScope: FileScope): IrExpr {
-        val args = call.args.map { gen(it, g, fileScope) }
+        val args = call.args.map { genLiteralAdapted(it, g, fileScope) }
         val argTypes = call.args.mapNotNull { irGen.exprTypes[it] }
+        if (call.callee is YxMemberAccess) {
+        }
         return when (val callee = call.callee) {
             is YxIdentifier -> {
                 val sym = irGen.resolvedRefs[callee]
@@ -219,15 +248,26 @@ class ExprGen(
         fileScope: FileScope,
     ): IrExpr {
         val receiverType = SemaType.resolveVar(irGen.exprTypes[callee.receiver] ?: SemaType.ErrorT)
+        if (callee.name == "sendMessage") {
+        }
         val result: IrExpr
         if (callee.receiver is YxTypeReference) {
             val static = resolver.resolveStaticMethod(receiverType, callee.name, argTypes)
                 ?: error("IRGen: 静态方法不存在: ${callee.name}")
             result = IrExpr.Invoke(static, null, args)
         } else {
-            val receiver = gen(callee.receiver, g, fileScope)
-            result = resolveMemberExpr(receiver, receiverType, callee.name, args)
-                ?: error("IRGen: 成员方法不存在: ${callee.name} on ${receiverType.render()}")
+            // 扩展函数（M9）：sema 已在 resolvedRefs[callee] 登记扩展函数符号 → 静态调用（receiver 前置）
+            val extSym = irGen.resolvedRefs[callee]
+            if (extSym is FunctionSymbol && extSym.receiverType != null) {
+                val method = irGen.functionMethods[extSym]
+                    ?: error("IRGen: 扩展函数未登记: ${extSym.name}")
+                val receiver = gen(callee.receiver, g, fileScope)
+                result = IrExpr.Invoke(IrMethodRef(method), null, listOf(receiver) + args)
+            } else {
+                val receiver = gen(callee.receiver, g, fileScope)
+                result = resolveMemberExpr(receiver, receiverType, callee.name, args, argTypes)
+                    ?: error("IRGen: 成员方法不存在: ${callee.name} on ${receiverType.render()}")
+            }
         }
         return if (callee in irGen.guardSet) IrExpr.NullGuard(result) else result
     }
@@ -243,9 +283,22 @@ class ExprGen(
 
     private fun genBinary(expr: YxBinary, g: MethodGen, fileScope: FileScope): IrExpr = when (expr.op) {
         "&&", "||" -> genShortCircuit(expr, g, fileScope)
-        "+", "-", "*", "/", "%" -> {
+        "+" -> {
+            // 字符串拼接（M9）：任一侧为 String 时降级为 StringTemplate（后端 StringBuilder）
+            val left = gen(expr.left, g, fileScope)
+            val right = gen(expr.right, g, fileScope)
+            val lt = SemaType.resolveVar(irGen.exprTypes[expr.left] ?: SemaType.ErrorT)
+            val rt = SemaType.resolveVar(irGen.exprTypes[expr.right] ?: SemaType.ErrorT)
+            val lStr = lt is SemaType.Basic && lt.name == "String"
+            val rStr = rt is SemaType.Basic && rt.name == "String"
+            if (lStr || rStr) {
+                IrExpr.StringTemplate(listOf(left, right))
+            } else {
+                IrExpr.Arith(ArithOp.ADD, left, right)
+            }
+        }
+        "-", "*", "/", "%" -> {
             val op = when (expr.op) {
-                "+" -> ArithOp.ADD
                 "-" -> ArithOp.SUB
                 "*" -> ArithOp.MUL
                 "/" -> ArithOp.DIV
@@ -287,11 +340,77 @@ class ExprGen(
         g.emit(IrStmt.Label(endL))
         return IrExpr.LocalRead(tmp)
     }
-
     private fun genUnary(expr: YxUnary, g: MethodGen, fileScope: FileScope): IrExpr = when (expr.op) {
         "!" -> IrExpr.Not(gen(expr.operand, g, fileScope))
         "-" -> IrExpr.Neg(gen(expr.operand, g, fileScope))
         else -> error("IRGen: 未知一元运算符: ${expr.op}")
+    }
+
+    /** 构造/调用实参字面量适配（M9）：sema 已按参数类型收窄（Double→Float），IRGen 按收窄类型生成常量。 */
+    fun genLiteralAdapted(arg: YxExpr, g: MethodGen, fileScope: FileScope): IrExpr {
+        val expr = gen(arg, g, fileScope)
+        val semaType = SemaType.resolveVar(irGen.exprTypes[arg] ?: return expr)
+        if (expr is IrExpr.Const && semaType is SemaType.Basic) {
+            val v = expr.value
+            return when (semaType.name) {
+                "Float" -> if (v is Double) IrExpr.Const(v.toFloat()) else expr
+                "Int" -> if (v is Long) IrExpr.Const(v.toInt()) else expr
+                "Long" -> if (v is Int) IrExpr.Const(v.toLong()) else expr
+                else -> expr
+            }
+        }
+        return expr
+    }
+
+    /** if 表达式（M9）：临时变量 + 双分支标签，结果落同一临时变量（镜像短路模式）。 */
+    private fun genIfExpr(expr: YxIfExpr, g: MethodGen, fileScope: FileScope): IrExpr {
+        val type = TypeBridge.toIr(irGen.exprTypes[expr] ?: SemaType.ErrorT)
+        val tmp = g.newLocal("ifTmp", type)
+        val thenL = g.newLabel()
+        val elseL = g.newLabel()
+        val endL = g.newLabel()
+        g.emit(IrStmt.Branch(gen(expr.condition, g, fileScope), thenL, elseL))
+        g.emit(IrStmt.Label(thenL))
+        g.emit(IrStmt.LocalAssign(tmp, gen(expr.thenExpr, g, fileScope)))
+        g.emit(IrStmt.Goto(endL))
+        g.emit(IrStmt.Label(elseL))
+        g.emit(IrStmt.LocalAssign(tmp, gen(expr.elseExpr, g, fileScope)))
+        g.emit(IrStmt.Label(endL))
+        return IrExpr.LocalRead(tmp)
+    }
+
+    /** 索引读取（M9）：Map→`get(k)`、List/Set→`get(i)`、数组→arrayload。 */
+    private fun genIndexExpr(expr: YxIndexExpr, g: MethodGen, fileScope: FileScope): IrExpr {
+        val baseType = SemaType.resolveVar(irGen.exprTypes[expr.base] ?: SemaType.ErrorT)
+        val base = gen(expr.base, g, fileScope)
+        val index = gen(expr.index, g, fileScope)
+        val owner = when (val t = baseType) {
+            is SemaType.Declared -> (t.symbol as? JvmClassSymbol)?.qualifiedName
+            else -> null
+        }
+        val method = when (owner) {
+            "java.util.Map", "java.util.HashMap", "java.util.LinkedHashMap", "java.util.TreeMap" -> "get"
+            "java.util.List", "java.util.ArrayList", "java.util.LinkedList", "java.util.Vector" -> "get"
+            else -> null
+        }
+        if (method != null && owner != null) {
+            // JVM 泛型擦除：Map.get/List.get 运行时返回 Object，调用处按需 Convert
+            val call = IrJvmCall(
+                name = method,
+                owner = owner,
+                static = false,
+                params = listOf(TypeBridge.toIr(irGen.exprTypes[expr.index] ?: SemaType.INT)),
+                retType = IrType.ANY,
+            )
+            val invoke = IrExpr.Invoke(call, base, listOf(index))
+            val target = TypeBridge.toIr(irGen.exprTypes[expr] ?: SemaType.ANY)
+            return if (target != IrType.ANY && target != IrType.Void) {
+                IrExpr.Convert(invoke, target)
+            } else {
+                invoke
+            }
+        }
+        return error("IRGen: 索引访问不支持类型 ${baseType.render()}")
     }
 
     /** 箭头 Lambda：合成方法 `lambda$n`，体为 `Return(gen(body))`（捕获参数并入参数表，B2）。 */
@@ -537,8 +656,13 @@ class ExprGen(
                     val setter = accessor.setter ?: error("IRGen: 属性 setter 未登记: ${sym.name}")
                     val getter = accessor.getter ?: error("IRGen: 属性 getter 未登记: ${sym.name}")
                     val value = gen(expr.value, g, fileScope)
-                    g.emit(IrStmt.Call(IrMethodRef(setter), IrExpr.This, listOf(value), IrType.Void))
-                    IrExpr.Invoke(IrMethodRef(getter), IrExpr.This, emptyList())
+                    if (accessor.isStatic) {
+                        g.emit(IrStmt.Call(IrMethodRef(setter), null, listOf(value), IrType.Void))
+                        IrExpr.Invoke(IrMethodRef(getter), null, emptyList())
+                    } else {
+                        g.emit(IrStmt.Call(IrMethodRef(setter), IrExpr.This, listOf(value), IrType.Void))
+                        IrExpr.Invoke(IrMethodRef(getter), IrExpr.This, emptyList())
+                    }
                 }
                 else -> error("IRGen: 不支持的赋值目标: ${t.name}")
             }
@@ -565,8 +689,47 @@ class ExprGen(
                 g.emit(IrStmt.Call(IrMethodRef(setter), receiverLocal?.let { IrExpr.LocalRead(it) }, listOf(value), IrType.Void))
                 IrExpr.Invoke(IrMethodRef(getter), receiverLocal?.let { IrExpr.LocalRead(it) }, emptyList())
             }
+            is YxIndexExpr -> genIndexAssign(t, expr.value, g, fileScope)
             else -> error("IRGen: 不支持的赋值目标: ${t::class.simpleName}")
         }
+
+    /** 索引赋值（M9）：Map→`put(k,v)`、List/Set→`set(i,v)`，返回被写值。 */
+    private fun genIndexAssign(target: YxIndexExpr, valueExpr: YxExpr, g: MethodGen, fileScope: FileScope): IrExpr {
+        val baseType = SemaType.resolveVar(irGen.exprTypes[target.base] ?: SemaType.ErrorT)
+        val owner = when (val t = baseType) {
+            is SemaType.Declared -> (t.symbol as? JvmClassSymbol)?.qualifiedName
+            else -> null
+        }
+        val method = when (owner) {
+            "java.util.Map", "java.util.HashMap", "java.util.LinkedHashMap", "java.util.TreeMap" -> "put"
+            "java.util.List", "java.util.ArrayList", "java.util.LinkedList", "java.util.Vector" -> "set"
+            else -> null
+        }
+        if (method == null || owner == null) {
+            error("IRGen: 索引赋值不支持类型 ${baseType.render()}")
+        }
+        val base = gen(target.base, g, fileScope)
+        val index = gen(target.index, g, fileScope)
+        val value = gen(valueExpr, g, fileScope)
+        val idxType = TypeBridge.toIr(irGen.exprTypes[target.index] ?: SemaType.INT)
+        val valType = TypeBridge.toIr(irGen.exprTypes[valueExpr] ?: SemaType.ANY)
+        val call = IrJvmCall(
+            name = method,
+            owner = owner,
+            static = false,
+            params = listOf(idxType, valType),
+            retType = IrType.ANY,
+        )
+        // 索引赋值结果按目标元素类型返回（List.set 返回旧值、Map.put 返回旧值），
+        // 但表达式位置通常丢弃；此处直接返回调用（后端按表达式类型适配）
+        val invoke = IrExpr.Invoke(call, base, listOf(index, value))
+        val targetType = TypeBridge.toIr(irGen.exprTypes[target] ?: SemaType.ANY)
+        return if (targetType != IrType.ANY && targetType != IrType.Void) {
+            IrExpr.Convert(invoke, targetType)
+        } else {
+            invoke
+        }
+    }
 
     // ── 字面量解码（01-§2.3/§2.5；复用 Literals，注解实参求值共用）────────────
 

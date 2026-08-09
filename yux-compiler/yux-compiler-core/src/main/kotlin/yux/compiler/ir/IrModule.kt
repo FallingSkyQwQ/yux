@@ -12,8 +12,7 @@ class IrModule(
     /** 全部类（含文件类）。 */
     val allClasses: List<IrClass> get() = classes.toList()
 
-    fun classNamed(name: String): IrClass? = classes.firstOrNull { it.name == name }
-}
+    fun classNamed(name: String): IrClass? = classes.firstOrNull { it.name == name }}
 
 /** 类：普通类 / data / service / 文件类（顶层函数与属性的容器，05-§5.3 文件类语义）。 */
 class IrClass(

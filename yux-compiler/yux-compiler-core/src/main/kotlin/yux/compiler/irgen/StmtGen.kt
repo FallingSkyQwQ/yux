@@ -13,6 +13,7 @@ import yux.compiler.ast.YxExprStmt
 import yux.compiler.ast.YxFor
 import yux.compiler.ast.YxIdentifier
 import yux.compiler.ast.YxIf
+import yux.compiler.ast.YxIndexExpr
 import yux.compiler.ast.YxIsCondition
 import yux.compiler.ast.YxMemberAccess
 import yux.compiler.ast.YxParallelBlock
@@ -119,21 +120,37 @@ class StmtGen(
                     g.emit(IrStmt.LocalAssign(local, value))
                 }
                 is PropertySymbol -> {
-                    val setter = irGen.propertyAccessors[sym]?.setter
+                    val irProp = irGen.propertyAccessors[sym]
+                        ?: error("IRGen: 属性访问器未登记: ${sym.name}")
+                    val setter = irProp.setter
                         ?: error("IRGen: 属性 setter 未登记: ${sym.name}")
-                    val getter = irGen.propertyAccessors[sym]?.getter
+                    val getter = irProp.getter
                         ?: error("IRGen: 属性 getter 未登记: ${sym.name}")
                     val value = if (op == null) {
                         exprGen.gen(stmt.value, g, fileScope)
                     } else {
                         // 复合赋值读取侧走 getter（S-5.2 自定义访问器语义）
-                        IrExpr.Arith(op, IrExpr.Invoke(IrMethodRef(getter), IrExpr.This, emptyList()), exprGen.gen(stmt.value, g, fileScope))
+                        val read = if (irProp.isStatic) {
+                            IrExpr.Invoke(IrMethodRef(getter), null, emptyList())
+                        } else {
+                            IrExpr.Invoke(IrMethodRef(getter), IrExpr.This, emptyList())
+                        }
+                        IrExpr.Arith(op, read, exprGen.gen(stmt.value, g, fileScope))
                     }
-                    g.emit(IrStmt.Call(IrMethodRef(setter), IrExpr.This, listOf(value), IrType.Void))
+                    if (irProp.isStatic) {
+                        g.emit(IrStmt.Call(IrMethodRef(setter), null, listOf(value), IrType.Void))
+                    } else {
+                        g.emit(IrStmt.Call(IrMethodRef(setter), IrExpr.This, listOf(value), IrType.Void))
+                    }
                 }
                 else -> error("IRGen: 不支持的赋值目标: ${t.name}")
             }
             is YxMemberAccess -> genMemberAssign(stmt, t, op, g, fileScope)
+            is YxIndexExpr -> {
+                // 语句位置索引赋值：走表达式赋值路径（Map.put/List.set），结果以 Eval 发射
+                if (op != null) error("IRGen: 索引复合赋值暂不支持（v0.1）")
+                g.emit(IrStmt.Eval(exprGen.gen(stmt, g, fileScope)))
+            }
             else -> error("IRGen: 不支持的赋值目标: ${t::class.simpleName}")
         }
     }
@@ -213,7 +230,7 @@ class StmtGen(
 
     /** 语句位置调用（结果丢弃）。 */
     private fun emitCallStatement(call: YxCall, g: MethodGen, fileScope: FileScope) {
-        val args = call.args.map { exprGen.gen(it, g, fileScope) }
+        val args = call.args.map { exprGen.genLiteralAdapted(it, g, fileScope) }
         val argTypes = call.args.mapNotNull { irGen.exprTypes[it] }
         when (val callee = call.callee) {
             is YxIdentifier -> {
@@ -258,7 +275,7 @@ class StmtGen(
                     return
                 }
                 val receiver = exprGen.gen(callee.receiver, g, fileScope)
-                val (irCall, receiverExpr) = resolveMemberCall(rt, callee.name, receiver, args)
+                val (irCall, receiverExpr) = resolveMemberCall(rt, callee.name, receiver, args, argTypes)
                     ?: error("IRGen: 成员方法不存在: ${callee.name} on ${rt.render()}")
                 g.emit(IrStmt.Call(irCall, receiverExpr, args, irCall.retType))
             }
@@ -272,6 +289,7 @@ class StmtGen(
         name: String,
         receiver: IrExpr,
         args: List<IrExpr>,
+        argTypes: List<SemaType> = emptyList(),
     ): Pair<yux.compiler.ir.IrCallable, IrExpr?>? = when {
         rt is SemaType.Declared && rt.symbol is YxClassSymbol -> {
             val sym = rt.symbol as YxClassSymbol
@@ -279,7 +297,7 @@ class StmtGen(
                 irGen.functionMethods[fn]?.let { IrMethodRef(it) to receiver }
             } ?: objectMethodCall(sym.name, name)?.let { it to receiver }
         }
-        else -> irGen.resolver.resolveInstanceMethod(rt, name)?.let { it to receiver }
+        else -> irGen.resolver.resolveInstanceMethod(rt, name, argTypes)?.let { it to receiver }
     }
 
     /** Object 方法回退（S-8.7.1，与 ExprGen 一致）：语句位置 `u.toString()`。 */

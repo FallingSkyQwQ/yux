@@ -141,6 +141,8 @@ class YxFunction(
     val isOverride: Boolean,
     val visibility: YxVisibility,
     val annotations: List<YxAnnotation>,
+    /** 扩展函数接收者类型（M9：`fun <Receiver>.<name>`，null=普通函数）。 */
+    val receiver: YxType? = null,
     override val span: SourceSpan,
 ) : YxClassMember, YxDecl
 
@@ -231,6 +233,21 @@ class YxWhenBranch(
     val body: YxStmt,
     override val span: SourceSpan,
 ) : YxNode
+
+/** if 表达式（M9）：`if <cond> then <thenExpr> else <elseExpr>`（01-§7 扩展 / 04-§7 用法）。 */
+class YxIfExpr(
+    val condition: YxExpr,
+    val thenExpr: YxExpr,
+    val elseExpr: YxExpr,
+    override val span: SourceSpan,
+) : YxExpr
+
+/** 索引访问（M9）：`expr[index]` 读（04-§7），赋值目标为 `YxAssign(target=YxIndexExpr)`。 */
+class YxIndexExpr(
+    val base: YxExpr,
+    val index: YxExpr,
+    override val span: SourceSpan,
+) : YxExpr
 
 sealed interface YxWhenCondition : YxNode
 

@@ -3,7 +3,7 @@ kotlin = "2.3.21"
 detekt = "2.0.0-alpha.6"
 
 # 运行时/工具链
-asm = "9.7.1"
+asm = "9.10.1"
 junit = "5.11.4"
 kotlinx-coroutines = "1.8.1"
 jackson-databind = "2.17.2"

@@ -55,6 +55,8 @@ class FunctionSymbol(
     val isOverride: Boolean,
     /** null = 顶级函数（文件静态方法，S-5.5.3）。 */
     val owner: YxClassSymbol?,
+    /** 扩展函数接收者类型（M9），null = 普通函数。 */
+    val receiverType: SemaType? = null,
     override val span: SourceSpan?,
     /** 对应 AST 声明（函数体检查用）。 */
     val decl: yux.compiler.ast.YxFunction? = null,
@@ -113,4 +115,6 @@ class FileScope(
     val imports = mutableListOf<yux.compiler.ast.YxImport>()
     /** 本文件原始顶层声明（供 Declarations 两遍式处理）。 */
     val decls = mutableListOf<yux.compiler.ast.YxDecl>()
+    /** 扩展函数表（M9）：接收者类型名 → 扩展函数，供成员调用查找。 */
+    val extensionFunctions = mutableMapOf<String, MutableList<FunctionSymbol>>()
 }

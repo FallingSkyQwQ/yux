@@ -104,6 +104,13 @@ class Parser(
         return advance()
     }
 
+    /** 期望软关键字（如 `then`）；缺失时报错并跳过。 */
+    fun expectSoft(word: String, what: String): Token {
+        if (atSoft(word)) return advance()
+        error("expected $what, found '${current.text}'")
+        return advance()
+    }
+
     fun expectIdent(what: String): Token {
         if (at(IDENTIFIER)) return advance()
         error("expected $what, found '${current.text}'")
@@ -389,7 +396,14 @@ class Parser(
         flags: DeclFlags,
         funKw: Token?,
     ): CstFunctionDecl {
-        val name = expectIdent("function name")
+        var receiverType: CstType? = null
+        var name = expectIdent("function name")
+        // 扩展函数（M9）：`fun <Receiver>.<name>(params)`，接收者类型为点号前的类型名
+        if (at(DOT) && peek(1).kind == IDENTIFIER) {
+            receiverType = CstNamedType(listOf(name), emptyList(), null, spanOf(name))
+            advance()
+            name = expectIdent("function name")
+        }
         val typeParams = parseTypeParams()
         pushScope() // 参数与函数体共享作用域
         val params = parseParameters()
@@ -414,7 +428,7 @@ class Parser(
         }
         popScope()
         return CstFunctionDecl(
-            annotations, flags.async, flags.override, flags.modifier, funKw, name,
+            annotations, flags.async, flags.override, flags.modifier, funKw, receiverType, name,
             typeParams, params, colonKw, returnType, body,
             spanOf(funKw ?: name, body),
         )
@@ -669,6 +683,25 @@ class Parser(
         return CstIfStmt(ifKw, condition, thenBranch, elseKw, elseBranch, spanOf(ifKw, elseBranch ?: thenBranch))
     }
 
+    /** if 表达式（M9）：`if <cond> then <expr> else <expr>`（01-§7 扩展 / 04-§7 用法）。 */
+    private fun parseIfExpr(): CstExpr {
+        val ifKw = expect(KEYWORD, "'if'")
+        val condition = parseCondition()
+        val thenKw = expectSoft("then", "if 表达式需要 'then'")
+        val thenExpr = pratt.parseExpression()
+        skipNewlines()
+        val elseKw = if (atKeyword("else")) {
+            val kw = advance()
+            skipNewlines()
+            kw
+        } else {
+            error("if 表达式需要 'else' 分支")
+            advance()
+        }
+        val elseExpr = pratt.parseExpression()
+        return CstIfExpr(ifKw, condition, thenKw, thenExpr, elseKw, elseExpr, spanOf(ifKw, elseExpr))
+    }
+
     private fun parseWhen(): CstStmt {
         val whenKw = expect(KEYWORD, "'when'")
         val subject = parseCondition()
@@ -823,6 +856,7 @@ class Parser(
             t.kind == KEYWORD && t.text == "null" -> CstNullLiteral(advance(), spanOf(t))
             t.kind == KEYWORD && t.text == "this" -> CstThis(advance(), spanOf(t))
             t.kind == KEYWORD && t.text == "super" -> CstSuper(advance(), spanOf(t))
+            t.kind == KEYWORD && t.text == "if" -> parseIfExpr()
             t.kind == KEYWORD && t.text == "throw" -> {
                 advance()
                 val expr = pratt.parseExpression()

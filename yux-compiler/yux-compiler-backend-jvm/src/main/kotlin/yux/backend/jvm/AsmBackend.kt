@@ -27,7 +27,11 @@ class AsmBackend {
                     diagnostics.remind("async 同步降级（R3）：`${cls.name}.${method.name}` 在 v0.1 同步执行，真正协程 M11")
                 }
             }
-            artifacts += OutputArtifact(cls.name, emitter.emitClass(cls))
+            artifacts += try {
+                OutputArtifact(cls.name, emitter.emitClass(cls))
+            } catch (e: RuntimeException) {
+                throw RuntimeException("ASM 生成失败: 类 ${cls.name}: ${e.message}", e)
+            }
         }
         return artifacts
     }

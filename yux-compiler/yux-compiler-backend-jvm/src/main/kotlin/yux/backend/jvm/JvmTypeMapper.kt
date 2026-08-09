@@ -35,12 +35,16 @@ object JvmTypeMapper {
     }
 
     /** 字段/参数/返回描述符（`I` / `Ljava/lang/String;`）。 */
-    fun descriptor(type: IrType): String = when (val t = type.nonNull()) {
-        is IrType.Void -> "V"
-        is IrType.Basic -> BASIC_DESC[t.name] ?: "L${BASIC_INTERNAL[t.name] ?: "java/lang/Object"};"
-        is IrType.Declared, is IrType.Generic, is IrType.TypeParam, is IrType.Function ->
-            "L${internalName(t)};"
-        else -> "Ljava/lang/Object;"
+    fun descriptor(type: IrType): String = when (type) {
+        // 可空原语 → 装箱引用（`Int?→Ljava/lang/Integer;`，02-§9.1），保证引用语义（==null/存储）
+        is IrType.Nullable -> boxedDescriptor(type.base)
+        else -> when (val t = type.nonNull()) {
+            is IrType.Void -> "V"
+            is IrType.Basic -> BASIC_DESC[t.name] ?: "L${BASIC_INTERNAL[t.name] ?: "java/lang/Object"};"
+            is IrType.Declared, is IrType.Generic, is IrType.TypeParam, is IrType.Function ->
+                "L${internalName(t)};"
+            else -> "Ljava/lang/Object;"
+        }
     }
 
     /** 装箱描述符（可空原语 → 包装类；`Int?→Ljava/lang/Integer;`）。 */

@@ -68,11 +68,15 @@ object DeclarationsCollector {
         "Any", "Unit", "Nothing", "Range",
     )
 
-    /** 已知泛型元数的内置集合类型（List/Map/Set 等，01-§10.2）。 */
+    /** 已知泛型元数的内置集合类型（List/Map/Set 等，01-§10.2 + M9 常用实现类）。 */
     private val GENERIC_ARITY = mapOf(
         "List" to 1, "MutableList" to 1,
         "Map" to 2, "MutableMap" to 2,
         "Set" to 1, "MutableSet" to 1,
+        // M9（T-M9-1）：Home 插件常用 JDK 集合实现类，避免 `HashMap X Y()` 误判为非泛型
+        "ArrayList" to 1, "LinkedList" to 1, "Vector" to 1,
+        "HashMap" to 2, "LinkedHashMap" to 2, "TreeMap" to 2,
+        "HashSet" to 1, "LinkedHashSet" to 1, "TreeSet" to 1,
     )
 
     fun collect(tokens: List<Token>, extensionKeywords: Set<String> = emptySet()): PreSymbolTable {

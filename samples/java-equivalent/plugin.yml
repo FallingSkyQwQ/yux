@@ -1,0 +1,22 @@
+name: HomePluginJava
+version: 1.0.0
+main: com.example.homeplugin.HomePlugin
+api-version: 1.21
+commands:
+  sethome:
+    description: 设置家
+    permission: homeplugin.set
+  home:
+    description: 传送到家
+    permission: homeplugin.home
+  delhome:
+    description: 删除家
+    permission: homeplugin.set
+  homes:
+    description: 列出所有家
+    permission: homeplugin.home
+permissions:
+  homeplugin.set:
+    default: true
+  homeplugin.home:
+    default: true
