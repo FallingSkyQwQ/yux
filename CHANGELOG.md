@@ -2,6 +2,89 @@
 
 本文件记录各里程碑的显著变更（含 breaking changes，见 06-§3）。
 
+## [v0.1.0-m10] - 2026-08-09 — 混合项目
+
+### 新增
+- `samples/mixed`（T-M10-1/3，05-§9）：余额系统三方协作示例——Yux（`data Account` + `deposit`/`balance`
+  函数）调用 Kotlin object `Currency.format`（货币格式化）与 Java 单例 `Logger.log`（日志）；
+  `yuxc run -p` 输出「Kotlin 格式化 + Java 日志 + Yux 输出」三方协作结果。
+- 混合编译编排（T-M10-2，05-§4）：`YuxBuild.compileMixed` 按依赖方向自适应——
+  - **Yux → Java/Kotlin**：Yux 编译因未解析类型失败且项目含 Java/Kotlin 源码时，先 `gradle classes`
+    编译 Java/Kotlin，再以项目类加载器重试 Yux（samples/mixed 路径，05-§5.1/5.2）。
+  - **Kotlin/Java → Yux**：Yux 不引用 Java/Kotlin 时先行编译，kotlinc/javac 经生成脚本
+    `implementation(files(yux-classes))` 依赖可见 Yux 类型（05-§5.3/5.4，反向互操作集成测试覆盖）。
+- 编译器核心：`Compiler`/`SemanticAnalyzer`/`IRGen`/`ClassPathSymbolProvider` 增加可注入 `classLoader`
+  （默认行为不变），使 Yux 编译期可反射解析项目 Java/Kotlin 编译产物类型。
+- CLI：`run -p` 混合项目用单一 `URLClassLoader` 覆盖 Yux/Java/Kotlin 三方产物目录（父子类加载器
+  仅单向委托，分开加载会导致 `NoClassDefFoundError`）。
+- `GradleGenerator` 生成脚本（M10 完善 05-§6）：
+  - `dependencyResolutionManagement` 仓库声明（kotlin-stdlib 解析必需，修复混合项目
+    「no repositories are defined」）；
+  - 混合项目 `kotlin("jvm") version "2.3.21"` + `kotlin { jvmToolchain(targetJvm) }`
+    （kotlinc 固定运行于目标 JDK，修复 daemon 为新版 JDK 时 `JavaVersion.parse` 崩溃）；
+  - `implementation(files(yux-classes))`：Java/Kotlin 编译 classpath 可见 Yux 产物。
+- `MixedProjectE2eTest`（T-M10-1/2/3）：samples/mixed build/run 断言 + Kotlin/Java→Yux 反向临时项目
+  （Yux 先行 → kotlinc/javac 构造 Yux data 类、调用 Yux 顶层函数）端到端。
+
+### 说明
+- 设计偏差（详见 06-§M10）：余额系统改为函数式账本（data 类属性只读 S-5.3.1、service 构造器要求全参、
+  JVM 引用类型默认可空）；反向互操作示例 Kotlin/Java 与 Yux 同处默认包（Kotlin 具名包不可见默认包类）；
+  双向同时引用（Yux↔Kotlin 循环）需统一符号收集（05-§4 未来项，S-05.3 后置，v0.1 明确不支持）。
+- 测试：`./gradlew build lint` 通过（新增 MixedProjectE2eTest 3 例）。
+- 验收：`yuxc build -p samples/mixed && yuxc run -p samples/mixed` → jar 同时含三语言类 +
+  输出「Kotlin 格式化 + Java 日志 + Yux 输出」。
+
+
+## [v0.1.0-m9] - 2026-08-09 — Paper 示例插件（Home）
+
+### 新增
+- `samples/home-plugin`（T-M9-1，04 全篇）：完整 Home 传送插件——`/sethome` `/home` `/delhome`
+  `/homes` 4 命令 + `/home` tab 补全、PlayerJoin/PlayerQuit/PlayerDeath 3 事件（欢迎/日志/保留数据）、
+  `config HomeConfig`（欢迎语/冷却/上限/音效）、玩家数据 YAML 落盘（`HomeStore`）、冷却内存表、
+  `task repeat(interval:6000)` 定期保存；`plugin.yml` 自动生成（main: HomePlugin + permissions）。
+- `samples/java-equivalent`（T-M9-4）：04-§11 Java 对照版插件，行数对比（Yux 240 vs Java 234）
+  记录于 README。
+- `HomePluginE2eTest`（T-M9-3）：编译 Home 插件 → 自定义类加载器 → 反射断言数据层
+  （loadHomeData/saveHomeData round-trip 落盘、config 默认值回退）+ 类集合完整性（无服务器，R4）。
+- `verify.sh`（T-M9-2）：验收脚本——`yuxc build/test -p samples/home-plugin` + jar 类清单 + plugin.yml 校验。
+- 编译器扩展（支撑 04 语法，全部回归）：
+  - **扩展函数** `fun Receiver.name()`：声明（receiver 作为第 0 参数）+ 成员调用 `x.name(args)` 解析
+    （跨文件同包查找）；receiver 可空时经空守卫调用。
+  - **索引访问** `a[i]` / `a[i] = v`：List/Set→`get(i)`/`set(i,v)`、Map→`get(k)`/`put(k,v)`；
+    读取返回可空元素类型。
+  - **if 表达式** `if c then a else b`（`then` 软关键字）：两分支公共类型 + 临时变量汇合。
+  - **顶层属性** 直接访问/赋值：文件类静态字段 + 静态 getter/setter；顶层属性先于函数类型检查。
+  - **泛型构造** `Map X Y()` / `HashMap X Y()`：parser 预收集表补 JDK 集合实现类元数；
+    接口集合构造降级 `HashMap`/`ArrayList`/`HashSet`。
+  - **字符串拼接** `+`：任一侧为 String 时降级 `IrExpr.StringTemplate`（后端 StringBuilder）。
+  - **JVM 互操作增强**：基础类型装箱类与 JVM 接口赋值兼容（`String`→`CharSequence` 等，
+    `replace(CharSequence,CharSequence)` 重载可用）；擦除裸类型（`Map` 无实参）接受任意泛型实参；
+    JVM 静态方法 JavaBean getter 映射（`Bukkit.onlinePlayers()`→`getOnlinePlayers()`）；
+    实例/静态方法重载选择按实参类型（`Math.max(int,int)` 不落 long/double）；
+    构造实参数值字面量按参数类型收窄（Double→Float）。
+  - **后端**：可空原语装箱描述符（`Int?→Ljava/lang/Integer;` 引用语义）；Convert 引用↔基本
+    box/unbox；空守卫支持静态调用（扩展函数 receiver 实参守卫）；文件类与顶层类同名时
+    `_File` 后缀。
+- `yux-minecraft-runtime`：`yux.minecraft.io.HomeStore`（@JvmStatic）YAML data 类序列化 +
+  `loadMap`/`saveMap`（值类型由示例实例确定）+ 6 例单测；`ConfigManager.get` 增 `@JvmStatic`。
+- build-tool：`YuxBuild` 规范化 projectDir 绝对路径（相对路径生成的 Gradle 脚本路径错位修复）；
+  minecraft 项目打包时 **shade 运行时与第三方依赖**（`yux-minecraft-runtime` + `snakeyaml` +
+  `kotlin-stdlib` 解压并入插件 jar，经严格 Paper 类加载模拟验证自包含——修复 M8 遗留的
+  `NoClassDefFoundError`）；`GradleGenerator.jarSection` 支持多 shade jar。
+- 编译器：方法调用实参数值字面量按参数类型收窄（Double→Float，修复事件处理器
+  `playSound(..., 1.0, 1.0)` 的 VerifyError——此前仅构造实参收窄）。
+- `verify.sh`：jar 类清单校验改用 `grep -c`（避免 pipefail + `grep -q` 对大 jar 输出
+  SIGPIPE 提前退出导致的误报）；`HomePluginE2eTest` 增「jar 自包含可被 Paper 加载」用例
+  （校验 plugin.yml + 编译类 + runtime + snakeyaml + kotlin 均在插件 jar）。
+
+### 说明
+- 测试：编译器 core 386 例（golden IR/sema 随新语法更新）、backend-jvm 22 例、CLI 29 例
+  （含 HomePluginE2eTest 4 例）、runtime 32 例（含 HomeStore 6 例）；`./gradlew build lint` 通过。
+- 验收：`yuxc build -p samples/home-plugin` → jar 含 18 个下沉类 + plugin.yml；`yuxc test -p` → 通过。
+- 已知限制（设计偏差见 06-§M9）：数据存 YAML 非 JSON（无 yux.io）；`homes` 用 `Map String Any`
+  （泛型擦除）；config 静态访问经 ConfigManager 桥接；`command usage` 属性不支持；集成测试无
+  MockBukkit（Proxy 模拟）；行数对比 v0.1 需显式类型标注。
+
 ## [v0.1.0-m8] - 2026-08-09 — YuxPlugin SDK
 
 ### 新增
