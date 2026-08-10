@@ -78,6 +78,25 @@ class IRGen(
     val exprTypes: Map<yux.compiler.ast.YxExpr, SemaType> get() = analysis.exprTypes
     val resolvedRefs: Map<yux.compiler.ast.YxNode, yux.compiler.sema.Symbol> get() = analysis.resolvedRefs
 
+    /**
+     * 用作接口的类（qualifiedName 集合，含传递闭包）：任一类的 `implements` 列表引用的 Yux 类。
+     * 判定与 sema `YxClassSymbol.interfaceSymbols()` 一致（仅 Yux 声明类；JVM 接口走反射，
+     * 如 `implements org.bukkit.event.Listener` 不受影响）。
+     */
+    private val interfaceClassNames: Set<String> by lazy {
+        val names = mutableSetOf<String>()
+        for (file in analysis.symbolTable.files) {
+            for (sym in file.types.values) {
+                val cls = sym as? YxClassSymbol ?: continue
+                for (t in cls.interfaces) {
+                    val iface = (t as? SemaType.Declared)?.symbol as? YxClassSymbol ?: continue
+                    names += iface.qualifiedName
+                }
+            }
+        }
+        names
+    }
+
     fun generate(declsByFile: Map<String, List<YxDecl>>): IrModule {
         for ((path, decls) in declsByFile) {
             registerFile(path, decls, analysis.symbolTable.fileFor(path))
@@ -146,6 +165,7 @@ class IRGen(
             isFileClass = false,
             isData = sym.isData,
             isService = sym.isService,
+            isInterface = sym.qualifiedName in interfaceClassNames,
             typeParams = sym.typeParams,
             superType = shape.superType?.let { resolveIrType(it, fileScope) },
             interfaces = shape.interfaces.map { resolveIrType(it, fileScope) },
