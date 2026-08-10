@@ -34,11 +34,12 @@ class AsmEmitter(
     private val classLoader: ClassLoader = JvmDescResolver::class.java.classLoader,
 ) {
     private val resolver: JvmDescResolver = JvmDescResolver(classLoader)
-    private val ownerName: String get() = cls.name
+    /** 当前类 JVM 内部名（`cls.name` 为点分限定名，如 `com.example.Player`）。 */
+    private val ownerName: String get() = JvmTypeMapper.internalClassName(cls.name)
     private lateinit var cls: IrClass
 
     /** 当前类内部名（StmtEmitter 字段访问/捕获用）。 */
-    val ownerInternalName: String get() = cls.name
+    val ownerInternalName: String get() = JvmTypeMapper.internalClassName(cls.name)
 
     fun emitClass(irClass: IrClass): ByteArray {
         cls = irClass
@@ -139,7 +140,7 @@ class AsmEmitter(
             // parser 无 interface 关键字），Yux 方法所有者不可能是接口，INVOKEVIRTUAL 正确；
             // 若未来支持接口声明，须从 IrClass.isInterface（或 interfaces 继承关系）判定并改 INVOKEINTERFACE。
             JvmDescResolver.ResolvedMethod(
-                ownerInternal = m.owner?.name ?: ownerName,
+                ownerInternal = m.owner?.name?.let(JvmTypeMapper::internalClassName) ?: ownerName,
                 name = m.name,
                 desc = methodDescriptor(m),
                 isStatic = m.isStatic,
@@ -161,8 +162,8 @@ class AsmEmitter(
             }
             is IrType.Declared -> when (val s = t.symbol) {
                 is yux.compiler.sema.YxClassSymbol -> {
-                    val irClass = module.classNamed(s.name)
-                        ?: error("M5 构造器解析失败: 类未生成 ${s.name}")
+                    val irClass = module.classNamed(s.qualifiedName)
+                        ?: error("M5 构造器解析失败: 类未生成 ${s.qualifiedName}")
                     val ctor = irClass.constructor
                         ?: error("M5 构造器解析失败: 无构造器 ${s.name}")
                     return ResolvedConstructor(methodDescriptor(ctor), ctor.params.map { JvmTypeMapper.descriptor(it.type) })

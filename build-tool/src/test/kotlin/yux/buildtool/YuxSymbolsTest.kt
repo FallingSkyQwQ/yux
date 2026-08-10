@@ -51,6 +51,23 @@ class YuxSymbolsTest {
     }
 
     @Test
+    fun `packaged file class uses qualified name`() {
+        val source = projectDir.resolve("src/main.yux")
+        Files.createDirectories(source.parent)
+        source.writeText(
+            """
+            package com.example
+            fun main() { print 1 }
+            """.trimIndent() + "\n",
+        )
+        val decls = parse(source.toString(), source.readText())
+
+        val json = YuxSymbols.build(projectDir, config, mapOf(source.toString() to decls))
+
+        assertTrue(json.contains("\"class\": \"com.example.Main\""), json)
+    }
+
+    @Test
     fun `golden 快照：稳定输入输出固定 JSON`() {
         val mainText = """
             import java.util.UUID

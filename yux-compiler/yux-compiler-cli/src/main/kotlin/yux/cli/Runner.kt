@@ -51,11 +51,11 @@ class Runner {
             val compiler = Compiler(DiagnosticSink(), pluginManager)
             val decls = compiler.parseToDecls(source)
             if (compiler.diagnostics.hasErrors) {
-                return Compiled(emptyMap(), mainName(path), compiler.diagnostics)
+                return Compiled(emptyMap(), mainName(path, decls), compiler.diagnostics)
             }
             val analysis = compiler.analyze(mapOf(path to decls))
             if (compiler.diagnostics.hasErrors) {
-                return Compiled(emptyMap(), mainName(path), compiler.diagnostics)
+                return Compiled(emptyMap(), mainName(path, decls), compiler.diagnostics)
             }
             val artifacts = try {
                 val module = compiler.generate(mapOf(path to decls), analysis)
@@ -72,19 +72,24 @@ class Runner {
                 // ASM 生成失败等，均为 IllegalStateException/IllegalArgumentException/NumberFormatException
                 // 的 RuntimeException 子类）：转为 ERROR 诊断走正常错误路径，避免 CLI 崩溃堆栈。
                 compiler.diagnostics.error("编译错误: ${e.message}")
-                return Compiled(emptyMap(), mainName(path), compiler.diagnostics)
+                return Compiled(emptyMap(), mainName(path, decls), compiler.diagnostics)
             }
             return Compiled(
                 artifacts.associate { it.className to it.bytes },
-                mainName(path),
+                mainName(path, decls),
                 compiler.diagnostics,
             )
         }
 
-        /** 文件类名：`main.yux` → `Main`（与 IRGen.fileClassName 一致）。 */
-        private fun mainName(path: String): String {
+        /**
+         * 文件类限定名：`main.yux` → `Main`；`main.yux` 含 `package com.example` →
+         * `com.example.Main`（与 IRGen 文件类命名一致）。
+         */
+        private fun mainName(path: String, decls: List<yux.compiler.ast.YxDecl>): String {
             val stem = path.substringAfterLast('/').substringAfterLast('\\').substringBeforeLast('.')
-            return stem.replaceFirstChar { it.uppercaseChar() }
+            val simple = stem.replaceFirstChar { it.uppercaseChar() }
+            val pkg = decls.filterIsInstance<yux.compiler.ast.YxPackage>().firstOrNull()?.name ?: ""
+            return if (pkg.isEmpty()) simple else "$pkg.$simple"
         }
     }
 }

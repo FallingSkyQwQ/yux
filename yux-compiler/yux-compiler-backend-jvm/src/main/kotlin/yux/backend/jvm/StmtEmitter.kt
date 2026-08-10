@@ -761,7 +761,7 @@ internal class StmtEmitter(
         val implKind = if (target.isStatic) Opcodes.H_INVOKESTATIC else Opcodes.H_INVOKEVIRTUAL
         val implHandle = Handle(
             implKind,
-            target.owner?.name ?: classEmitter.ownerInternalName,
+            target.owner?.name?.let(JvmTypeMapper::internalClassName) ?: classEmitter.ownerInternalName,
             target.name,
             implDesc,
             false,

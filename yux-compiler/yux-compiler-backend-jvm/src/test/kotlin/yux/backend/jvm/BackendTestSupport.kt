@@ -33,6 +33,23 @@ object BackendTestSupport {
         return artifacts.associate { it.className to it.bytes }
     }
 
+    /** 多文件完整管线（跨文件同包/跨包引用用）：路径 → 源码。 */
+    fun compileMany(sources: Map<String, String>): Map<String, ByteArray> {
+        val diags = DiagnosticSink()
+        val declsByFile = linkedMapOf<String, List<yux.compiler.ast.YxDecl>>()
+        for ((path, source) in sources) {
+            val sf = SourceFile(path, source)
+            declsByFile[path] = CstToAst().convert(Parser(sf, diags).parse())
+        }
+        require(!diags.hasErrors) { "解析错误: ${diags.diagnostics}" }
+        val analysis = SemanticAnalyzer().analyze(declsByFile, diags)
+        require(!diags.hasErrors) { "语义错误: ${diags.diagnostics}" }
+        val module = IRGen(analysis).generate(declsByFile)
+        BasicOpt.optimize(module)
+        val artifacts = AsmBackend().generate(module)
+        return artifacts.associate { it.className to it.bytes }
+    }
+
     /** 自定义类加载器：定义编译产物（父加载器含 yux-stdlib 运行时）。 */
     fun load(classes: Map<String, ByteArray>): ClassLoader =
         object : ClassLoader(BackendTestSupport::class.java.classLoader) {

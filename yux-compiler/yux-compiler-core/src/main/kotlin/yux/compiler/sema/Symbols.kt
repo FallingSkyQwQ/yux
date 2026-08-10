@@ -104,6 +104,16 @@ class YxClassSymbol(
     override val isInterface: Boolean = false
     override val isYuxDeclared: Boolean = true
 
+    /**
+     * JVM 限定名：`com.example.Player`；默认包（无 `package` 声明）为简单名 `Player`。
+     * IRGen 命名类 / JvmTypeMapper 内部名 / 后端 `classNamed` 查表的单一真源。
+     */
+    val qualifiedName: String
+        get() {
+            val pkg = fileScope?.packageName ?: ""
+            return if (pkg.isEmpty()) name else "$pkg.$name"
+        }
+
     fun properties(): List<PropertySymbol> = members.filterIsInstance<PropertySymbol>()
     fun functions(): List<FunctionSymbol> = members.filterIsInstance<FunctionSymbol>()
     fun property(name: String): PropertySymbol? = members.filterIsInstance<PropertySymbol>().firstOrNull { it.name == name }

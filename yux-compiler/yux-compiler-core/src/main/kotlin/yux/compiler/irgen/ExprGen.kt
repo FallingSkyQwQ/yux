@@ -194,7 +194,7 @@ class ExprGen(
                 irGen.propertyAccessors[prop]?.getter?.let { IrExpr.Invoke(IrMethodRef(it), receiver, emptyList(), isSuper) }
             } ?: sym.functionsIncludingSuper(name).firstOrNull()?.let { fn ->
                 irGen.functionMethods[fn]?.let { IrExpr.Invoke(IrMethodRef(it), receiver, args, isSuper) }
-            } ?: objectMethodCall(sym.name, name, args)?.let { IrExpr.Invoke(it, receiver, args, isSuper) }
+            } ?: objectMethodCall(sym.qualifiedName, name, args)?.let { IrExpr.Invoke(it, receiver, args, isSuper) }
         }
         else -> resolveMemberExprJvm(receiver, rt, name, args, argTypes, isSuper)
     }

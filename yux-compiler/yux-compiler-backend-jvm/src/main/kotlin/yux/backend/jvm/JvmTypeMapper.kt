@@ -11,19 +11,23 @@ import yux.compiler.sema.YxClassSymbol
  * 规则：
  * - 基本类型映射 JVM 原语描述符（`Int→I`）；`String/Any` 映射引用；
  * - 可空类型在 JVM 上是装箱引用（`Int?→Ljava/lang/Integer;`），与 02-§9.1 一致；
- * - 用户类（YxClassSymbol）映射为类名内部名（文件类同规则）；
+ * - 用户类（YxClassSymbol）映射为**限定名**内部名（`com.example.Player → com/example/Player`，
+ *   默认包仍为简单名）；文件类同规则；
  * - JVM 类（JvmClassSymbol）映射限定名斜杠化；
  * - 泛型按擦除处理（v0.1：不产出 Signature 属性）。
  */
 object JvmTypeMapper {
 
-    /** 内部名（`java/lang/String` / `User`）。 */
+    /** 点分限定名 → JVM 内部名（`com.example.Player` → `com/example/Player`；简单名原样返回）。 */
+    fun internalClassName(dotted: String): String = dotted.replace('.', '/')
+
+    /** 内部名（`java/lang/String` / `com/example/Player`）。 */
     fun internalName(type: IrType): String {
         val t = type.nonNull()
         return when (t) {
             is IrType.Basic -> BASIC_INTERNAL[t.name] ?: "java/lang/Object"
             is IrType.Declared -> when (val s = t.symbol) {
-                is YxClassSymbol -> s.name
+                is YxClassSymbol -> internalClassName(s.qualifiedName)
                 is JvmClassSymbol -> s.qualifiedName.replace('.', '/')
                 else -> "java/lang/Object"
             }

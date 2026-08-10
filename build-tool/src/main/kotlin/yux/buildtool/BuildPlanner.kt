@@ -1,5 +1,7 @@
 package yux.buildtool
 
+import yux.compiler.Compiler
+import yux.compiler.source.SourceFile
 import java.nio.file.Files
 import java.nio.file.Path
 
@@ -68,8 +70,25 @@ class BuildPlanner {
                 if (hasJava) add("java")
                 if (hasKotlin) add("kotlin")
             },
-            mainClassName = config.mainClass ?: "Main",
+            mainClassName = config.mainClass ?: defaultMainClass(yuxSources),
         )
+    }
+
+    /**
+     * 默认主类：`main.yux` 的文件类（05-§5.3）。文件声明 `package com.example` 时返回
+     * 包限定名 `com.example.Main`（与 IRGen 文件类命名一致），否则 `Main`。
+     * 无 `main.yux` / 读取或解析失败 → 回退 `Main`。
+     */
+    private fun defaultMainClass(yuxSources: List<Path>): String {
+        val main = yuxSources.firstOrNull { it.fileName.toString().substringBeforeLast('.') == "main" } ?: return "Main"
+        val pkg = try {
+            val compiler = Compiler()
+            val decls = compiler.parseToDecls(SourceFile(main.toString(), Files.readString(main)))
+            decls.filterIsInstance<yux.compiler.ast.YxPackage>().firstOrNull()?.name ?: ""
+        } catch (e: Exception) {
+            ""
+        }
+        return if (pkg.isEmpty()) "Main" else "$pkg.Main"
     }
 
     /** 递归收集 [dir] 下后缀为 [ext] 的普通文件，按文件名排序；目录缺失返回空列表。 */

@@ -114,6 +114,28 @@ class MainTest {
     }
 
     @Test
+    fun `run command executes packaged main`() {
+        val file = Files.createTempFile("yux", ".yux")
+        Files.writeString(
+            file,
+            "package com.example\nfun main() {\n  p = Player(\"Steve\")\n  print p.name\n}\ndata Player {\n  name: String\n}",
+        )
+        val (out, err, code) = capture("run", file.toString())
+        assertEquals(0, code, err)
+        assertEquals("Steve", out)
+    }
+
+    @Test
+    fun `run command executes packaged main from non-main file name`() {
+        val dir = Files.createTempDirectory("yux-pkg")
+        val file = dir.resolve("Main.yux")
+        Files.writeString(file, "package com.example\nfun main() {\n  print \"packaged\"\n}")
+        val (out, err, code) = capture("run", file.toString())
+        assertEquals(0, code, err)
+        assertEquals("packaged", out)
+    }
+
+    @Test
     fun `run command with data class toString`() {
         val file = Files.createTempFile("yux", ".yux")
         Files.writeString(

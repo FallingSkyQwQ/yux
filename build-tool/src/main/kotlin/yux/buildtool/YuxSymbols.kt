@@ -4,6 +4,7 @@ import yux.compiler.ast.YxClass
 import yux.compiler.ast.YxDataClass
 import yux.compiler.ast.YxDecl
 import yux.compiler.ast.YxFunction
+import yux.compiler.ast.YxPackage
 import yux.compiler.ast.YxProperty
 import yux.compiler.ast.YxService
 import java.nio.file.Path
@@ -44,7 +45,7 @@ object YuxSymbols {
     private fun renderFile(relPath: String, decls: List<YxDecl>): String = buildString {
         appendLine("    {")
         appendLine("      \"file\": ${quote(relPath)},")
-        appendLine("      \"class\": ${quote(fileClass(relPath))},")
+        appendLine("      \"class\": ${quote(fileClass(relPath, decls))},")
         appendLine("      \"symbols\": [")
         decls.mapNotNull(::symbol).forEachIndexed { i, s ->
             if (i > 0) appendLine(",")
@@ -73,10 +74,15 @@ object YuxSymbols {
         return rel.toString().replace('\\', '/')
     }
 
-    /** 文件类名：`main.yux` → `Main`（与 IRGen.fileClassName 一致，05-§5.3）。 */
-    private fun fileClass(relPath: String): String {
+    /**
+     * 文件类限定名：`main.yux` → `Main`；声明 `package com.example` 的 `main.yux` →
+     * `com.example.Main`（与 IRGen 文件类命名一致，05-§5.3）。
+     */
+    private fun fileClass(relPath: String, decls: List<YxDecl>): String {
         val stem = relPath.substringAfterLast('/').substringAfterLast('\\').substringBeforeLast('.')
-        return stem.replaceFirstChar { it.uppercaseChar() }
+        val simple = stem.replaceFirstChar { it.uppercaseChar() }
+        val pkg = decls.filterIsInstance<YxPackage>().firstOrNull()?.name ?: ""
+        return if (pkg.isEmpty()) simple else "$pkg.$simple"
     }
 
     /** JSON 字符串转义（防御式：标识符仅需处理 `\` 与 `"`）。 */

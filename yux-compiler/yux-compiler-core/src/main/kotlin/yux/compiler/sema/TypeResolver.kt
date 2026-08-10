@@ -102,15 +102,19 @@ class TypeResolver(
             file.types[name]?.let { return it }
             // 2. 同包其他文件
             symbolTable.typeInPackage(file.packageName, name)?.let { return it }
-            // 3. 单名导入
+            // 3. 单名导入（Yux 声明类经符号表按包解析，JVM 类经 classpath）
             file.imports.filter { !it.star }.forEach { imp ->
                 if (imp.qualifiedName.last() == name) {
+                    val importPkg = imp.qualifiedName.dropLast(1).joinToString(".")
+                    symbolTable.typeInPackage(importPkg, name)?.let { return it }
                     classPath.resolve(imp.qualifiedName.joinToString("."))?.let { return it }
                 }
             }
-            // 4. star 导入
+            // 4. star 导入（Yux 包先于 JVM classpath）
             file.imports.filter { it.star }.forEach { imp ->
-                classPath.resolveIn(imp.qualifiedName.joinToString("."), name)?.let { return it }
+                val importPkg = imp.qualifiedName.joinToString(".")
+                symbolTable.typesInPackage(importPkg)?.get(name)?.let { return it }
+                classPath.resolveIn(importPkg, name)?.let { return it }
             }
             // 5. JDK 内置类路径（List/Map/System/...）
             Builtins.BUILTIN_CLASSPATH[name]?.let { classPath.resolve(it) }?.let { return it }
@@ -126,7 +130,9 @@ class TypeResolver(
             }
             return null
         }
-        // 限定名：直接按完整路径解析
+        // 限定名：Yux 声明类（`com.example.Player`）优先于 JVM classpath 解析
+        val pkg = segments.dropLast(1).joinToString(".")
+        symbolTable.typeInPackage(pkg, segments.last())?.let { return it }
         return classPath.resolve(segments.joinToString("."))
     }
 }

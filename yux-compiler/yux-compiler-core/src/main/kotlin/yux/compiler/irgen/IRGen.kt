@@ -102,7 +102,7 @@ class IRGen(
             decls.filterIsInstance<yux.compiler.ast.YxService>().map { it.name }
         val fileName = if (baseName in topLevelTypeNames) baseName + "_File" else baseName
         val fileClass = IrClass(
-            name = fileName,
+            name = qualify(fileScope.packageName, fileName),
             isFileClass = true,
             isData = false,
             isService = false,
@@ -142,7 +142,7 @@ class IRGen(
         val shape = classShape(decl) ?: return
         val sym = fileScope.types[shape.name] as? YxClassSymbol ?: return
         val irClass = IrClass(
-            name = shape.name,
+            name = qualify(fileScope.packageName, shape.name),
             isFileClass = false,
             isData = sym.isData,
             isService = sym.isService,
@@ -442,6 +442,10 @@ class IRGen(
         val stem = path.substringAfterLast('/').substringAfterLast('\\').substringBeforeLast('.')
         return stem.replaceFirstChar { it.uppercaseChar() }
     }
+
+    /** 包前缀限定名：`com.example` + `Main` → `com.example.Main`；默认包原样返回。 */
+    private fun qualify(pkg: String, simpleName: String): String =
+        if (pkg.isEmpty()) simpleName else "$pkg.$simpleName"
 
     private fun getterName(propName: String, type: IrType): String {
         val cap = propName.replaceFirstChar { it.uppercaseChar() }

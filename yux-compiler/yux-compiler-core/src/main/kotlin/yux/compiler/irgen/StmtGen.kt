@@ -314,7 +314,7 @@ class StmtGen(
             // 沿父类链解析（S-8.7.1，缺陷 9）
             sym.functionsIncludingSuper(name).firstOrNull()?.let { fn ->
                 irGen.functionMethods[fn]?.let { Triple(IrMethodRef(it), receiver, args) }
-            } ?: objectMethodCall(sym.name, name)?.let { Triple(it, receiver, args) }
+            } ?: objectMethodCall(sym.qualifiedName, name)?.let { Triple(it, receiver, args) }
         }
         else -> irGen.resolver.resolveJvmExtension(rt, name)?.let { Triple(it, null, listOf(receiver) + args) }
             ?: irGen.resolver.resolveInstanceMethod(rt, name, argTypes)?.let { Triple(it, receiver, args) }
