@@ -27,6 +27,8 @@ sealed interface IrStmt {
         val args: List<IrExpr>,
         /** 被调方法返回类型（供后端决定是否弹栈）。 */
         val ret: IrType,
+        /** super 调用：对父类非虚拟调用（INVOKESPECIAL，S-8.7.1）。 */
+        val isSuper: Boolean = false,
     ) : IrStmt
 
     /** 语句位置构造（结果丢弃，通常被优化器移除）：`Type(args)`。 */

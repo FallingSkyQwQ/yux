@@ -149,6 +149,7 @@ class IRGen(
             typeParams = sym.typeParams,
             superType = shape.superType?.let { resolveIrType(it, fileScope) },
             interfaces = shape.interfaces.map { resolveIrType(it, fileScope) },
+            visibility = sym.visibility,
             annotations = buildList {
                 shape.annotations.forEach { addAll(toIrAnnotation(it)) }
                 // S-5.4.1：service 自动附 @YuxService（源码已标注时去重）
@@ -197,7 +198,7 @@ class IRGen(
 
     private fun classShape(decl: Any): ClassShape? = when (decl) {
         is YxClass -> ClassShape(decl.name, decl.superType, decl.interfaces, decl.annotations, decl.members)
-        is YxDataClass -> ClassShape(decl.name, decl.superType, decl.interfaces, decl.annotations, decl.properties)
+        is YxDataClass -> ClassShape(decl.name, decl.superType, decl.interfaces, decl.annotations, decl.members)
         is YxService -> ClassShape(decl.name, null, emptyList(), decl.annotations, decl.members)
         else -> null
     }
@@ -232,6 +233,7 @@ class IRGen(
         "Deprecated" to "java.lang.Deprecated",
         "Serializable" to "yux.serializer.Serializable",
         "YuxService" to "yux.di.YuxService",
+        "Test" to "yux.test.Test",
     )
 
     /** 属性 → backing 字段 + getter/setter 骨架（T-M4-1：属性 → 2 方法映射）。 */
@@ -244,6 +246,7 @@ class IRGen(
             isStatic = false,
             isFinal = prop.isVal,
             owner = irClass.name,
+            visibility = prop.visibility,
         )
         propertyFields[prop] = backingField
         val getter = registerAccessor(propDecl, prop, irClass, type, YxAccessorKind.GET, backingField, fileScope)
@@ -273,6 +276,7 @@ class IRGen(
             isAsync = false,
             isOverride = false,
             isSynthetic = true,
+            visibility = prop.visibility,
             owner = irClass,
         )
         irClass.methods.add(method)
@@ -304,6 +308,7 @@ class IRGen(
             isAsync = fnDecl.isAsync,
             isOverride = fnDecl.isOverride,
             isSynthetic = false,
+            visibility = fnDecl.visibility,
             annotations = fnDecl.annotations.flatMap { toIrAnnotation(it) },
             owner = irClass,
         )
@@ -315,7 +320,7 @@ class IRGen(
     private fun registerTopLevelProperty(propDecl: YxProperty, fileClass: IrClass, fileScope: FileScope) {
         val sym = fileScope.topLevelProperties[propDecl.name] ?: return
         val type = TypeBridge.toIr(sym.type ?: SemaType.ErrorT)
-        val field = IrField(propDecl.name, type, isStatic = true, isFinal = sym.isVal, owner = fileClass.name)
+        val field = IrField(propDecl.name, type, isStatic = true, isFinal = sym.isVal, owner = fileClass.name, visibility = sym.visibility)
         propertyFields[sym] = field
         val getter = IrMethod(
             name = getterName(propDecl.name, type),
@@ -326,6 +331,7 @@ class IRGen(
             isAsync = false,
             isOverride = false,
             isSynthetic = true,
+            visibility = sym.visibility,
             owner = fileClass,
         )
         val setter = if (sym.isVal) {
@@ -340,6 +346,7 @@ class IRGen(
                 isAsync = false,
                 isOverride = false,
                 isSynthetic = true,
+                visibility = sym.visibility,
                 owner = fileClass,
             )
         }

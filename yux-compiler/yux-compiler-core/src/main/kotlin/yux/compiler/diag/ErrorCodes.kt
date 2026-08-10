@@ -37,6 +37,7 @@ object ErrorCodes {
     const val DUPLICATE_EXTENSION_KEYWORD = "E0030"
     const val RESERVED_EXTENSION_KEYWORD = "E0031"
     const val EXTENSION_NOT_LOWERED = "E0032"
+    const val ILLEGAL_ACCESS = "E0033"
 
     // ── W 系列：警告 ──────────────────────────────────────────────────────────
     const val TYPE_FALLBACK = "W0001"

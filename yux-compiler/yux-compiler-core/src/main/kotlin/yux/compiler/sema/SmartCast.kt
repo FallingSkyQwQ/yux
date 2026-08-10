@@ -27,6 +27,15 @@ class SmartCast {
         casts[name] = type
     }
 
+    /**
+     * 变量遮蔽：内层作用域声明同名变量（循环变量/catch 参数/lambda 参数）时，
+     * 该名字的转型在本作用域及其子作用域内失效（02-§7.3：块内重新声明的变量
+     * 遮蔽外层智能转型）。退出块时 [exitBlock] 恢复外层覆盖。
+     */
+    fun shadow(name: String) {
+        casts.remove(name)
+    }
+
     /** 进入块：保存当前覆盖，块内注册不外泄。 */
     fun enterBlock() {
         saveStack.addLast(casts.toMap())

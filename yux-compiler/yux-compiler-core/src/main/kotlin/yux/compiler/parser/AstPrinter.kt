@@ -105,7 +105,7 @@ object AstPrinter {
                 decl.annotations.forEach { appendLine(this, depth, renderAnnotation(it)) }
                 val vis = visibilityPrefix(decl.visibility)
                 appendLine(this, depth, "data $vis${decl.name}${renderTypeParams(decl.typeParams)}${renderSuper(decl.superType, decl.interfaces)}")
-                decl.properties.forEach { append(renderProperty(it, depth + 1)) }
+                decl.members.forEach { append(renderClassMember(it, depth + 1)) }
             }
             is YxService -> {
                 decl.annotations.forEach { appendLine(this, depth, renderAnnotation(it)) }

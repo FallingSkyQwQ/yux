@@ -7,6 +7,7 @@ import yux.compiler.lexer.TokenKind.ASSIGN
 import yux.compiler.lexer.TokenKind.AT
 import yux.compiler.lexer.TokenKind.COLON
 import yux.compiler.lexer.TokenKind.COMMA
+import yux.compiler.lexer.TokenKind.DOT
 import yux.compiler.lexer.TokenKind.EOF
 import yux.compiler.lexer.TokenKind.IDENTIFIER
 import yux.compiler.lexer.TokenKind.KEYWORD
@@ -79,6 +80,13 @@ object DeclarationsCollector {
         "HashSet" to 1, "LinkedHashSet" to 1, "TreeSet" to 1,
     )
 
+    /** 可直接按简单名解析的 JVM 工具类型（镜像 Builtins.BUILTIN_CLASSPATH，01-§4.3/§8.5）。 */
+    private val BUILTIN_CLASSPATH_TYPES = listOf(
+        "Iterable", "System", "Math", "StringBuilder",
+        "Throwable", "Exception", "RuntimeException",
+        "Text", "Colls", "Tasks",
+    )
+
     fun collect(tokens: List<Token>, extensionKeywords: Set<String> = emptySet()): PreSymbolTable {
         val table = PreSymbolTable()
         BUILTIN_TYPES.forEach { name ->
@@ -86,6 +94,9 @@ object DeclarationsCollector {
         }
         GENERIC_ARITY.forEach { (name, arity) ->
             table.declare(Sym(name, SymKind.TYPE, topLevel = true, position = SourcePosition(0, 1, 1), typeParamCount = arity))
+        }
+        BUILTIN_CLASSPATH_TYPES.forEach { name ->
+            table.declare(Sym(name, SymKind.TYPE, topLevel = true, position = SourcePosition(0, 1, 1)))
         }
         val s = TokenScanner(tokens)
         scanTopLevel(s, table, extensionKeywords)
@@ -98,7 +109,8 @@ object DeclarationsCollector {
             val t = s.peek()
             if (t.kind == EOF) return
             when {
-                t.kind == KEYWORD && t.text == "package" || t.kind == KEYWORD && t.text == "import" -> s.skipLine()
+                t.kind == KEYWORD && t.text == "package" -> s.skipLine()
+                t.kind == KEYWORD && t.text == "import" -> scanImport(s, table)
                 t.kind == AT -> skipAnnotation(s)
                 t.kind == KEYWORD && t.text == "data" -> {
                     s.advance()
@@ -145,9 +157,33 @@ object DeclarationsCollector {
         }
     }
 
+    /** `import a.b.C`：单名导入的末段注册为类型（供表达式位置消歧，01-§7.7）。 */
+    private fun scanImport(s: TokenScanner, table: PreSymbolTable) {
+        s.advance() // import
+        val segments = mutableListOf<String>()
+        if (s.peek().kind == IDENTIFIER) {
+            segments += s.advance().text
+            while (s.peek().kind == DOT && s.peek(1).kind == IDENTIFIER) {
+                s.advance()
+                segments += s.advance().text
+            }
+        }
+        val star = s.peek().kind == DOT && s.peek(1).kind == TokenKind.STAR
+        if (star) {
+            s.advance()
+            s.advance()
+        } else if (segments.isNotEmpty()) {
+            // 已注册的类型（内置/泛型元数/本文件声明）保留原元数，不覆盖
+            val name = segments.last()
+            if (table.lookup(name)?.kind != SymKind.TYPE) {
+                table.declare(Sym(name, SymKind.TYPE, topLevel = true, s.peek().position))
+            }
+        }
+        s.skipLine()
+    }
+
     /** 处理 `Identifier ...`：类声明（`X T {`）或属性声明（`X:`/`X=`）。 */
-    private fun scanIdentDecl(s: TokenScanner, table: PreSymbolTable) {
-        val name = s.advance()
+    private fun scanIdentDecl(s: TokenScanner, table: PreSymbolTable) {        val name = s.advance()
         if (s.peek().kind == LBRACE) {
             table.declare(Sym(name.text, SymKind.TYPE, topLevel = true, name.position, 0))
             scanClassBody(s, table)
@@ -211,7 +247,14 @@ object DeclarationsCollector {
             return
         }
         val name = s.advance()
-        table.declare(Sym(name.text, SymKind.FUNCTION, topLevel = true, name.position))
+        // 扩展函数（M9）：`fun Receiver.name(...)` → 函数名为点号后的标识符（接收者已是类型）
+        if (s.peek().kind == DOT && s.peek(1).kind == IDENTIFIER) {
+            s.advance()
+            val fnName = s.advance()
+            table.declare(Sym(fnName.text, SymKind.FUNCTION, topLevel = true, fnName.position))
+        } else {
+            table.declare(Sym(name.text, SymKind.FUNCTION, topLevel = true, name.position))
+        }
         while (s.peek().kind == IDENTIFIER) s.advance() // 类型参数
         if (s.peek().kind == LPAREN) s.skipBalanced(LPAREN, RPAREN)
         if (s.peek().kind == COLON) {

@@ -55,6 +55,7 @@ import yux.compiler.ir.IrMethodRef
 import yux.compiler.ir.IrParam
 import yux.compiler.ir.IrStmt
 import yux.compiler.ir.IrType
+import yux.compiler.sema.BuiltinFunctions
 import yux.compiler.sema.FileScope
 import yux.compiler.sema.FunctionSymbol
 import yux.compiler.sema.JvmClassSymbol
@@ -98,7 +99,9 @@ class ExprGen(
         is YxSuper -> IrExpr.This // M4 简化：super 视为 this（S-8.7 继承语义后置）
         is YxParen -> gen(expr.expr, g, fileScope)
         is YxNullable -> gen(expr.expr, g, fileScope)
-        is YxTypeReference -> error("IRGen: 类型引用只能作为静态成员接收者: ${expr.type}")
+        // 表达式位置的类型引用 → 类字面量（S-8.3：`deserialize(json, PlayerData)` 传 Class 标记）；
+        // 静态成员接收者（`System.currentTimeMillis`）在 genMemberAccess 单独处理，不经过此处
+        is YxTypeReference -> IrExpr.ClassLiteral(irGen.resolveIrType(expr.type, fileScope))
         is YxMemberAccess -> genMemberAccess(expr, g, fileScope)
         is YxCall -> genCall(expr, g, fileScope)
         is YxTypeCall -> IrExpr.New(
@@ -155,6 +158,7 @@ class ExprGen(
 
     private fun genMemberAccess(expr: YxMemberAccess, g: MethodGen, fileScope: FileScope): IrExpr {
         val receiverType = SemaType.resolveVar(irGen.exprTypes[expr.receiver] ?: SemaType.ErrorT)
+        val isSuper = expr.receiver is YxSuper
         val result: IrExpr
         if (expr.receiver is YxTypeReference) {
             // 静态成员：System.currentTimeMillis → Invoke(静态)
@@ -168,7 +172,7 @@ class ExprGen(
             }
         } else {
             val receiver = gen(expr.receiver, g, fileScope)
-            result = resolveMemberExpr(receiver, receiverType, expr.name, emptyList())
+            result = resolveMemberExpr(receiver, receiverType, expr.name, emptyList(), isSuper = isSuper)
                 ?: error("IRGen: 成员不存在: ${expr.name} on ${receiverType.render()}")
         }
         return if (expr in irGen.guardSet) IrExpr.NullGuard(result) else result
@@ -181,16 +185,18 @@ class ExprGen(
         name: String,
         args: List<IrExpr>,
         argTypes: List<SemaType> = emptyList(),
+        isSuper: Boolean = false,
     ): IrExpr? = when {
         rt is SemaType.Declared && rt.symbol is YxClassSymbol -> {
             val sym = rt.symbol as YxClassSymbol
-            sym.property(name)?.let { prop ->
-                irGen.propertyAccessors[prop]?.getter?.let { IrExpr.Invoke(IrMethodRef(it), receiver, emptyList()) }
-            } ?: sym.functionsNamed(name).firstOrNull()?.let { fn ->
-                irGen.functionMethods[fn]?.let { IrExpr.Invoke(IrMethodRef(it), receiver, args) }
-            } ?: objectMethodCall(sym.name, name, args)?.let { IrExpr.Invoke(it, receiver, args) }
+            // 沿父类链解析（S-8.7.1，缺陷 9）
+            sym.propertyIncludingSuper(name)?.let { prop ->
+                irGen.propertyAccessors[prop]?.getter?.let { IrExpr.Invoke(IrMethodRef(it), receiver, emptyList(), isSuper) }
+            } ?: sym.functionsIncludingSuper(name).firstOrNull()?.let { fn ->
+                irGen.functionMethods[fn]?.let { IrExpr.Invoke(IrMethodRef(it), receiver, args, isSuper) }
+            } ?: objectMethodCall(sym.name, name, args)?.let { IrExpr.Invoke(it, receiver, args, isSuper) }
         }
-        else -> resolveMemberExprJvm(receiver, rt, name, args, argTypes)
+        else -> resolveMemberExprJvm(receiver, rt, name, args, argTypes, isSuper)
     }
 
     /**
@@ -204,13 +210,14 @@ class ExprGen(
         name: String,
         args: List<IrExpr>,
         argTypes: List<SemaType>,
+        isSuper: Boolean = false,
     ): IrExpr? {
         val ext = resolver.resolveJvmExtension(rt, name)
         if (ext != null) {
             return IrExpr.Invoke(ext, null, listOf(receiver) + args)
         }
         return resolver.resolveInstanceMethod(rt, name, argTypes)
-            ?.let { IrExpr.Invoke(it, receiver, args) }
+            ?.let { IrExpr.Invoke(it, receiver, args, isSuper) }
     }
 
     /** Object 方法回退（S-8.7.1）：data 类生成 toString/equals/hashCode，普通类继承——统一虚拟调用。 */
@@ -284,17 +291,20 @@ class ExprGen(
                 result = IrExpr.Invoke(IrMethodRef(method), null, listOf(receiver) + args)
             } else {
                 val receiver = gen(callee.receiver, g, fileScope)
-                result = resolveMemberExpr(receiver, receiverType, callee.name, args, argTypes)
+                result = resolveMemberExpr(receiver, receiverType, callee.name, args, argTypes, isSuper = callee.receiver is YxSuper)
                     ?: error("IRGen: 成员方法不存在: ${callee.name} on ${receiverType.render()}")
             }
         }
         return if (callee in irGen.guardSet) IrExpr.NullGuard(result) else result
     }
 
-    /** 内置函数（print/println/serialize，M3 注册的 decl==null 函数）→ yux.core.CoreLib。 */
+    /**
+     * 内置函数（M3 注册的 decl==null 函数）→ 运行时宿主：
+     * `print`/`println` → yux.core.CoreLib；`serialize`/`deserialize`（S-8.3）→ yux.json.Json。
+     */
     private fun builtinCall(sym: FunctionSymbol): IrCallable = IrJvmCall(
         name = sym.name,
-        owner = "yux.core.CoreLib",
+        owner = BuiltinFunctions.ownerOf(sym.name) ?: "yux.core.CoreLib",
         static = true,
         params = sym.params.map { TypeBridge.toIr(it.type) },
         retType = TypeBridge.toIr(sym.returnType ?: SemaType.UnitT),
@@ -406,6 +416,11 @@ class ExprGen(
         val owner = when (val t = baseType) {
             is SemaType.Declared -> (t.symbol as? JvmClassSymbol)?.qualifiedName
             else -> null
+        }
+        if (owner != null && owner.startsWith("[")) {
+            // JVM 数组索引读取（S-6.4.1/8.5）：a[i] → xALOAD
+            val elemType = irGen.resolver.elementType(baseType) ?: SemaType.ANY
+            return IrExpr.ArrayLoad(base, index, TypeBridge.toIr(elemType))
         }
         val method = when (owner) {
             "java.util.Map", "java.util.HashMap", "java.util.LinkedHashMap", "java.util.TreeMap" -> "get"
@@ -549,7 +564,7 @@ class ExprGen(
     // ── 捕获分析（B2：闭包 S-7.4.4）────────────────────────────────────────
 
     /** 块 Lambda 预扫：块体顶层声明的变量视为已绑定（块作用域遮蔽）。 */
-    private fun prescanBlockVars(block: YxBlock, bound: MutableSet<String>) {
+    internal fun prescanBlockVars(block: YxBlock, bound: MutableSet<String>) {
         block.statements.forEach { stmt ->
             if (stmt is YxVarDecl) bound += stmt.name
         }
@@ -564,7 +579,7 @@ class ExprGen(
      * 作用域纪律：进入块/Lambda/循环/捕获子句时快照 [bound]，离开时恢复——
      * 否则内层同名声明会永久压制外层变量捕获（遮蔽泄漏，P1-4）。
      */
-    private fun collectCaptures(
+    internal fun collectCaptures(
         node: YxNode,
         bound: MutableSet<String>,
         captures: MutableList<Pair<String, Symbol>>,
@@ -707,7 +722,7 @@ class ExprGen(
                 if (receiverType !is SemaType.Declared || receiverType.symbol !is YxClassSymbol) {
                     error("IRGen: 不支持的表达式位置赋值目标: ${t.name}")
                 }
-                val prop = (receiverType.symbol as YxClassSymbol).property(t.name)
+                val prop = (receiverType.symbol as YxClassSymbol).propertyIncludingSuper(t.name)
                     ?: error("IRGen: 赋值目标属性不存在: ${t.name}")
                 val accessor = irGen.propertyAccessors[prop]
                     ?: error("IRGen: 属性访问器不存在: ${t.name}")

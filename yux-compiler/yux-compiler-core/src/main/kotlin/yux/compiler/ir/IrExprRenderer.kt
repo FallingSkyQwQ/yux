@@ -10,6 +10,8 @@ internal object IrExprRenderer {
 
     fun render(expr: IrExpr): String = when (expr) {
         is IrExpr.Const -> "Const(${renderLiteral(expr.value)})"
+        is IrExpr.ClassLiteral -> "ClassLiteral(${expr.type.render()})"
+        is IrExpr.ArrayLoad -> "ArrayLoad(${render(expr.base)}, ${render(expr.index)}, ${expr.elemType.render()})"
         is IrExpr.This -> "This"
         is IrExpr.LocalRead -> "LocalRead(${localIndex(expr.local)})"
         is IrExpr.FieldRead -> "FieldRead(${receiverPrefix(expr.receiver)}${expr.field.name})"

@@ -93,6 +93,7 @@ class Declarations(
             type = decl.type?.let { typeResolver.resolve(it, file) },
             isVal = decl.accessors.isNotEmpty() && decl.accessors.none { it.kind == YxAccessorKind.SET },
             owner = null,
+            visibility = decl.visibility,
             span = decl.span,
             decl = decl,
         )
@@ -125,8 +126,21 @@ class Declarations(
     private fun fillDataClass(file: FileScope, sym: YxClassSymbol, decl: YxDataClass) {
         resolveSupertypes(file, sym, decl.superType, decl.interfaces)
         typeResolver.withTypeParams(sym.typeParams) {
-            for (prop in decl.properties) {
-                registerClassMember(file, sym, buildProperty(file, sym, prop))
+            for (member in decl.members) {
+                when (member) {
+                    is YxProperty -> registerClassMember(file, sym, buildProperty(file, sym, member))
+                    // S-5.3.1：data 类仅允许属性——函数/初始化块报 E0011
+                    is YxFunction -> diagnostics.error(
+                        "data 类不允许函数成员（S-5.3.1）",
+                        member.span.start,
+                        ErrorCodes.ILLEGAL_DATA_MEMBER,
+                    )
+                    is yux.compiler.ast.YxInitBlock -> diagnostics.error(
+                        "data 类不允许初始化块（S-5.3.1）",
+                        member.span.start,
+                        ErrorCodes.ILLEGAL_DATA_MEMBER,
+                    )
+                }
             }
         }
         Annotations.validate(sym.annotations, setOf(AnnotationTarget.CLASS, AnnotationTarget.DATA), diagnostics)
@@ -215,7 +229,7 @@ class Declarations(
         val hasSet = decl.accessors.any { it.kind == YxAccessorKind.SET }
         // S-5.2.1：默认自动生成 getter+setter（可变）；仅 data 类默认只读（S-5.3.1）
         val isVal = if (owner.isData) !hasSet else (decl.accessors.isNotEmpty() && !hasSet)
-        return PropertySymbol(decl.name, type, isVal, owner, decl.span, decl)
+        return PropertySymbol(decl.name, type, isVal, owner, decl.visibility, decl.span, decl)
     }
 
     private fun buildFunction(
@@ -235,7 +249,7 @@ class Declarations(
                 ParameterSymbol(p.name, typeResolver.resolve(p.type, file), p.defaultValue != null, p.span)
             }
             val ret = decl.returnType?.let { typeResolver.resolve(it, file) }
-            FunctionSymbol(decl.name, params, ret, decl.isAsync, decl.isOverride, owner, receiver, decl.span, decl)
+            FunctionSymbol(decl.name, params, ret, decl.isAsync, decl.isOverride, owner, receiver, decl.visibility, decl.span, decl)
         }
     }
 

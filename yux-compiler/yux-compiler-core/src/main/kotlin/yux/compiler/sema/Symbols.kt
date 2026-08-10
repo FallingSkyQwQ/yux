@@ -57,6 +57,8 @@ class FunctionSymbol(
     val owner: YxClassSymbol?,
     /** 扩展函数接收者类型（M9），null = 普通函数。 */
     val receiverType: SemaType? = null,
+    /** 访问控制（S-5.1.4）：默认 public。 */
+    val visibility: yux.compiler.ast.YxVisibility = yux.compiler.ast.YxVisibility.PUBLIC,
     override val span: SourceSpan?,
     /** 对应 AST 声明（函数体检查用）。 */
     val decl: yux.compiler.ast.YxFunction? = null,
@@ -71,6 +73,8 @@ class PropertySymbol(
     /** 是否只读（无 setter，S-5.2.2）。 */
     val isVal: Boolean,
     val owner: YxClassSymbol?,
+    /** 访问控制（S-5.1.4）：默认 public。 */
+    val visibility: yux.compiler.ast.YxVisibility = yux.compiler.ast.YxVisibility.PUBLIC,
     override val span: SourceSpan?,
     /** 对应 AST 声明（初始值/访问器检查用）。 */
     val decl: yux.compiler.ast.YxProperty? = null,
@@ -90,6 +94,8 @@ class YxClassSymbol(
     val members: MutableList<Symbol>,
     val isAbstract: Boolean,
     val annotations: List<yux.compiler.ast.YxAnnotation>,
+    /** 访问控制（S-5.1.4）：默认 public。 */
+    val visibility: yux.compiler.ast.YxVisibility = yux.compiler.ast.YxVisibility.PUBLIC,
     /** 所属文件（用于定位注入图）。 */
     val fileScope: FileScope?,
     override val span: SourceSpan?,
@@ -102,6 +108,30 @@ class YxClassSymbol(
     fun functions(): List<FunctionSymbol> = members.filterIsInstance<FunctionSymbol>()
     fun property(name: String): PropertySymbol? = members.filterIsInstance<PropertySymbol>().firstOrNull { it.name == name }
     fun functionsNamed(name: String): List<FunctionSymbol> = members.filterIsInstance<FunctionSymbol>().filter { it.name == name }
+
+    /** 沿父类链查找函数（含自身，S-8.7.1 成员继承）。 */
+    fun functionsIncludingSuper(name: String): List<FunctionSymbol> {
+        val result = mutableListOf<FunctionSymbol>()
+        var cls: YxClassSymbol? = this
+        while (cls != null) {
+            result += cls.functionsNamed(name)
+            cls = cls.superClassSymbol()
+        }
+        return result
+    }
+
+    /** 沿父类链查找属性（含自身）。 */
+    fun propertyIncludingSuper(name: String): PropertySymbol? {
+        var cls: YxClassSymbol? = this
+        while (cls != null) {
+            cls.property(name)?.let { return it }
+            cls = cls.superClassSymbol()
+        }
+        return null
+    }
+
+    private fun superClassSymbol(): YxClassSymbol? =
+        (superType as? SemaType.Declared)?.symbol as? YxClassSymbol
 }
 
 /** 文件级作用域：包名 + 导入 + 本文件顶层声明。 */

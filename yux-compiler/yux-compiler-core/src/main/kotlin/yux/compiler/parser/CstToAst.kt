@@ -116,26 +116,14 @@ class CstToAst {
     }
 
     private fun convertDataClass(decl: CstDataClassDecl): YxDataClass {
-        val properties = decl.body.members.map { member ->
-            when (member) {
-                is CstPropertyDecl -> convertProperty(member, isTopLevel = false)
-                is CstFunctionDecl -> {
-                    // Data classes cannot have methods; this would be caught in semantic analysis
-                    // For now, we skip unsupported members but they are visible in CST
-                    null
-                }
-                is CstInitBlock -> {
-                    // Data classes cannot have init blocks; this would be caught in semantic analysis
-                    null
-                }
-            }
-        }.filterNotNull()
+        // 函数/初始化块不再丢弃：保留在 members 中，由 sema 报 E0011 ILLEGAL_DATA_MEMBER（S-5.3.1）
+        val members = decl.body.members.mapNotNull { convertClassMember(it) }
         return YxDataClass(
             name = decl.name.text,
             typeParams = convertTypeParams(decl.typeParams),
             superType = decl.extendsType?.let { convertType(it) },
             interfaces = decl.implements.map { convertType(it) },
-            properties = properties,
+            members = members,
             visibility = convertVisibility(decl.modifier),
             annotations = decl.annotations.map { convertAnnotation(it) },
             span = decl.span,
@@ -194,6 +182,7 @@ class CstToAst {
         accessors = decl.accessors.map { convertAccessor(it) },
         annotations = decl.annotations.map { convertAnnotation(it) },
         isTopLevel = isTopLevel,
+        visibility = convertVisibility(decl.modifier),
         span = decl.span,
     )
 

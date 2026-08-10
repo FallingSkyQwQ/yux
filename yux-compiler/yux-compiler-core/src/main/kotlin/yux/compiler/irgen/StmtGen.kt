@@ -1,5 +1,16 @@
 package yux.compiler.irgen
 
+import yux.compiler.ast.YxAs
+import yux.compiler.ast.YxBinary
+import yux.compiler.ast.YxExpr
+import yux.compiler.ast.YxIfExpr
+import yux.compiler.ast.YxIs
+import yux.compiler.ast.YxLambda
+import yux.compiler.ast.YxNullable
+import yux.compiler.ast.YxParen
+import yux.compiler.ast.YxRange
+import yux.compiler.ast.YxStringTemplate
+import yux.compiler.ast.YxUnary
 import yux.compiler.ast.YxAssign
 import yux.compiler.ast.YxAsyncBlock
 import yux.compiler.ast.YxBlock
@@ -19,6 +30,7 @@ import yux.compiler.ast.YxMemberAccess
 import yux.compiler.ast.YxParallelBlock
 import yux.compiler.ast.YxReturn
 import yux.compiler.ast.YxStmt
+import yux.compiler.ast.YxSuper
 import yux.compiler.ast.YxThrow
 import yux.compiler.ast.YxTry
 import yux.compiler.ast.YxTypeCall
@@ -32,11 +44,15 @@ import yux.compiler.ir.CompareOp
 import yux.compiler.ir.IrCatch
 import yux.compiler.ir.IrExpr
 import yux.compiler.ir.IrJvmCall
+import yux.compiler.ir.IrMethod
 import yux.compiler.ir.IrMethodRef
+import yux.compiler.ir.IrParam
 import yux.compiler.ir.IrStmt
 import yux.compiler.ir.IrType
+import yux.compiler.sema.BuiltinFunctions
 import yux.compiler.sema.FileScope
 import yux.compiler.sema.FunctionSymbol
+import yux.compiler.sema.JvmClassSymbol
 import yux.compiler.sema.ParameterSymbol
 import yux.compiler.sema.PropertySymbol
 import yux.compiler.sema.SemaType
@@ -56,9 +72,10 @@ class StmtGen(
     private val irGen: IRGen,
 ) {
     // 无内部状态：单实例复用（gen 递归中高频访问）
-    private val exprGen: ExprGen = ExprGen(irGen, irGen.resolver)
+    internal val exprGen: ExprGen = ExprGen(irGen, irGen.resolver)
+    private val concurrentBlocks = ConcurrentBlockGen(this, irGen)
 
-    fun gen(stmt: YxStmt, g: MethodGen, fileScope: FileScope) {
+    internal fun gen(stmt: YxStmt, g: MethodGen, fileScope: FileScope) {
         when (stmt) {
             is YxBlock -> {
                 g.enterScope()
@@ -76,15 +93,13 @@ class StmtGen(
             is YxBreak -> g.currentLoop?.let { g.emit(IrStmt.Goto(it.second)) }
             is YxContinue -> g.currentLoop?.let { g.emit(IrStmt.Goto(it.first)) }
             is YxTry -> genTry(stmt, g, fileScope)
-            // M4 同步降级（R3）：async/parallel/unsafe 块体直接内联，语义后置
-            is YxAsyncBlock, is YxParallelBlock, is YxUnsafeBlock -> {
-                val block = when (stmt) {
-                    is YxAsyncBlock -> stmt.body
-                    is YxParallelBlock -> stmt.body
-                    else -> (stmt as YxUnsafeBlock).body
-                }
+            // 并发块（S-8.4）：async → Tasks.launch（不阻塞）；parallel → 语句级拆分并行 + 块尾 join；
+            // unsafe → v0.1 透传（与普通块同语义，无安全检查）。
+            is YxAsyncBlock -> concurrentBlocks.genAsyncBlock(stmt.body, g, fileScope)
+            is YxParallelBlock -> concurrentBlocks.genParallelBlock(stmt.body, g, fileScope)
+            is YxUnsafeBlock -> {
                 g.enterScope()
-                block.statements.forEach { gen(it, g, fileScope) }
+                stmt.body.statements.forEach { gen(it, g, fileScope) }
                 g.exitScope()
             }
             else -> Unit
@@ -167,7 +182,7 @@ class StmtGen(
         val rt = SemaType.resolveVar(receiverType ?: SemaType.ErrorT)
         when {
             rt is SemaType.Declared && rt.symbol is YxClassSymbol -> {
-                val prop = (rt.symbol as YxClassSymbol).property(target.name)
+                val prop = (rt.symbol as YxClassSymbol).propertyIncludingSuper(target.name)
                     ?: error("IRGen: 赋值目标属性不存在: ${target.name}")
                 val accessor = irGen.propertyAccessors[prop]
                     ?: error("IRGen: 属性访问器未登记: ${target.name}")
@@ -240,7 +255,7 @@ class StmtGen(
                         val irCall = irGen.functionMethods[sym]?.let { IrMethodRef(it) }
                             ?: IrJvmCall(
                                 name = sym.name,
-                                owner = "yux.core.CoreLib",
+                                owner = BuiltinFunctions.ownerOf(sym.name) ?: "yux.core.CoreLib",
                                 static = true,
                                 params = sym.params.map { TypeBridge.toIr(it.type) },
                                 retType = TypeBridge.toIr(sym.returnType ?: SemaType.UnitT),
@@ -277,7 +292,7 @@ class StmtGen(
                 val receiver = exprGen.gen(callee.receiver, g, fileScope)
                 val (irCall, receiverExpr, callArgs) = resolveMemberCall(rt, callee.name, receiver, args, argTypes)
                     ?: error("IRGen: 成员方法不存在: ${callee.name} on ${rt.render()}")
-                g.emit(IrStmt.Call(irCall, receiverExpr, callArgs, irCall.retType))
+                g.emit(IrStmt.Call(irCall, receiverExpr, callArgs, irCall.retType, isSuper = callee.receiver is YxSuper))
             }
             else -> error("IRGen: 不支持的调用目标: ${callee::class.simpleName}")
         }
@@ -296,7 +311,8 @@ class StmtGen(
     ): Triple<yux.compiler.ir.IrCallable, IrExpr?, List<IrExpr>>? = when {
         rt is SemaType.Declared && rt.symbol is YxClassSymbol -> {
             val sym = rt.symbol as YxClassSymbol
-            sym.functionsNamed(name).firstOrNull()?.let { fn ->
+            // 沿父类链解析（S-8.7.1，缺陷 9）
+            sym.functionsIncludingSuper(name).firstOrNull()?.let { fn ->
                 irGen.functionMethods[fn]?.let { Triple(IrMethodRef(it), receiver, args) }
             } ?: objectMethodCall(sym.name, name)?.let { Triple(it, receiver, args) }
         }
@@ -356,6 +372,74 @@ class StmtGen(
         val iterable = exprGen.gen(stmt.iterable, g, fileScope)
         val iterLocal = g.newLocal("iter", TypeBridge.toIr(rt))
         g.emit(IrStmt.LocalAssign(iterLocal, iterable))
+        val isString = rt is SemaType.Basic && rt.name == "String"
+        val arrayQn = (rt as? SemaType.Declared)?.symbol
+            ?.let { it as? JvmClassSymbol }?.qualifiedName?.takeIf { qn -> qn.startsWith("[") }
+        if (isString || arrayQn != null) {
+            // 字符串/数组走索引循环（S-6.4.1）：String 用 length()/charAt(i)；
+            // JVM 数组用 length 字段 + xALOAD（String/数组不实现 java.lang.Iterable，无 iterator()）
+            val lenLocal = g.newLocal("len", IrType.INT)
+            val length = if (isString) {
+                IrExpr.Invoke(
+                    IrJvmCall("length", "java.lang.String", static = false, params = emptyList(), retType = IrType.INT),
+                    IrExpr.LocalRead(iterLocal),
+                    emptyList(),
+                )
+            } else {
+                // 数组长度：Array.getLength（数组类不能作为字段所有者，fieldref 会 VerifyError）
+                IrExpr.Invoke(
+                    IrJvmCall(
+                        "getLength",
+                        "java.lang.reflect.Array",
+                        static = true,
+                        params = listOf(IrType.ANY),
+                        retType = IrType.INT,
+                    ),
+                    null,
+                    listOf(IrExpr.LocalRead(iterLocal)),
+                )
+            }
+            g.emit(IrStmt.LocalAssign(lenLocal, length))
+            val iLocal = g.newLocal("i", IrType.INT)
+            g.emit(IrStmt.LocalAssign(iLocal, IrExpr.Const(0)))
+            val condL = g.newLabel()
+            val bodyL = g.newLabel()
+            val endL = g.newLabel()
+            g.emit(IrStmt.Label(condL))
+            g.emit(
+                IrStmt.Branch(
+                    IrExpr.Compare(CompareOp.LT, IrExpr.LocalRead(iLocal), IrExpr.LocalRead(lenLocal)),
+                    bodyL,
+                    endL,
+                ),
+            )
+            g.emit(IrStmt.Label(bodyL))
+            g.enterScope()
+            val varLocal = g.newLocal(stmt.varName, TypeBridge.toIr(elemType))
+            g.declareLocal(stmt.varName, varLocal)
+            val element = if (isString) {
+                IrExpr.Invoke(
+                    IrJvmCall("charAt", "java.lang.String", static = false, params = listOf(IrType.INT), retType = IrType.CHAR),
+                    IrExpr.LocalRead(iterLocal),
+                    listOf(IrExpr.LocalRead(iLocal)),
+                )
+            } else {
+                IrExpr.ArrayLoad(
+                    IrExpr.LocalRead(iterLocal),
+                    IrExpr.LocalRead(iLocal),
+                    TypeBridge.toIr(elemType),
+                )
+            }
+            g.emit(IrStmt.LocalAssign(varLocal, element))
+            g.pushLoop(condL, endL)
+            gen(stmt.body, g, fileScope)
+            g.popLoop()
+            g.exitScope()
+            g.emit(IrStmt.LocalAssign(iLocal, IrExpr.Arith(ArithOp.ADD, IrExpr.LocalRead(iLocal), IrExpr.Const(1))))
+            g.emit(IrStmt.Goto(condL))
+            g.emit(IrStmt.Label(endL))
+            return
+        }
         val iteratorOwner = irGen.resolver.iteratorOwner(rt)
         val iteratorLocal = g.newLocal("iterator", IrType.Basic("Iterator"))
         g.emit(
@@ -480,7 +564,7 @@ class StmtGen(
     }
 
     /** 变量/参数符号携带的 SemaType（其他符号无类型）。 */
-    private fun symbolType(sym: Symbol): SemaType? = when (sym) {
+    internal fun symbolType(sym: Symbol): SemaType? = when (sym) {
         is VariableSymbol -> sym.type
         is ParameterSymbol -> sym.type
         else -> null

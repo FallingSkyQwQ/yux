@@ -16,7 +16,7 @@ class DisambiguationTest {
 
     @Test
     fun `type followed by parens is constructor`() {
-        val ast = dump(inFun("player = Player(\"Steve\", 20)"))
+        val ast = dump("Player {\n}\nfun main() {\n  player = Player(\"Steve\", 20)\n}")
         assertTrue(ast.contains("New(Player, [Str(\"\\\"Steve\\\"\"), Int(20)])"), ast)
     }
 

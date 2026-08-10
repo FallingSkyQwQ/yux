@@ -27,6 +27,8 @@ class IrClass(
     val interfaces: List<IrType>,
     /** JVM 注解（T-M5-6）：IRGen 从 AST 注解 + service 自动 `@YuxService` 填充。 */
     val annotations: List<IrAnnotation> = emptyList(),
+    /** 访问控制（S-5.1.4）：默认 public。 */
+    val visibility: yux.compiler.ast.YxVisibility = yux.compiler.ast.YxVisibility.PUBLIC,
     val fields: MutableList<IrField> = mutableListOf(),
     val properties: MutableList<IrProperty> = mutableListOf(),
     val methods: MutableList<IrMethod> = mutableListOf(),
@@ -46,6 +48,8 @@ data class IrField(
     val isFinal: Boolean,
     /** 归属类 JVM 名（后端 GET/PUTSTATIC 需要；实例字段为 null 时用当前类）。 */
     val owner: String? = null,
+    /** 访问控制（S-5.1.4）：默认 public。 */
+    val visibility: yux.compiler.ast.YxVisibility = yux.compiler.ast.YxVisibility.PUBLIC,
 )
 
 /** 属性（01-§5.2）：backing 字段 + getter/setter 方法（可自定义访问器，亦可只读）。 */
@@ -108,6 +112,8 @@ class IrMethod(
     val isSynthetic: Boolean,
     /** JVM 注解（T-M5-6）。 */
     val annotations: List<IrAnnotation> = emptyList(),
+    /** 访问控制（S-5.1.4）：默认 public。 */
+    val visibility: yux.compiler.ast.YxVisibility = yux.compiler.ast.YxVisibility.PUBLIC,
     val body: MutableList<IrStmt> = mutableListOf(),
     /** 所属类；Lambda 方法在生成后由 IRGen 回填。 */
     val owner: IrClass? = null,

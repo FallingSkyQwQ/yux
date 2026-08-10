@@ -104,6 +104,27 @@ class ClassPathSymbolProvider(
         return resolveClass(cls)
     }
 
+    /**
+     * JVM 数组类限定名 → 元素 SemaType（S-6.4.1 数组迭代）：`[I`→Int、`[Ljava.lang.String;`→String；
+     * 多维数组返回其直接元素（仍为数组类型）；非数组返回 null。
+     */
+    fun arrayElementType(qualifiedName: String): SemaType? {
+        if (!qualifiedName.startsWith("[")) return null
+        return when (qualifiedName) {
+            "[I" -> SemaType.INT
+            "[J" -> SemaType.LONG
+            "[F" -> SemaType.FLOAT
+            "[D" -> SemaType.DOUBLE
+            "[Z" -> SemaType.BOOLEAN
+            "[C" -> SemaType.CHAR
+            "[B" -> SemaType.BYTE
+            else -> {
+                val inner = qualifiedName.removePrefix("[").removePrefix("L").removeSuffix(";")
+                resolve(inner)?.let { SemaType.Declared(it, emptyList(), nullable = true) }
+            }
+        }
+    }
+
     /** 尝试在给定包名/简单名下解析。 */
     fun resolveIn(packageName: String, simpleName: String): JvmClassSymbol? =
         resolve("$packageName.$simpleName")
@@ -134,20 +155,20 @@ class ClassPathSymbolProvider(
         val staticMethods = mutableListOf<JvmMethodSymbol>()
         for (m in cls.methods) {
             if (m.isSynthetic) continue
-            val params = m.parameterTypes.map { jvmType(it) }
-            val ret = jvmType(m.returnType)
+            val params = m.genericParameterTypes.map { jvmType(it) }
+            val ret = jvmType(m.genericReturnType)
             val sym = JvmMethodSymbol(m.name, params, ret, java.lang.reflect.Modifier.isStatic(m.modifiers))
             if (sym.isStatic) staticMethods += sym else methods += sym
         }
         val fields = cls.fields.map { f ->
             JvmFieldSymbol(
                 name = f.name,
-                type = jvmType(f.type),
+                type = jvmType(f.genericType),
                 isStatic = java.lang.reflect.Modifier.isStatic(f.modifiers),
                 isFinal = java.lang.reflect.Modifier.isFinal(f.modifiers),
             )
         }
-        val constructors = cls.constructors.map { JvmConstructorSymbol(it.parameterTypes.map { t -> jvmType(t) }) }
+        val constructors = cls.constructors.map { JvmConstructorSymbol(it.genericParameterTypes.map { t -> jvmType(t) }) }
         symbol.methods = methods
         symbol.staticMethods = staticMethods
         symbol.fields = fields
@@ -163,7 +184,28 @@ class ClassPathSymbolProvider(
     }
 
     /** JVM 类型 → [SemaType]。基本类型非空；引用类型可空（S-8.1）。 */
-    private fun jvmType(cls: Class<*>): SemaType = when (cls.name) {
+    private fun jvmType(type: java.lang.reflect.Type): SemaType = when (type) {
+        is Class<*> -> jvmClassType(type)
+        // 泛型实参（GenericSignature）：`List<String>` → Declared(List, [String])（缺陷 5）
+        is java.lang.reflect.ParameterizedType -> {
+            val raw = type.rawType as? Class<*> ?: return SemaType.ANY
+            val args = type.actualTypeArguments.map { jvmType(it) }
+            val base = jvmClassType(raw)
+            if (base is SemaType.Declared) SemaType.Declared(base.symbol, args, base.nullable) else base
+        }
+        // 通配符 `? extends X`：取上界（`List<*>` → Object）
+        is java.lang.reflect.WildcardType -> {
+            val upper = type.upperBounds.firstOrNull() ?: return SemaType.ANY
+            jvmType(upper)
+        }
+        // 类型变量 `T`：擦除后为 Object，无法静态确定 → Any
+        is java.lang.reflect.TypeVariable<*> -> SemaType.ANY
+        // 泛型数组 `T[]`：Yux 无数组类型 → Any
+        is java.lang.reflect.GenericArrayType -> SemaType.ANY
+        else -> SemaType.ANY
+    }
+
+    private fun jvmClassType(cls: Class<*>): SemaType = when (cls.name) {
         "int" -> SemaType.INT
         "long" -> SemaType.LONG
         "float" -> SemaType.FLOAT
@@ -184,6 +226,8 @@ class ClassPathSymbolProvider(
         "java.lang.Throwable" -> SemaType.basic("Throwable", nullable = true)
         "java.lang.Exception" -> SemaType.basic("Exception", nullable = true)
         "java.lang.Iterable" -> SemaType.basic("Iterable", nullable = true)
+        // Kotlin 泛型签名中的 `Unit`（如 Function1<Any?, Unit>）→ 语义 Unit 类型
+        "kotlin.Unit" -> SemaType.UnitT
         else -> {
             val symbol = resolveClass(cls)
             SemaType.Declared(symbol, emptyList(), nullable = true)
