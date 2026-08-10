@@ -109,29 +109,66 @@ class YxClassSymbol(
     fun property(name: String): PropertySymbol? = members.filterIsInstance<PropertySymbol>().firstOrNull { it.name == name }
     fun functionsNamed(name: String): List<FunctionSymbol> = members.filterIsInstance<FunctionSymbol>().filter { it.name == name }
 
-    /** 沿父类链查找函数（含自身，S-8.7.1 成员继承）。 */
+    /**
+     * 沿父类链 + 接口（传递闭包）查找函数（含自身，S-8.7.1 成员继承 / S-8.7 接口实现）。
+     * 顺序：自身 → 父类链 → 接口；同名同元数按 sameSignature（元数）去重，自身/父类优先，
+     * 菱形接口继承不产生重复候选。
+     */
     fun functionsIncludingSuper(name: String): List<FunctionSymbol> {
         val result = mutableListOf<FunctionSymbol>()
+        val seenArity = mutableSetOf<Int>()
+        fun add(fns: List<FunctionSymbol>) {
+            for (fn in fns) {
+                if (seenArity.add(fn.params.size)) result += fn
+            }
+        }
         var cls: YxClassSymbol? = this
         while (cls != null) {
-            result += cls.functionsNamed(name)
+            add(cls.functionsNamed(name))
             cls = cls.superClassSymbol()
+        }
+        for (iface in interfaceSymbols()) {
+            add(iface.functionsNamed(name))
         }
         return result
     }
 
-    /** 沿父类链查找属性（含自身）。 */
+    /** 沿父类链 + 接口（传递闭包）查找属性（含自身）；自身/父类优先。 */
     fun propertyIncludingSuper(name: String): PropertySymbol? {
         var cls: YxClassSymbol? = this
         while (cls != null) {
             cls.property(name)?.let { return it }
             cls = cls.superClassSymbol()
         }
+        for (iface in interfaceSymbols()) {
+            iface.property(name)?.let { return it }
+        }
         return null
     }
 
     private fun superClassSymbol(): YxClassSymbol? =
         (superType as? SemaType.Declared)?.symbol as? YxClassSymbol
+
+    /**
+     * 实现的接口符号（传递闭包，按符号去重）。
+     * 仅展开 Yux 声明类（YxClassSymbol）——JVM 接口成员不经反射参与 Yux 成员查找，
+     * 如 `implements org.bukkit.event.Listener` 的处理器类不受影响。
+     */
+    fun interfaceSymbols(): List<YxClassSymbol> {
+        val result = mutableListOf<YxClassSymbol>()
+        val seen = mutableSetOf<YxClassSymbol>()
+        fun visit(cls: YxClassSymbol) {
+            for (t in cls.interfaces) {
+                val iface = (t as? SemaType.Declared)?.symbol as? YxClassSymbol ?: continue
+                if (seen.add(iface)) {
+                    result += iface
+                    visit(iface)
+                }
+            }
+        }
+        visit(this)
+        return result
+    }
 }
 
 /** 文件级作用域：包名 + 导入 + 本文件顶层声明。 */

@@ -41,7 +41,6 @@ object ErrorCodes {
 
     // ── W 系列：警告 ──────────────────────────────────────────────────────────
     const val TYPE_FALLBACK = "W0001"
-    const val UNUSED_DECLARATION = "W0002"
 
     // ── R 系列：REMIND ────────────────────────────────────────────────────────
     const val NULL_GUARD_INSERTED = "R0001"

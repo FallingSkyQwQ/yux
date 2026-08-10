@@ -30,8 +30,10 @@ import yux.compiler.ir.IrType
  */
 class AsmEmitter(
     private val module: IrModule,
-    private val resolver: JvmDescResolver = JvmDescResolver(),
+    /** 项目类解析加载器（M10 混合项目：Java/Kotlin 产物目录的 URLClassLoader）；默认编译管线自身加载器。 */
+    private val classLoader: ClassLoader = JvmDescResolver::class.java.classLoader,
 ) {
+    private val resolver: JvmDescResolver = JvmDescResolver(classLoader)
     private val ownerName: String get() = cls.name
     private lateinit var cls: IrClass
 
@@ -40,7 +42,7 @@ class AsmEmitter(
 
     fun emitClass(irClass: IrClass): ByteArray {
         cls = irClass
-        val cw = ClassWriter(ClassWriter.COMPUTE_FRAMES)
+        val cw = newClassWriter()
         val superInternal = irClass.superType?.let { JvmTypeMapper.internalName(it) } ?: "java/lang/Object"
         val interfaces = irClass.interfaces.map { JvmTypeMapper.internalName(it) }.toTypedArray()
         cw.visit(
@@ -191,6 +193,28 @@ class AsmEmitter(
             }
             av.visitEnd()
         }
+    }
+
+    /** COMPUTE_FRAMES 用类写入器：getCommonSuperClass 以注入 classLoader 解析（项目类帧合并正确）。 */
+    private fun newClassWriter(): ClassWriter = object : ClassWriter(ClassWriter.COMPUTE_FRAMES) {
+        override fun getCommonSuperClass(type1: String, type2: String): String {
+            val c1 = loadFrameClass(type1) ?: return "java/lang/Object"
+            val c2 = loadFrameClass(type2) ?: return "java/lang/Object"
+            if (c1.isAssignableFrom(c2)) return type1
+            if (c2.isAssignableFrom(c1)) return type2
+            if (c1.isInterface || c2.isInterface) return "java/lang/Object"
+            var cur = c1
+            while (!cur.isAssignableFrom(c2)) {
+                cur = cur.superclass
+            }
+            return cur.name.replace('.', '/')
+        }
+    }
+
+    private fun loadFrameClass(internal: String): Class<*>? = try {
+        Class.forName(internal.replace('/', '.'), false, classLoader)
+    } catch (_: Throwable) {
+        null
     }
 }
 

@@ -57,13 +57,22 @@ class Runner {
             if (compiler.diagnostics.hasErrors) {
                 return Compiled(emptyMap(), mainName(path), compiler.diagnostics)
             }
-            val module = compiler.generate(mapOf(path to decls), analysis)
-            val artifacts = AsmBackend().generate(module, compiler.diagnostics).toMutableList()
-            // T-M6-5：插件 CodegenHook 附加产物（与后端产物同容器，供 MemoryClassLoader 定义）
-            for (hook in pluginManager.hooks) {
-            for (artifact in hook.generate(module, compiler.diagnostics)) {
-                artifacts += AsmBackend.OutputArtifact(artifact.name, artifact.bytes)
-            }
+            val artifacts = try {
+                val module = compiler.generate(mapOf(path to decls), analysis)
+                val generated = AsmBackend(classLoader = compiler.classLoader).generate(module, compiler.diagnostics).toMutableList()
+                // T-M6-5：插件 CodegenHook 附加产物（与后端产物同容器，供 MemoryClassLoader 定义）
+                for (hook in pluginManager.hooks) {
+                    for (artifact in hook.generate(module, compiler.diagnostics)) {
+                        generated += AsmBackend.OutputArtifact(artifact.name, artifact.bytes)
+                    }
+                }
+                generated
+            } catch (e: RuntimeException) {
+                // IRGen/后端对语义合法但不支持的输入抛异常（async 内 return、'' 字面量、`..=`、
+                // ASM 生成失败等，均为 IllegalStateException/IllegalArgumentException/NumberFormatException
+                // 的 RuntimeException 子类）：转为 ERROR 诊断走正常错误路径，避免 CLI 崩溃堆栈。
+                compiler.diagnostics.error("编译错误: ${e.message}")
+                return Compiled(emptyMap(), mainName(path), compiler.diagnostics)
             }
             return Compiled(
                 artifacts.associate { it.className to it.bytes },

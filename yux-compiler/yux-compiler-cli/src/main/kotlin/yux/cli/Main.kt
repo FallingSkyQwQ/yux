@@ -217,8 +217,9 @@ private fun runIr(path: String?, pluginManager: PluginManager): Int {
         val module = compiler.generate(mapOf(source.path to decls), analysis)
         print(IrPrinter.dump(module))
         return 0
-    } catch (e: IllegalStateException) {
-        // IRGen 对语义合法但不支持的输入以 error() 抛异常：转为诊断而非堆栈
+    } catch (e: RuntimeException) {
+        // IRGen/后端对语义合法但不支持的输入抛异常（async 内 return、'' 字面量、`..=`、
+        // ASM 生成失败等）：转为诊断输出而非堆栈。
         System.err.println("IRGen 错误: ${e.message}")
         return 1
     }

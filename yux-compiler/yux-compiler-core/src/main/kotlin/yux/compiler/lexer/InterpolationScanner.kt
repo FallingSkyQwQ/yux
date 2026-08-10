@@ -29,8 +29,29 @@ class InterpolationScanner(private val lexer: Lexer) {
             when (lexer.peek()) {
                 '\\' -> {
                     if (sb.isEmpty()) segmentPos = lexer.pos()
+                    val escPos = lexer.pos()
                     sb.append(lexer.advance())
-                    if (!lexer.eof()) sb.append(lexer.advance())
+                    when {
+                        lexer.eof() -> Unit // 尾部反斜杠：字符串未闭合诊断在循环外处理
+                        lexer.peek() in lexer.legalEscapes -> sb.append(lexer.advance())
+                        lexer.peek() == 'u' -> {
+                            val hexOk = (1..4).all { lexer.isHexDigit(lexer.peek(it)) }
+                            if (hexOk) {
+                                repeat(5) { sb.append(lexer.advance()) }
+                            } else {
+                                lexer.diagnostics.error(
+                                    "非法转义 '\\u': 需要 4 位十六进制数字（01-§2.5）",
+                                    escPos,
+                                )
+                                sb.append(lexer.advance())
+                            }
+                        }
+                        else -> {
+                            val bad = lexer.peek()
+                            lexer.diagnostics.error("非法转义 '\\$bad'（01-§2.5）", escPos)
+                            sb.append(lexer.advance())
+                        }
+                    }
                 }
                 '$' -> {
                     interpolated = true

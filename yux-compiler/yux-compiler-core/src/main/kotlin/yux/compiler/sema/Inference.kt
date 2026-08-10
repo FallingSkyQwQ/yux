@@ -87,9 +87,11 @@ class Inference(private val diagnostics: DiagnosticSink) {
         if (actual === expected || (actual is SemaType.InferenceVar && expected is SemaType.InferenceVar && actual.id == expected.id)) {
             return actual
         }
-        // 推断变量：约束收集
+        // 推断变量：约束收集（S-4.5.4 环防护：expected 已（传递）求解回 actual 时不再绑定）
         if (actual is SemaType.InferenceVar) {
-            actual.solution = expected
+            val resolvedExpected = expected.resolveInferenceVar()
+            if (resolvedExpected === actual) return actual
+            actual.solution = resolvedExpected
             return expected
         }
         if (expected is SemaType.InferenceVar) {
@@ -110,11 +112,20 @@ class Inference(private val diagnostics: DiagnosticSink) {
         diagnostics.error("类型推断失败: $detail", position, ErrorCodes.INFERENCE_FAILURE)
     }
 
-    /** 追踪推断变量解链。 */
-    private fun SemaType.resolveInferenceVar(): SemaType = when (this) {
+    /**
+     * 追踪推断变量解链（S-4.5.4，含环检测，镜像 [SemaType.resolveVar]）：
+     * 遇环返回 [SemaType.ErrorT]，避免无限递归 → StackOverflow。
+     */
+    private fun SemaType.resolveInferenceVar(seen: MutableSet<Int> = mutableSetOf()): SemaType = when (this) {
         is SemaType.InferenceVar -> {
             val s = solution
-            if (s == null) this else s.resolveInferenceVar()
+            if (s == null) {
+                this
+            } else if (!seen.add(id)) {
+                SemaType.ErrorT
+            } else {
+                s.resolveInferenceVar(seen)
+            }
         }
         else -> this
     }

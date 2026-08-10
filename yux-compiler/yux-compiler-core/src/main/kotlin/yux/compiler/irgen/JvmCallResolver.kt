@@ -163,7 +163,7 @@ class JvmCallResolver(
         "Byte" -> "java.lang.Byte"
         "Any" -> "java.lang.Object"
         "Iterable" -> "java.lang.Iterable"
-        "Range" -> "java.lang.Integer" // 镜像 TypeChecker.jvmForBasic（Range 成员映射到 Integer）
+        "Range" -> "yux.core.Range" // 镜像 TypeChecker.jvmForBasic（Range 成员映射到 yux.core.Range）
         else -> null
     }
 }

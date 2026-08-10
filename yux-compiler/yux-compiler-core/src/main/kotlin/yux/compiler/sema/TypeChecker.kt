@@ -59,6 +59,7 @@ import yux.compiler.ast.YxWhile
 import yux.compiler.ast.SourceSpan
 import yux.compiler.diag.DiagnosticSink
 import yux.compiler.diag.ErrorCodes
+import yux.compiler.lexer.SourcePosition
 import yux.compiler.lowering.GuardPoint
 
 /**
@@ -330,6 +331,14 @@ class TypeChecker(
         if (existing != null) {
             // S-6.1.1：已在作用域链声明 → 赋值语义
             existing.reassigned = true
+            if (existing.isVal) {
+                // val（参数等）被重声明视为 val 赋值，与 checkAssign 的 E0020 一致（S-6.1.1）
+                diagnostics.error(
+                    "只读变量 '${stmt.name}' 不可赋值（S-6.1.1）",
+                    stmt.span.start,
+                    ErrorCodes.VAL_ASSIGNMENT,
+                )
+            }
             val valueType = stmt.initializer?.let { typeOf(it, expected = existing.type) } ?: existing.type ?: SemaType.ErrorT
             if (!valueType.isError && existing.type != null) {
                 inference.expectAssignable(valueType, existing.type!!, stmt.span.start, "变量 '${stmt.name}'")
@@ -368,7 +377,17 @@ class TypeChecker(
             typeOf(stmt.value)
             return
         }
-        val valueType = typeOf(stmt.value, expected = expectedAssignTargetType(stmt.target))
+        // 复合赋值（`+=` 等）：按 `x = x op e` 展开检查（S-7.5）——右操作数先以目标类型为
+        // 期望收窄字面量（S-7.5.4，`f += 2.5` 不得提升为 Double），再做二元运算类型检查
+        // （数字提升 / String 拼接，S-7.5.1/S-7.6.1），结果类型须可赋值回目标。
+        // `s += 1`（String 拼接）合法；`x += true`（Int+Boolean）报 INVALID_OPERATOR_OPERAND。
+        val targetType = expectedAssignTargetType(stmt.target)
+        val valueType = if (stmt.op != "=" && targetType != null) {
+            val narrowed = typeOf(stmt.value, expected = targetType)
+            binaryOpResult(stmt.op.dropLast(1), targetType, narrowed, stmt.span)
+        } else {
+            typeOf(stmt.value, expected = targetType)
+        }
         when (val target = stmt.target) {
             is YxIdentifier -> {
                 val local = lookupVariable(target.name)
@@ -751,7 +770,7 @@ class TypeChecker(
     }
 
     private fun computeType(expr: YxExpr, expected: SemaType?): SemaType = when (expr) {
-        is YxIntLiteral -> literalIntType(expr.text, expected)
+        is YxIntLiteral -> literalIntType(expr.text, expected, expr.span.start)
         is YxFloatLiteral -> literalFloatType(expr.text, expected)
         is YxCharLiteral -> SemaType.CHAR
         is YxBoolLiteral -> SemaType.BOOLEAN
@@ -794,7 +813,7 @@ class TypeChecker(
             if (resolved.isError) SemaType.ErrorT else resolved
         }
         is YxBinary -> typeOfBinary(expr, expected)
-        is YxUnary -> typeOfUnary(expr)
+        is YxUnary -> typeOfUnary(expr, expected)
         is YxLambda -> typeOfLambda(expr, expected)
         is YxBlockLambda -> typeOfBlockLambda(expr, expected)
         is YxParen -> typeOf(expr.expr, expected)
@@ -997,7 +1016,10 @@ class TypeChecker(
         "Byte" -> classPath.resolve("java.lang.Byte")
         "Any" -> classPath.resolve("java.lang.Object")
         "Iterable" -> classPath.resolve("java.lang.Iterable")
-        "Range" -> classPath.resolve("java.lang.Integer")
+        // 与 SymbolTable.Builtins / SemaType.RANGE 对齐（缺陷修复）：Range 成员映射到
+        // yux.core.Range（此前误映射 java.lang.Integer，使区间值错误解析 Integer 的方法；
+        // for 迭代不依赖此映射——StmtGen 经 iteratorOwner 直接定位 yux.core.Range）
+        "Range" -> classPath.resolve("yux.core.Range")
         else -> null
     }
 
@@ -1413,68 +1435,71 @@ class TypeChecker(
             if (expr.right is YxNullLiteral) {
                 val left = typeOf(expr.left)
                 val right = typeOf(expr.right, expected = left)
-                return equalityResult(expr, left, right)
+                return equalityResult(expr.span, left, right)
             }
             if (expr.left is YxNullLiteral) {
                 val right = typeOf(expr.right)
                 val left = typeOf(expr.left, expected = right)
-                return equalityResult(expr, left, right)
+                return equalityResult(expr.span, left, right)
             }
         }
         val left = typeOf(expr.left)
         val right = typeOf(expr.right)
-        when (expr.op) {
-            "+" -> {
-                if (left is SemaType.Basic && left.name == "String" || right is SemaType.Basic && right.name == "String") {
-                    // 字符串拼接：另一侧须为 String 或数字（S-7.6.1），防 `print "a" + "b"` 落到 Unit
-                    val otherOk = left.isError || right.isError ||
-                        (left is SemaType.Basic && left.name == "String") ||
-                        (right is SemaType.Basic && right.name == "String") ||
-                        SemaType.isNumeric(left) && SemaType.isNumeric(right)
-                    if (!otherOk) {
-                        diagnostics.error("字符串拼接需要 String 或数字操作数（S-7.6.1），实际 ${left.render()} 与 ${right.render()}", expr.span.start, ErrorCodes.INVALID_OPERATOR_OPERAND)
-                    }
-                    return SemaType.STRING
+        return binaryOpResult(expr.op, left, right, expr.span)
+    }
+
+    /** 二元运算结果类型与操作数校验（S-7.5/S-7.6）：复合赋值 `x op= e` 展开复用同一套规则。 */
+    private fun binaryOpResult(op: String, left: SemaType, right: SemaType, span: SourceSpan): SemaType = when (op) {
+        "+" -> {
+            if (left is SemaType.Basic && left.name == "String" || right is SemaType.Basic && right.name == "String") {
+                // 字符串拼接：另一侧须为 String 或数字（S-7.6.1），防 `print "a" + "b"` 落到 Unit
+                val otherOk = left.isError || right.isError ||
+                    (left is SemaType.Basic && left.name == "String") ||
+                    (right is SemaType.Basic && right.name == "String") ||
+                    SemaType.isNumeric(left) && SemaType.isNumeric(right)
+                if (!otherOk) {
+                    diagnostics.error("字符串拼接需要 String 或数字操作数（S-7.6.1），实际 ${left.render()} 与 ${right.render()}", span.start, ErrorCodes.INVALID_OPERATOR_OPERAND)
                 }
-                return arithmeticResult(expr, left, right, "加法")
+                return SemaType.STRING
             }
-            "-", "*", "/", "%" -> return arithmeticResult(expr, left, right, "算术")
-            "<", ">", "<=", ">=" -> {
-                if (!(SemaType.isNumeric(left) && SemaType.isNumeric(right))) {
-                    diagnostics.error("比较运算需要数字操作数（S-7.5.1）", expr.span.start, ErrorCodes.INVALID_OPERATOR_OPERAND)
-                }
-                return SemaType.BOOLEAN
+            arithmeticResult(span, left, right, "加法")
+        }
+        "-", "*", "/", "%" -> arithmeticResult(span, left, right, "算术")
+        "<", ">", "<=", ">=" -> {
+            if (!(SemaType.isNumeric(left) && SemaType.isNumeric(right))) {
+                diagnostics.error("比较运算需要数字操作数（S-7.5.1）", span.start, ErrorCodes.INVALID_OPERATOR_OPERAND)
             }
-            "==", "!=" -> return equalityResult(expr, left, right)
-            "&&", "||" -> {
-                if (!left.isError && !TypeAssignability.sameBase(left, SemaType.BOOLEAN)) {
-                    diagnostics.error("'&&'/'||' 需要 Boolean 操作数", expr.span.start, ErrorCodes.INVALID_OPERATOR_OPERAND)
-                }
-                if (!right.isError && !TypeAssignability.sameBase(right, SemaType.BOOLEAN)) {
-                    diagnostics.error("'&&'/'||' 需要 Boolean 操作数", expr.span.start, ErrorCodes.INVALID_OPERATOR_OPERAND)
-                }
-                return SemaType.BOOLEAN
+            SemaType.BOOLEAN
+        }
+        "==", "!=" -> equalityResult(span, left, right)
+        "&&", "||" -> {
+            if (!left.isError && !TypeAssignability.sameBase(left, SemaType.BOOLEAN)) {
+                diagnostics.error("'&&'/'||' 需要 Boolean 操作数", span.start, ErrorCodes.INVALID_OPERATOR_OPERAND)
             }
-            ".." -> return SemaType.RANGE
-            else -> {
-                diagnostics.error("未知运算符 '${expr.op}'", expr.span.start, ErrorCodes.INVALID_OPERATOR_OPERAND)
-                return SemaType.ErrorT
+            if (!right.isError && !TypeAssignability.sameBase(right, SemaType.BOOLEAN)) {
+                diagnostics.error("'&&'/'||' 需要 Boolean 操作数", span.start, ErrorCodes.INVALID_OPERATOR_OPERAND)
             }
+            SemaType.BOOLEAN
+        }
+        ".." -> SemaType.RANGE
+        else -> {
+            diagnostics.error("未知运算符 '$op'", span.start, ErrorCodes.INVALID_OPERATOR_OPERAND)
+            SemaType.ErrorT
         }
     }
 
-    private fun equalityResult(expr: YxBinary, left: SemaType, right: SemaType): SemaType {
+    private fun equalityResult(span: SourceSpan, left: SemaType, right: SemaType): SemaType {
         if (!left.isError && !right.isError && !TypeAssignability.sameBase(left, right) && !comparableNull(left, right)) {
             diagnostics.error(
                 "'${left.render()}' 与 '${right.render()}' 不可比较（S-7.5.2）",
-                expr.span.start,
+                span.start,
                 ErrorCodes.INVALID_OPERATOR_OPERAND,
             )
         }
         return SemaType.BOOLEAN
     }
 
-    private fun arithmeticResult(expr: YxBinary, left0: SemaType, right0: SemaType, what: String): SemaType {
+    private fun arithmeticResult(span: SourceSpan, left0: SemaType, right0: SemaType, what: String): SemaType {
         val left = SemaType.resolveVar(left0)
         val right = SemaType.resolveVar(right0)
         if (left.isError || right.isError) return SemaType.ErrorT
@@ -1488,14 +1513,14 @@ class TypeChecker(
                 else -> SemaType.INT
             }
         }
-        diagnostics.error("${what}需要数字操作数（S-7.5.1），实际 ${left.render()} 与 ${right.render()}", expr.span.start, ErrorCodes.INVALID_OPERATOR_OPERAND)
+        diagnostics.error("${what}需要数字操作数（S-7.5.1），实际 ${left.render()} 与 ${right.render()}", span.start, ErrorCodes.INVALID_OPERATOR_OPERAND)
         return SemaType.ErrorT
     }
 
     private fun comparableNull(left: SemaType, right: SemaType): Boolean =
         left is SemaType.NothingT || right is SemaType.NothingT
 
-    private fun typeOfUnary(expr: YxUnary): SemaType {
+    private fun typeOfUnary(expr: YxUnary, expected: SemaType?): SemaType {
         val operand = typeOf(expr.operand)
         if (operand.isError) return SemaType.ErrorT
         return when (expr.op) {
@@ -1508,14 +1533,35 @@ class TypeChecker(
             "-" -> {
                 if (!SemaType.isNumeric(operand)) {
                     diagnostics.error("一元 '-' 需要数字操作数", expr.span.start, ErrorCodes.INVALID_OPERATOR_OPERAND)
+                    return SemaType.ErrorT
                 }
-                operand
+                // S-7.5.4：Byte 目标 + `-Int 字面量` 按取负后的有效值收窄（-128 合法、-129 非法）
+                negatedByteNarrowing(expr, expected) ?: operand
             }
             else -> {
                 diagnostics.error("未知一元运算符 '${expr.op}'", expr.span.start, ErrorCodes.INVALID_OPERATOR_OPERAND)
                 SemaType.ErrorT
             }
         }
+    }
+
+    /** `-Int 字面量` 赋给 Byte：按取负后的值校验范围，避免幅值误判（S-2.5.1/S-7.5.4）。 */
+    private fun negatedByteNarrowing(expr: YxUnary, expected: SemaType?): SemaType? {
+        val expectedNum = expected as? SemaType.Basic ?: return null
+        if (expectedNum.nullable || expectedNum.name != "Byte") return null
+        val lit = expr.operand as? YxIntLiteral ?: return null
+        val clean = lit.text.replace("_", "")
+        if (clean.endsWith("L") || clean.endsWith("l")) return null
+        val magnitude = parseIntegerLiteral(clean) ?: return null
+        if (magnitude > 128) {
+            diagnostics.error(
+                "字面量 ${-magnitude} 超出 Byte 范围（-128..127）",
+                expr.span.start,
+                ErrorCodes.TYPE_MISMATCH,
+            )
+            return SemaType.ErrorT
+        }
+        return expectedNum
     }
 
     private fun typeOfLambda(expr: YxLambda, expected: SemaType?): SemaType {
@@ -1590,16 +1636,38 @@ class TypeChecker(
 
     // ── 字面量 / 辅助 ───────────────────────────────────────────────────────
 
-    private fun literalIntType(text: String, expected: SemaType?): SemaType {
+    private fun literalIntType(text: String, expected: SemaType?, position: SourcePosition?): SemaType {
         val clean = text.replace("_", "")
         val isLong = clean.endsWith("L") || clean.endsWith("l")
+        val digits = clean.removeSuffix("L").removeSuffix("l")
         val natural = if (isLong) SemaType.LONG else SemaType.INT
-        val value = parseIntegerLiteral(clean) ?: return SemaType.ErrorT
+        val value = parseIntegerLiteral(clean)
+        if (value == null) {
+            // 超出 Long 范围：报错而非静默失败/IRGen 崩溃（S-2.5.1）
+            diagnostics.error(
+                "整数溢出: 字面量 '$text' 超出 Long 范围（-9223372036854775808..9223372036854775807）",
+                position,
+                ErrorCodes.TYPE_MISMATCH,
+            )
+            return SemaType.ErrorT
+        }
+        val isDecimal = !digits.startsWith("0x") && !digits.startsWith("0X") &&
+            !digits.startsWith("0b") && !digits.startsWith("0B")
+        // S-2.5.1：十进制超出 Int 范围自动提升 Long；hex/binary 不提升，超出即报错
+        if (!isLong && (value > Int.MAX_VALUE || value < Int.MIN_VALUE)) {
+            if (isDecimal) return SemaType.LONG
+            diagnostics.error(
+                "字面量 $value 超出 Int 范围（-2147483648..2147483647）",
+                position,
+                ErrorCodes.TYPE_MISMATCH,
+            )
+            return SemaType.ErrorT
+        }
         // 字面量按目标类型收窄（S-7.5.4），超出目标范围报错（S-2.5.1）
         val expectedNum = expected as? SemaType.Basic
         if (!isLong && expectedNum != null && expectedNum.name in SemaType.NUMERIC_NAMES && !expectedNum.nullable) {
             if (expectedNum.name == "Byte" && (value < -128 || value > 127)) {
-                diagnostics.error("字面量 $value 超出 Byte 范围（-128..127）", null, ErrorCodes.TYPE_MISMATCH)
+                diagnostics.error("字面量 $value 超出 Byte 范围（-128..127）", position, ErrorCodes.TYPE_MISMATCH)
                 return SemaType.ErrorT
             }
             return expectedNum
@@ -1694,12 +1762,10 @@ class TypeChecker(
     }
 
     private fun resolveFunctions(name: String): List<FunctionSymbol> {
+        // 沿类/父类链解析（S-8.7.1）：复用 Symbols.kt 的 functionsIncludingSuper（接口成员
+        // 继承由该辅助实现），避免本文件再维护一份父类链遍历
         val result = mutableListOf<FunctionSymbol>()
-        var cls = currentClass
-        while (cls != null) {
-            result += cls.functionsNamed(name)
-            cls = superClassOf(cls)
-        }
+        currentClass?.let { result += it.functionsIncludingSuper(name) }
         val file = currentFile
         if (file != null) {
             file.topLevelFunctions[name]?.let { result += it }

@@ -15,8 +15,13 @@ import java.lang.reflect.Method
  *
  * 策略：优先反射 `Class.forName(owner)` 按名+实参类型匹配（处理 Math.max 重载）；
  * 反射失败（用户类不在编译类路径）时回退为按 IR 类型合成描述符。
+ *
+ * M11：以注入 [classLoader] 解析项目类（M10 混合项目 Java/Kotlin 产物目录的 URLClassLoader）；
+ * 默认保持编译管线自身类加载器，不传时行为不变。
  */
-class JvmDescResolver {
+class JvmDescResolver(
+    private val classLoader: ClassLoader = JvmDescResolver::class.java.classLoader,
+) {
 
     /** 解析后的 JVM 方法（含真实返回描述符供发射器适配）。 */
     data class ResolvedMethod(
@@ -104,7 +109,7 @@ class JvmDescResolver {
             JvmTypeMapper.descriptor(call.retType)
 
     private fun forName(dotted: String): Class<*>? = try {
-        Class.forName(dotted, false, JvmDescResolver::class.java.classLoader)
+        Class.forName(dotted, false, classLoader)
     } catch (_: ClassNotFoundException) {
         null
     } catch (_: LinkageError) {

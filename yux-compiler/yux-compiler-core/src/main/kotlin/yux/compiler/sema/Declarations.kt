@@ -309,14 +309,8 @@ class Declarations(
 
     private fun validateOverrides(sym: YxClassSymbol) {
         for (fn in sym.functions().filter { it.isOverride }) {
-            // S-8.7.2：父类/接口为 Yux 类或 JVM 类均可
-            val parent = (sym.superType as? SemaType.Declared)?.symbol
-            val overridden = when (parent) {
-                is YxClassSymbol -> parent.functionsNamed(fn.name).any { it.params.size == fn.params.size }
-                is JvmClassSymbol -> parent.allMethods().any { it.name == fn.name && it.params.size == fn.params.size }
-                else -> false
-            }
-            if (!overridden) {
+            // S-8.7.2：父类链 / 接口（均为 Yux 类或 JVM 类）中存在同名同元数成员即合法
+            if (!hasInheritedFunction(sym, fn.name, fn.params.size)) {
                 diagnostics.error(
                     "override 函数 '${fn.name}' 无对应父类成员",
                     fn.span?.start,
@@ -324,5 +318,20 @@ class Declarations(
                 )
             }
         }
+    }
+
+    /** override 目标查找：父类链（含父类自身接口）+ 本类接口（传递）。 */
+    private fun hasInheritedFunction(sym: YxClassSymbol, name: String, arity: Int): Boolean {
+        when (val parent = (sym.superType as? SemaType.Declared)?.symbol) {
+            // 父类链 + 父类接口：父类自身的 functionsIncludingSuper 已覆盖其祖先链与接口
+            is YxClassSymbol -> if (parent.functionsIncludingSuper(name).any { it.params.size == arity }) return true
+            is JvmClassSymbol -> if (parent.allMethods().any { it.name == name && it.params.size == arity }) return true
+            else -> Unit
+        }
+        // 本类接口（传递闭包，仅 Yux 声明类；JVM 接口不要求 override）
+        for (iface in sym.interfaceSymbols()) {
+            if (iface.functionsNamed(name).any { it.params.size == arity }) return true
+        }
+        return false
     }
 }

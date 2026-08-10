@@ -221,18 +221,76 @@ class Lexer(
         val start = offset
         val startPos = pos()
         advance() // '
+        val content = StringBuilder()
         var closed = false
         while (!eof()) {
             val c = advance()
             if (c == '\\') {
-                if (!eof()) advance()
+                content.append(c)
+                if (eof()) break
+                content.append(advance())
             } else if (c == '\'') {
                 closed = true
                 break
+            } else {
+                content.append(c)
             }
         }
-        if (!closed) diagnostics.error("Unterminated character literal", startPos)
+        if (!closed) {
+            diagnostics.error("Unterminated character literal", startPos)
+        } else {
+            validateCharContent(content.toString(), startPos)
+        }
         return Token(startPos, TokenKind.CHAR_LITERAL, text.substring(start, offset))
+    }
+
+    /** 合法转义字符表（01-§2.5 Escape；`u` 需另带恰好 4 位十六进制数字）。 */
+    internal val legalEscapes: Set<Char> = setOf('n', 't', 'r', 'b', 'f', '\\', '\'', '"', '$', '0')
+
+    /**
+     * 校验字符字面量内容（01-§2.5 CharLiteral）：转义必须合法，且解码后恰好一个字符。
+     * 违规仅报告诊断（ERROR），不抛异常；词法层错误恢复不中断。
+     */
+    private fun validateCharContent(content: String, pos: SourcePosition) {
+        var count = 0
+        var i = 0
+        while (i < content.length) {
+            if (content[i] == '\\') {
+                val len = escapeLength(content, i)
+                if (len < 0) {
+                    if (content.getOrNull(i + 1) == 'u') {
+                        diagnostics.error("非法转义 '\\u': 需要 4 位十六进制数字（01-§2.5）", pos)
+                    } else {
+                        val next = content.getOrNull(i + 1) ?: '\\'
+                        diagnostics.error("非法转义 '\\$next'（01-§2.5）", pos)
+                    }
+                    i += if (content.getOrNull(i + 1) == 'u') 6 else 2
+                } else {
+                    i += len
+                }
+                count++
+            } else {
+                if (content[i] == '\n') diagnostics.error("字符字面量不能包含换行（01-§2.5）", pos)
+                i++
+                count++
+            }
+        }
+        if (count != 1) {
+            diagnostics.error("字符字面量必须恰好包含一个字符（01-§2.5）", pos)
+        }
+    }
+
+    /**
+     * 返回以 `content[i]`（`\`）起始的合法转义总长度（2 或 6）；不合法返回 -1。
+     */
+    internal fun escapeLength(content: String, i: Int): Int {
+        val next = content.getOrNull(i + 1) ?: return -1
+        if (next in legalEscapes) return 2
+        if (next == 'u') {
+            val hex = content.substring(i + 2, minOf(i + 6, content.length))
+            return if (hex.length == 4 && hex.all(::isHexDigit)) 6 else -1
+        }
+        return -1
     }
 
     private fun scanRawString(): Token {
@@ -278,7 +336,7 @@ class Lexer(
         return null
     }
 
-    private fun isHexDigit(c: Char): Boolean =
+    internal fun isHexDigit(c: Char): Boolean =
         c.isDigit() || c in 'a'..'f' || c in 'A'..'F'
 
     private fun isBinDigit(c: Char): Boolean = c == '0' || c == '1'
