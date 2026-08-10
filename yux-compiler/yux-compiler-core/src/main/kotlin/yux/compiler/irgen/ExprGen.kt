@@ -300,7 +300,7 @@ class ExprGen(
 
     /**
      * 内置函数（M3 注册的 decl==null 函数）→ 运行时宿主：
-     * `print`/`println` → yux.core.CoreLib；`serialize`/`deserialize`（S-8.3）→ yux.json.Json。
+     * `print`/`println` → yux.core.CoreLib；`serialize`/`deserialize`（S-8.3）→ yux.serializer.YuxSerializer。
      */
     private fun builtinCall(sym: FunctionSymbol): IrCallable = IrJvmCall(
         name = sym.name,

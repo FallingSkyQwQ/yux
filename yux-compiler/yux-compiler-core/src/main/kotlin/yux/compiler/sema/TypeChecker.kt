@@ -1789,7 +1789,7 @@ class TypeChecker(
  * 内置函数（yux.core 最小集，01-§10.1）：标准库尚未实现前由语义层直接提供，
  * 确保 `print "..."` 等示例可分析通过。
  *
- * serialize/deserialize（S-8.3）映射 yux.json.Json；print/println 映射 yux.core.CoreLib。
+ * serialize/deserialize（S-8.3）映射 yux.serializer.YuxSerializer；print/println 映射 yux.core.CoreLib。
  */
 object BuiltinFunctions {
     private val ANY = SemaType.ANY
@@ -1808,7 +1808,7 @@ object BuiltinFunctions {
     /** 内置函数 → 运行时宿主（与 IRGen builtinCall 的路由一致）。 */
     fun ownerOf(name: String): String? = when (name) {
         "print", "println" -> "yux.core.CoreLib"
-        "serialize", "deserialize" -> "yux.json.Json"
+        "serialize", "deserialize" -> "yux.serializer.YuxSerializer"
         else -> null
     }
 }
