@@ -60,28 +60,30 @@ object BasicOpt {
     }
 
     private fun foldStmt(stmt: IrStmt): IrStmt = when (stmt) {
-        is IrStmt.LocalAssign -> IrStmt.LocalAssign(stmt.local, foldExpr(stmt.value))
-        is IrStmt.Call -> IrStmt.Call(stmt.callee, stmt.receiver?.let(::foldExpr), stmt.args.map(::foldExpr), stmt.ret)
-        is IrStmt.New -> IrStmt.New(stmt.type, stmt.args.map(::foldExpr))
-        is IrStmt.Eval -> IrStmt.Eval(foldExpr(stmt.expr))
-        is IrStmt.FieldAccess -> stmt.value?.let { IrStmt.FieldAccess(stmt.receiver, stmt.field, stmt.write, foldExpr(it)) } ?: stmt
+        // 重建时保留 line（T-M12 LineNumberTable）与 Call.isSuper
+        is IrStmt.LocalAssign -> IrStmt.LocalAssign(stmt.local, foldExpr(stmt.value), stmt.line)
+        is IrStmt.Call -> IrStmt.Call(stmt.callee, stmt.receiver?.let(::foldExpr), stmt.args.map(::foldExpr), stmt.ret, stmt.isSuper, stmt.line)
+        is IrStmt.New -> IrStmt.New(stmt.type, stmt.args.map(::foldExpr), stmt.line)
+        is IrStmt.Eval -> IrStmt.Eval(foldExpr(stmt.expr), stmt.line)
+        is IrStmt.FieldAccess -> stmt.value?.let { IrStmt.FieldAccess(stmt.receiver, stmt.field, stmt.write, foldExpr(it), stmt.line) } ?: stmt
         is IrStmt.Branch -> foldBranch(stmt)
-        is IrStmt.Return -> stmt.value?.let { IrStmt.Return(foldExpr(it)) } ?: stmt
-        is IrStmt.Throw -> IrStmt.Throw(foldExpr(stmt.value))
-        is IrStmt.Monitor -> IrStmt.Monitor(foldExpr(stmt.expr), stmt.enter)
+        is IrStmt.Return -> stmt.value?.let { IrStmt.Return(foldExpr(it), stmt.line) } ?: stmt
+        is IrStmt.Throw -> IrStmt.Throw(foldExpr(stmt.value), stmt.line)
+        is IrStmt.Monitor -> IrStmt.Monitor(foldExpr(stmt.expr), stmt.enter, stmt.line)
         is IrStmt.Try -> IrStmt.Try(
             stmt.body.map(::foldStmt),
             stmt.catches.map { yux.compiler.ir.IrCatch(it.paramName, it.type, it.body.map(::foldStmt)) },
             stmt.finallyBody?.map(::foldStmt),
+            stmt.line,
         )
         else -> stmt // Label / Goto / Nop
     }
 
     /** `Branch(Const, L1, L2)` → `Goto(目标)`。 */
     private fun foldBranch(stmt: IrStmt.Branch): IrStmt {
-        val cond = foldExpr(stmt.cond) as? IrExpr.Const ?: return IrStmt.Branch(stmt.cond, stmt.then, stmt.elseLabel)
+        val cond = foldExpr(stmt.cond) as? IrExpr.Const ?: return IrStmt.Branch(stmt.cond, stmt.then, stmt.elseLabel, stmt.line)
         val value = cond.value as? Boolean ?: return stmt
-        return IrStmt.Goto(if (value) stmt.then else stmt.elseLabel)
+        return IrStmt.Goto(if (value) stmt.then else stmt.elseLabel, stmt.line)
     }
 
     private fun foldExpr(expr: IrExpr): IrExpr {

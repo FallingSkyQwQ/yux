@@ -60,11 +60,17 @@ class AsmEmitter(
         } else {
             Opcodes.ACC_PUBLIC
         }
+        // T-M12 Signature 属性：泛型类型参数/实参（`Box<T>` → `<T:Ljava/lang/Object;>Ljava/lang/Object;`）
+        val signature = JvmTypeMapper.classSignature(
+            irClass.typeParams,
+            if (irClass.isInterface) null else irClass.superType,
+            irClass.interfaces,
+        )
         cw.visit(
             Opcodes.V21,
             access,
             ownerName,
-            null,
+            signature,
             superInternal,
             interfaces,
         )
@@ -75,7 +81,9 @@ class AsmEmitter(
         for (field in irClass.fields) {
             if (irClass.isInterface) continue
             val fieldAccess = if (field.isStatic) Opcodes.ACC_PRIVATE or Opcodes.ACC_STATIC else Opcodes.ACC_PRIVATE
-            cw.visitField(fieldAccess, field.name, JvmTypeMapper.descriptor(field.type), null, null)
+            // T-M12 Signature 属性：字段泛型实参（`List<String>` 保留类型信息供反射）
+            val fieldSig = JvmTypeMapper.typeSignature(field.type)
+            cw.visitField(fieldAccess, field.name, JvmTypeMapper.descriptor(field.type), fieldSig, null)
         }
 
         // 方法（含构造器、$clinit、访问器、Lambda 合成方法）
@@ -110,7 +118,9 @@ class AsmEmitter(
         }
         val access = buildAccess(method)
         val desc = methodDescriptor(method)
-        val mv = cw.visitMethod(access, jvmName, desc, null, null)
+        // T-M12 Signature 属性：方法泛型参数/返回（`(Ljava/util/List<Ljava/lang/String;>;)V`）
+        val methodSig = JvmTypeMapper.methodSignature(method.params.map { it.type }, method.returnType)
+        val mv = cw.visitMethod(access, jvmName, desc, methodSig, null)
         emitAnnotations(mv::visitAnnotation, method.annotations)
         mv.visitCode()
         if (method.isConstructor) {

@@ -570,10 +570,14 @@ class MethodGen(
 
     val currentLoop: Pair<IrLabel, IrLabel>? get() = loops.lastOrNull()
 
-    /** 发射到当前目标（默认方法体；子块生成时切到子列表）。 */
+    /** 发射到当前目标（默认方法体；子块生成时切到子列表）。当前源码行号非空时自动标注。 */
     fun emit(stmt: IrStmt) {
-        emitTarget.add(stmt)
+        val line = currentLine
+        emitTarget.add(if (line != null && stmt.line == null) stmt.withLine(line) else stmt)
     }
+
+    /** 当前源码行号（StmtGen 入口设置；合成发射保持 null 不标注）。 */
+    var currentLine: Int? = null
 
     /** 临时切换发射目标（Try/catch/finally 子块），块结束后恢复。 */
     fun <T> withTarget(target: MutableList<IrStmt>, block: () -> T): T {

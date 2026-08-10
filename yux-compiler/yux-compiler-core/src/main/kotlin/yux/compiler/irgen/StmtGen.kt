@@ -76,6 +76,10 @@ class StmtGen(
     private val concurrentBlocks = ConcurrentBlockGen(this, irGen)
 
     internal fun gen(stmt: YxStmt, g: MethodGen, fileScope: FileScope) {
+        // T-M12 LineNumberTable：标注当前源码行号，emit 时写入 IR 语句（嵌套语句各自覆盖/恢复）。
+        // 仅标注 >0 行：插件下沉/合成节点可能携带 -1 哨兵 span，负数行号对 visitLineNumber 非法
+        val savedLine = g.currentLine
+        g.currentLine = stmt.span.start.line.takeIf { it > 0 }
         when (stmt) {
             is YxBlock -> {
                 g.enterScope()
@@ -104,6 +108,7 @@ class StmtGen(
             }
             else -> Unit
         }
+        g.currentLine = savedLine
     }
 
     private fun genVarDecl(stmt: YxVarDecl, g: MethodGen, fileScope: FileScope) {
