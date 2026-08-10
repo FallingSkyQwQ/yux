@@ -27,6 +27,7 @@ import yux.compiler.ast.YxVisibility
 import yux.compiler.parser.CstBlock
 import yux.compiler.parser.CstToAst
 import yux.compiler.plugin.SyntaxTransform
+import yux.minecraft.compiler.CommandEntryData
 import yux.minecraft.compiler.CommandPermissionData
 import yux.minecraft.compiler.PermissionData
 import yux.minecraft.compiler.PluginYmlCollector
@@ -147,7 +148,9 @@ class MinecraftLowering(
             isOverride = false,
             visibility = YxVisibility.PUBLIC,
             annotations = listOf(
-                YxAnnotation(qualifiedName = listOf("EventHandler"), args = emptyList(), span = span),
+                // 必须用 Bukkit 全限定名：SimplePluginManager 按 `Lorg/bukkit/event/EventHandler;`
+                // 扫描监听器；单段名会发射为默认包描述符 `LEventHandler;` → 事件永不触发。
+                YxAnnotation(qualifiedName = listOf("org", "bukkit", "event", "EventHandler"), args = emptyList(), span = span),
             ),
             span = span,
         )
@@ -177,6 +180,7 @@ class MinecraftLowering(
         val payload = node.payload as? CommandPayload ?: return null
         val span = node.span
         payload.permission?.let { collector.commandPermissions += CommandPermissionData(it, payload.path) }
+        collector.commands += CommandEntryData(payload.path, payload.description, payload.permission, payload.aliases)
         val annotationArgs = buildList {
             add(YxAnnotationArg("path", stringLiteral(payload.path, span), span))
             payload.permission?.let { add(YxAnnotationArg("permission", stringLiteral(it, span), span)) }

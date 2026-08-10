@@ -115,6 +115,43 @@ class TypeCheckerTest {
         assertFalse(r.hasErrors, r.errors.toString())
     }
 
+    @Test
+    fun `compound assignment string concat`() {
+        // 复合赋值按 `x = x op e` 展开：`s += 1` 走 String 拼接（S-7.6.1），合法；
+        // `s += true` 与二元 `"a" + true` 同规则（String 侧吸收任意操作数）
+        val r = SemaTestSupport.analyze(
+            """
+            fun main() {
+                s = "a"
+                s += 1
+                s += "b"
+                s += true
+            }
+            """.trimIndent(),
+        )
+        assertFalse(r.hasErrors, r.errors.toString())
+    }
+
+    @Test
+    fun `compound assignment numeric`() {
+        // 数字复合赋值与字面量收窄（S-7.5.4）：`f += 2.5` 的 2.5 以 Float 为目标收窄，不提升为 Double
+        val r = SemaTestSupport.analyze(
+            """
+            fun main() {
+                total = 0
+                total += 1
+                total -= 1
+                total *= 2
+                total /= 2
+                total %= 3
+                f: Float = 1.0
+                f += 2.5
+            }
+            """.trimIndent(),
+        )
+        assertFalse(r.hasErrors, r.errors.toString())
+    }
+
     // ── 确定性赋值（S-6.1.2）───────────────────────────────────────────────
 
     @Test
@@ -254,6 +291,122 @@ class TypeCheckerTest {
         assertTrue(r.hasCode(ErrorCodes.OVERRIDE_NO_SUPER), r.diagnostics.toString())
     }
 
+    @Test
+    fun `override of grandparent method valid`() {
+        val r = SemaTestSupport.analyze(
+            """
+            Base {
+                fun tick() {
+                }
+            }
+            Mid extends Base {
+            }
+            Impl extends Mid {
+                override fun tick() {
+                }
+            }
+            """.trimIndent(),
+        )
+        assertFalse(r.hasErrors, r.errors.toString())
+    }
+
+    @Test
+    fun `interface member callable and overridable`() {
+        val r = SemaTestSupport.analyze(
+            """
+            Bar {
+                fun baz() {
+                }
+                fun qux() {
+                }
+            }
+            Foo implements Bar {
+                override fun baz() {
+                }
+            }
+            fun main() {
+                f = Foo()
+                f.baz()
+                f.qux()
+            }
+            """.trimIndent(),
+        )
+        assertFalse(r.hasErrors, r.errors.toString())
+    }
+
+    @Test
+    fun `interface property callable on implementing class`() {
+        val r = SemaTestSupport.analyze(
+            """
+            Bar {
+                version:Int = 1
+            }
+            Foo implements Bar {
+            }
+            fun main() {
+                f = Foo()
+                x = f.version
+            }
+            """.trimIndent(),
+        )
+        assertFalse(r.hasErrors, r.errors.toString())
+    }
+
+    @Test
+    fun `interface members inherited transitively diamond dedup`() {
+        val r = SemaTestSupport.analyze(
+            """
+            A {
+                fun f() {
+                }
+            }
+            B implements A {
+            }
+            C implements A {
+            }
+            D implements B, C {
+            }
+            fun main() {
+                d = D()
+                d.f()
+            }
+            """.trimIndent(),
+        )
+        assertFalse(r.hasErrors, r.errors.toString())
+    }
+
+    @Test
+    fun `override of interface member with no super valid`() {
+        val r = SemaTestSupport.analyze(
+            """
+            Bar {
+                fun tick() {
+                }
+            }
+            Impl implements Bar {
+                override fun tick() {
+                }
+            }
+            """.trimIndent(),
+        )
+        assertFalse(r.hasErrors, r.errors.toString())
+    }
+
+    @Test
+    fun `override of nowhere member on implementing class error`() {
+        val r = SemaTestSupport.analyze(
+            """
+            Bar {
+            }
+            Impl implements Bar {
+                override fun nope() {
+                }
+            }
+            """.trimIndent(),
+        )
+        assertTrue(r.hasCode(ErrorCodes.OVERRIDE_NO_SUPER), r.diagnostics.toString())
+    }
+
     // ── this / super ────────────────────────────────────────────────────────
 
     @Test
@@ -334,5 +487,56 @@ class TypeCheckerTest {
     fun `range requires numeric operands`() {
         val r = SemaTestSupport.analyze("fun main() {\n  r = \"a\"..\"b\"\n}")
         assertTrue(r.hasCode(ErrorCodes.INVALID_OPERATOR_OPERAND), r.diagnostics.toString())
+    }
+
+    // ── 字面量范围（S-2.5.1/S-7.5.4）─────────────────────────────────────────
+
+    @Test
+    fun `byte negative min value compiles`() {
+        val r = SemaTestSupport.analyze("fun main() {\n  b:Byte = -128\n}")
+        assertFalse(r.hasErrors, r.errors.toString())
+    }
+
+    @Test
+    fun `byte positive max value compiles`() {
+        val r = SemaTestSupport.analyze("fun main() {\n  b:Byte = 127\n}")
+        assertFalse(r.hasErrors, r.errors.toString())
+    }
+
+    @Test
+    fun `byte positive 128 errors`() {
+        val r = SemaTestSupport.analyze("fun main() {\n  b:Byte = 128\n}")
+        assertTrue(r.hasCode(ErrorCodes.TYPE_MISMATCH), r.diagnostics.toString())
+    }
+
+    @Test
+    fun `byte negative below min errors`() {
+        val r = SemaTestSupport.analyze("fun main() {\n  b:Byte = -129\n}")
+        assertTrue(r.hasCode(ErrorCodes.TYPE_MISMATCH), r.diagnostics.toString())
+    }
+
+    @Test
+    fun `decimal literal beyond long errors instead of wrapping`() {
+        val r = SemaTestSupport.analyze("fun main() {\n  x = 99999999999999999999\n}")
+        assertTrue(r.hasCode(ErrorCodes.TYPE_MISMATCH), r.diagnostics.toString())
+    }
+
+    @Test
+    fun `hex literal beyond int errors instead of wrapping`() {
+        val r = SemaTestSupport.analyze("fun main() {\n  x = 0x1FFFFFFFF\n}")
+        assertTrue(r.hasCode(ErrorCodes.TYPE_MISMATCH), r.diagnostics.toString())
+    }
+
+    @Test
+    fun `decimal literal beyond int promotes to long`() {
+        val r = SemaTestSupport.analyze(
+            """
+            fun main() {
+                x = 99999999999
+                y:Long = x
+            }
+            """.trimIndent(),
+        )
+        assertFalse(r.hasErrors, r.errors.toString())
     }
 }

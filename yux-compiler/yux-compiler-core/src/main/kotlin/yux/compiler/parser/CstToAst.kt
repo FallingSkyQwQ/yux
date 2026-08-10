@@ -73,6 +73,8 @@ import yux.compiler.ast.YxVarDecl
 import yux.compiler.ast.YxVisibility
 import yux.compiler.ast.YxWhen
 import yux.compiler.ast.YxWhenBranch
+import yux.compiler.ast.YxWhenExpr
+import yux.compiler.ast.YxWhenExprBranch
 import yux.compiler.ast.YxWhile
 
 /**
@@ -111,6 +113,7 @@ class CstToAst {
             members = members,
             visibility = convertVisibility(decl.modifier),
             annotations = decl.annotations.map { convertAnnotation(it) },
+            isSealed = decl.sealedKw != null,
             span = decl.span,
         )
     }
@@ -126,6 +129,7 @@ class CstToAst {
             members = members,
             visibility = convertVisibility(decl.modifier),
             annotations = decl.annotations.map { convertAnnotation(it) },
+            isSealed = decl.sealedKw != null,
             span = decl.span,
         )
     }
@@ -317,6 +321,13 @@ class CstToAst {
             convertExpr(expr.condition),
             convertExpr(expr.thenExpr),
             convertExpr(expr.elseExpr!!),
+            expr.span,
+        )
+        is CstWhenExpr -> YxWhenExpr(
+            convertExpr(expr.subject),
+            expr.branches.map { branch ->
+                YxWhenExprBranch(convertWhenCondition(branch.condition), convertExpr(branch.body), branch.span)
+            },
             expr.span,
         )
         is CstIndexExpr -> YxIndexExpr(convertExpr(expr.base), convertExpr(expr.index), expr.span)

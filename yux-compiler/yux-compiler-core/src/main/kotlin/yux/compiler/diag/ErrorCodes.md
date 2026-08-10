@@ -46,13 +46,15 @@
 | E0031 | `RESERVED_EXTENSION_KEYWORD` | 02-§10.4 | 插件注册了内置关键字（隔离性） |
 | E0032 | `EXTENSION_NOT_LOWERED` | 02-§10.4 | 扩展节点未下沉（无匹配 SyntaxTransform） |
 | E0033 | `ILLEGAL_ACCESS` | 01-S-5.1.4 | 跨类/跨文件访问 private/protected 成员 |
+| E0034 | `WHEN_NOT_EXHAUSTIVE` | T-M12 | when 表达式缺 else（非密封 subject）或密封 subject 未穷尽覆盖 |
+| E0035 | `SEALED_INSTANTIATION` | T-M12 | 直接实例化密封类 |
+| E0036 | `SEALED_SUBCLASS_DIFFERENT_FILE` | T-M12 | 密封类的直接子类声明在其它文件 |
 
 ## W 系列：警告
 
 | 码 | 常量名 | 规则依据 | 说明 |
 |---|---|---|---|
 | W0001 | `TYPE_FALLBACK` | 01-§7.7.4 | 未知名称按命名约定（大写→类型）回退 |
-| W0002 | `UNUSED_DECLARATION` | — | 声明未被使用（v0.1 弱检查） |
 
 ## R 系列：REMIND
 

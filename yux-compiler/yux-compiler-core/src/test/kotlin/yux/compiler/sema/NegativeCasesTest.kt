@@ -53,6 +53,10 @@ class NegativeCasesTest {
         c("拼接结果赋给 Int", "fun main() {\n  x = 1\n  y = x + \"a\"\n  z:Int = y\n}", ErrorCodes.TYPE_MISMATCH)
         c("data 构造实参类型", "data User {\n  id:Int\n}\nfun main() {\n  u = User(\"a\")\n}", ErrorCodes.TYPE_MISMATCH)
         c("可空值赋给非空", "fun main() {\n  s:String? = \"a\"\n  t:String = s\n}", ErrorCodes.TYPE_MISMATCH)
+        c("Byte 正数越界", "fun main() {\n  b:Byte = 128\n}", ErrorCodes.TYPE_MISMATCH)
+        c("Byte 负数越界", "fun main() {\n  b:Byte = -129\n}", ErrorCodes.TYPE_MISMATCH)
+        c("十进制整数溢出", "fun main() {\n  x = 99999999999999999999\n}", ErrorCodes.TYPE_MISMATCH)
+        c("十六进制超出 Int 范围", "fun main() {\n  x = 0x1FFFFFFFF\n}", ErrorCodes.TYPE_MISMATCH)
 
         // ── E0005 泛型实参数目（过度/不足在解析器层被拒；此处覆盖放行后的实参数目校验）─
         c("泛型实参不足 Map", "fun f(m:Map String) {\n}", ErrorCodes.TYPE_ARGUMENT_COUNT_MISMATCH)
@@ -120,6 +124,8 @@ class NegativeCasesTest {
         c("负号作用于字符串", "fun main() {\n  x = -\"a\"\n}", ErrorCodes.INVALID_OPERATOR_OPERAND)
         c("取模字符串", "fun main() {\n  x = 1 % \"a\"\n}", ErrorCodes.INVALID_OPERATOR_OPERAND)
         c("Boolean 与 Int 与", "fun main() {\n  x = true && 1\n}", ErrorCodes.INVALID_OPERATOR_OPERAND)
+        c("Int 复合赋值布尔", "fun main() {\n  x = 1\n  x += true\n}", ErrorCodes.INVALID_OPERATOR_OPERAND)
+        c("Int 复合赋值字符串", "fun main() {\n  x = 1\n  x += \"a\"\n}", ErrorCodes.TYPE_MISMATCH)
 
         // ── E0018 this 在类外 ───────────────────────────────────────────────
         c("顶层 this", "fun main() {\n  x = this\n}", ErrorCodes.THIS_OUTSIDE_CLASS)
@@ -130,6 +136,8 @@ class NegativeCasesTest {
 
         // ── E0020 只读赋值 ──────────────────────────────────────────────────
         c("参数不可赋值", "fun f(x:Int) {\n  x = 5\n}", ErrorCodes.VAL_ASSIGNMENT)
+        c("参数重声明赋值", "fun f(x:Int) {\n  x: Int = 5\n}", ErrorCodes.VAL_ASSIGNMENT)
+        c("for 变量重声明赋值", "fun main() {\n  for i in 0..5 {\n    i: Int = 2\n  }\n}", ErrorCodes.VAL_ASSIGNMENT)
         c("data 属性不可赋值", "data User {\n  id:Int\n}\nfun main() {\n  u = User(1)\n  u.id = 5\n}", ErrorCodes.VAL_ASSIGNMENT)
 
         // ── E0021 break/continue 在循环外 ───────────────────────────────────

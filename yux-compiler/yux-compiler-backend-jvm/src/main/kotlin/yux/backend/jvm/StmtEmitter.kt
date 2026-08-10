@@ -42,6 +42,16 @@ internal class StmtEmitter(
     private fun tmpSlot(): Int = allocation.nextFreeSlot + catchTmpCounter++
 
     fun emitStmt(stmt: IrStmt) {
+        // T-M12 LineNumberTable：带行号语句前落行号标签（javap -l / 调试器/堆栈行号）
+        // T-M12 LineNumberTable：带行号语句前落行号标签（javap -l / 调试器/堆栈行号）。
+        // 排除 Label（纯控制流脚手架）与 Return：其前的独立行号标签与表达式级合并标签
+        // （如 NullGuard 的 endL）形成连续标签，会破坏 COMPUTE_FRAMES 的帧合并（NegativeArraySize）
+        val stmtLine = stmt.line
+        if (stmtLine != null && stmt !is IrStmt.Label && stmt !is IrStmt.Return) {
+            val lineLabel = Label()
+            mv.visitLabel(lineLabel)
+            mv.visitLineNumber(stmtLine, lineLabel)
+        }
         when (stmt) {
             is IrStmt.Label -> mv.visitLabel(labelOf(stmt.label))
             is IrStmt.LocalAssign -> {
@@ -761,7 +771,7 @@ internal class StmtEmitter(
         val implKind = if (target.isStatic) Opcodes.H_INVOKESTATIC else Opcodes.H_INVOKEVIRTUAL
         val implHandle = Handle(
             implKind,
-            target.owner?.name ?: classEmitter.ownerInternalName,
+            target.owner?.name?.let(JvmTypeMapper::internalClassName) ?: classEmitter.ownerInternalName,
             target.name,
             implDesc,
             false,

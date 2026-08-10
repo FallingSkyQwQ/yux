@@ -102,15 +102,19 @@ class TypeResolver(
             file.types[name]?.let { return it }
             // 2. 同包其他文件
             symbolTable.typeInPackage(file.packageName, name)?.let { return it }
-            // 3. 单名导入
+            // 3. 单名导入（Yux 声明类经符号表按包解析，JVM 类经 classpath）
             file.imports.filter { !it.star }.forEach { imp ->
                 if (imp.qualifiedName.last() == name) {
+                    val importPkg = imp.qualifiedName.dropLast(1).joinToString(".")
+                    symbolTable.typeInPackage(importPkg, name)?.let { return it }
                     classPath.resolve(imp.qualifiedName.joinToString("."))?.let { return it }
                 }
             }
-            // 4. star 导入
+            // 4. star 导入（Yux 包先于 JVM classpath）
             file.imports.filter { it.star }.forEach { imp ->
-                classPath.resolveIn(imp.qualifiedName.joinToString("."), name)?.let { return it }
+                val importPkg = imp.qualifiedName.joinToString(".")
+                symbolTable.typesInPackage(importPkg)?.get(name)?.let { return it }
+                classPath.resolveIn(importPkg, name)?.let { return it }
             }
             // 5. JDK 内置类路径（List/Map/System/...）
             Builtins.BUILTIN_CLASSPATH[name]?.let { classPath.resolve(it) }?.let { return it }
@@ -126,7 +130,9 @@ class TypeResolver(
             }
             return null
         }
-        // 限定名：直接按完整路径解析
+        // 限定名：Yux 声明类（`com.example.Player`）优先于 JVM classpath 解析
+        val pkg = segments.dropLast(1).joinToString(".")
+        symbolTable.typeInPackage(pkg, segments.last())?.let { return it }
         return classPath.resolve(segments.joinToString("."))
     }
 }
@@ -161,6 +167,8 @@ object TypeAssignability {
                 val boxed = jvmBoxedName(f.name) ?: return false
                 return jvmImplements(boxed, (t.symbol as JvmClassSymbol).qualifiedName)
             }
+            // T-M12：Yux 类继承——子类可赋给可空祖先类型
+            if (isYuxSubtypeOf(f, t)) return true
             return false
         }
         if (from.nullable && !to.nullable) return false
@@ -171,7 +179,18 @@ object TypeAssignability {
             val boxed = jvmBoxedName(f.name) ?: return false
             return jvmImplements(boxed, (t.symbol as JvmClassSymbol).qualifiedName)
         }
+        // T-M12：Yux 类继承——子类可赋给祖先类型（Circle extends Shape → Circle 可传给 Shape 参数）
+        if (isYuxSubtypeOf(f, t)) return true
         return false
+    }
+
+    /** [from] 是否为 [to] 的 Yux 类后代（含自身，沿 superType 链；仅 Yux 声明类）。 */
+    private fun isYuxSubtypeOf(from: SemaType, to: SemaType): Boolean {
+        val f = from as? SemaType.Declared ?: return false
+        val t = to as? SemaType.Declared ?: return false
+        val fs = f.symbol as? YxClassSymbol ?: return false
+        val ts = t.symbol as? YxClassSymbol ?: return false
+        return isYuxSupertypeOf(ts, fs)
     }
 
     /** 基础类型 → JVM 装箱类名（Int→java.lang.Integer）。 */
@@ -260,6 +279,24 @@ object TypeAssignability {
         if (y is SemaType.Basic && y.name == "Any") return true
         if (x is SemaType.TypeParam || y is SemaType.TypeParam) return true
         if (x is SemaType.UnitT || y is SemaType.UnitT) return x is SemaType.UnitT && y is SemaType.UnitT
-        return sameBase(x, y)
+        if (sameBase(x, y)) return true
+        // T-M12：继承关系下 `is T` 检查可能成立（`Shape is Circle` 当 `Circle extends Shape`）——
+        // 沿 superType 链判定 Yux 声明类之间的祖先/后代关系。
+        if (x is SemaType.Declared && y is SemaType.Declared) {
+            val xs = x.symbol as? YxClassSymbol
+            val ys = y.symbol as? YxClassSymbol
+            if (xs != null && ys != null && (isYuxSupertypeOf(xs, ys) || isYuxSupertypeOf(ys, xs))) return true
+        }
+        return false
+    }
+
+    /** [ancestor] 是否为 [desc] 的祖先（含自身，沿 superType 链）。 */
+    private fun isYuxSupertypeOf(ancestor: YxClassSymbol, desc: YxClassSymbol): Boolean {
+        var cur: YxClassSymbol? = desc
+        while (cur != null) {
+            if (cur === ancestor) return true
+            cur = (cur.superType as? SemaType.Declared)?.symbol as? YxClassSymbol
+        }
+        return false
     }
 }

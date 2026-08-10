@@ -9,6 +9,7 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
@@ -91,6 +92,48 @@ class HomePluginE2eTest {
         )) {
             assertTrue(names.contains(expected), "应生成类 $expected，实际: $names")
         }
+    }
+
+    @Test
+    fun `事件处理器 handle 方法注解描述符为 Bukkit 全限定名`() {
+        val result = compileClean()
+        val bytes = result.classes["PlayerJoinEvent_Handler"]
+            ?: throw AssertionError("缺少 PlayerJoinEvent_Handler 类")
+        val utf8 = String(bytes)
+        assertTrue(
+            utf8.contains("Lorg/bukkit/event/EventHandler;"),
+            "handle 注解描述符应为 Lorg/bukkit/event/EventHandler;（单段名 EventHandler → 默认包描述符，事件永不触发）",
+        )
+        assertFalse(utf8.contains("LEventHandler;"), "不得残留默认包描述符 LEventHandler;")
+    }
+
+    @Test
+    fun `编译产物 pluginYml 含 commands 节注册全部命令`() {
+        val result = compileClean()
+        val artifact = result.resourceArtifacts.firstOrNull { it.name == "plugin.yml" }
+            ?: throw AssertionError("编译产物应含 plugin.yml，实际: ${result.resourceArtifacts.map { it.name }}")
+        val yml = artifact.bytes.toString(Charsets.UTF_8)
+        assertTrue(
+            yml.contains("commands:"),
+            "plugin.yml 应含 commands: 节（缺失 → getCommand 返回 null，命令静默失效）:\n$yml",
+        )
+        for (cmd in listOf("sethome", "home", "delhome", "homes")) {
+            assertTrue(yml.contains("\n  $cmd:"), "commands 节应注册 $cmd:\n$yml")
+        }
+    }
+
+    /** 全量重编（clean）并返回编译结果；clean 保证不命中增量缓存，产物必含 classes 与 resourceArtifacts。 */
+    private fun compileClean(): yux.buildtool.CompiledProject {
+        val projectDir = locateProject()
+        val pluginJar = findCompilerPluginJar()
+            ?: throw AssertionError("yux-compiler-minecraft jar 未构建（先运行 :yux-plugin-minecraft:yux-compiler-minecraft:jar）")
+        val manager = PluginManager()
+        for (plugin in PluginLoader.loadFromJars(listOf(pluginJar))) manager.register(plugin)
+        val result = YuxBuild(projectDir, manager).compile(clean = true)
+        if (!result.success) {
+            throw AssertionError("Home 插件编译失败: ${result.diagnostics.diagnostics.joinToString("\n") { it.severity.toString() + ": " + it.message }}")
+        }
+        return result
     }
 
     @Test
@@ -195,6 +238,15 @@ class HomePluginE2eTest {
             "kotlin/Unit.class",
         )) {
             assertTrue(entries.contains(required), "jar 应自包含 $required（Paper 可加载）")
+        }
+
+        // 回归：build-tool 的 build.yml 派生 plugin.yml 与钩子产物合并后不得丢弃 commands 节
+        val pluginYml = java.util.zip.ZipFile(jar.toFile()).use { z ->
+            z.getInputStream(z.getEntry("plugin.yml")).readBytes().toString(Charsets.UTF_8)
+        }
+        assertTrue(pluginYml.contains("commands:"), "jar 内 plugin.yml 应含 commands: 节:\n$pluginYml")
+        for (cmd in listOf("sethome", "home", "delhome", "homes")) {
+            assertTrue(pluginYml.contains("\n  $cmd:"), "jar 内 plugin.yml 应注册命令 $cmd:\n$pluginYml")
         }
     }
 

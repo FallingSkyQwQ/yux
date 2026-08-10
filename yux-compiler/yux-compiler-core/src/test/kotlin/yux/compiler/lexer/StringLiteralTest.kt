@@ -42,8 +42,72 @@ class StringLiteralTest {
 
     @Test
     fun `char literal with escaped quote`() {
-        val src = "'it\\'s'"
+        val src = "'\\''"
         assertEquals(src, lex(src).tokenize()[0].text)
+    }
+
+    @Test
+    fun `empty char literal reports error`() {
+        val l = lex("''")
+        l.tokenize()
+        assertTrue(l.diagnostics.hasErrors)
+    }
+
+    @Test
+    fun `multi-char literal reports error`() {
+        val l = lex("'ab'")
+        l.tokenize()
+        assertTrue(l.diagnostics.hasErrors)
+    }
+
+    @Test
+    fun `char literal with raw newline reports error`() {
+        val l = lex("'a\nb'")
+        l.tokenize()
+        assertTrue(l.diagnostics.hasErrors)
+    }
+
+    @Test
+    fun `invalid escape in char literal reports error`() {
+        val l = lex("'\\q'")
+        l.tokenize()
+        assertTrue(l.diagnostics.hasErrors)
+    }
+
+    @Test
+    fun `invalid unicode escape in char literal reports error`() {
+        val l = lex("'\\uZZZZ'")
+        l.tokenize()
+        assertTrue(l.diagnostics.hasErrors)
+    }
+
+    @Test
+    fun `valid unicode escape in char literal accepted`() {
+        val l = lex("'\\u0041'")
+        l.tokenize()
+        assertTrue(!l.diagnostics.hasErrors, l.diagnostics.diagnostics.toString())
+    }
+
+    @Test
+    fun `invalid escape in string reports error`() {
+        val l = lex("\"a\\q\"")
+        l.tokenize()
+        assertTrue(l.diagnostics.hasErrors)
+    }
+
+    @Test
+    fun `invalid unicode escape in string reports error`() {
+        val l = lex("\"a\\uZZZZ\"")
+        l.tokenize()
+        assertTrue(l.diagnostics.hasErrors)
+    }
+
+    @Test
+    fun `bad char literal still produces token stream for recovery`() {
+        val l = lex("'ab' c")
+        val t = l.tokenize()
+        assertEquals(listOf(TokenKind.CHAR_LITERAL, TokenKind.IDENTIFIER, TokenKind.EOF), t.map { it.kind })
+        assertTrue(l.diagnostics.hasErrors)
     }
 
     @Test

@@ -29,6 +29,7 @@ import yux.compiler.ast.YxTypeCall
 import yux.compiler.ast.YxUnary
 import yux.compiler.ast.YxVarDecl
 import yux.compiler.ast.YxWhen
+import yux.compiler.ast.YxWhenExpr
 import yux.compiler.ast.YxWhile
 import yux.compiler.sema.ParameterSymbol
 import yux.compiler.sema.Symbol
@@ -130,6 +131,8 @@ class ConcurrentBlockAnalysis(
         is YxIfExpr -> readsBlockLocalExpr(expr.condition, locals, bound) ||
             readsBlockLocalExpr(expr.thenExpr, locals, bound) ||
             readsBlockLocalExpr(expr.elseExpr, locals, bound)
+        is YxWhenExpr -> readsBlockLocalExpr(expr.subject, locals, bound) ||
+            expr.branches.any { readsBlockLocalExpr(it.body, locals, bound) }
         else -> false
     }
 
@@ -247,6 +250,10 @@ class ConcurrentBlockAnalysis(
                 checkExpr(expr.condition, locals, bound)
                 checkExpr(expr.thenExpr, locals, bound)
                 checkExpr(expr.elseExpr, locals, bound)
+            }
+            is YxWhenExpr -> {
+                checkExpr(expr.subject, locals, bound)
+                expr.branches.forEach { checkExpr(it.body, locals, bound) }
             }
             else -> Unit
         }

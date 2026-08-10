@@ -20,6 +20,11 @@ class IrClass(
     val isFileClass: Boolean,
     val isData: Boolean,
     val isService: Boolean,
+    /**
+     * 是否作为 JVM 接口发射（ACC_INTERFACE）：本类出现在其它类的 `implements` 列表中
+     * （Yux 无 interface 关键字，01-§8.7；判定逻辑与 sema `interfaceSymbols()` 一致）。
+     */
+    val isInterface: Boolean = false,
     /** 类型参数名列表（01-§4.3.3；泛型类如 `data Result T`）。 */
     val typeParams: List<String> = emptyList(),
     /** 单继承父类型（S-8.7.1）。 */

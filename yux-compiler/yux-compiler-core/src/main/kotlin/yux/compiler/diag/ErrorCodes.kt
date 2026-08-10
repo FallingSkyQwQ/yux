@@ -38,10 +38,12 @@ object ErrorCodes {
     const val RESERVED_EXTENSION_KEYWORD = "E0031"
     const val EXTENSION_NOT_LOWERED = "E0032"
     const val ILLEGAL_ACCESS = "E0033"
+    const val WHEN_NOT_EXHAUSTIVE = "E0034"
+    const val SEALED_INSTANTIATION = "E0035"
+    const val SEALED_SUBCLASS_DIFFERENT_FILE = "E0036"
 
     // ── W 系列：警告 ──────────────────────────────────────────────────────────
     const val TYPE_FALLBACK = "W0001"
-    const val UNUSED_DECLARATION = "W0002"
 
     // ── R 系列：REMIND ────────────────────────────────────────────────────────
     const val NULL_GUARD_INSERTED = "R0001"

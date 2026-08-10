@@ -24,7 +24,7 @@ class JvmCallResolver(
     /** 实例方法（JavaBean getter 优先，与 TypeChecker.memberLookup 一致）：`s.length` → `String#length()`。 */
     fun resolveInstanceMethod(receiverType: SemaType, name: String, argTypes: List<SemaType> = emptyList()): IrJvmCall? {
         val jc = jvmClassOf(receiverType) ?: return null
-        if (name == "sendMessage") {
+if (name == "sendMessage") {
         }
         // JavaBean 属性读取优先：getX() / isX()（S-8.5.2；镜像 memberLookup 的 propertyType 在前）
         val cap = name.replaceFirstChar { it.uppercaseChar() }
@@ -33,21 +33,40 @@ class JvmCallResolver(
         }
         jc.methods.firstOrNull { it.name == "is$cap" && it.params.isEmpty() && it.returnType == SemaType.BOOLEAN }
             ?.let { return jvmCall(it, jc.qualifiedName) }
-        // 重载选择（M9）：按实参类型精确（sameBase 忽略可空）/可赋值匹配
-        // （`sendMessage(String)` 不落到 BaseComponent；`String.replace(CharSequence)` 正确）
+        // 重载选择（M9）：逐级匹配——精确 → 可赋值 → sameBase（忽略可空）。
+        // 关键：`Any` 实参只匹配 `Object`/`Any` 形参（[matchArg] 特判）——`isAssignable`/`sameBase`
+        // 对 Any 恒真（Any 为顶层，S-4.1.1），否则 `sb.append(x)`（x:Any）会按反射顺序落到
+        // append(StringBuffer)/append(CharSequence) 等不兼容重载 → 运行期 VerifyError。
         val byName = jc.methods.filter { it.name == name }
         val chosen = if (argTypes.isEmpty()) {
             byName.firstOrNull()
         } else {
             byName.firstOrNull { m ->
                 m.params.size == argTypes.size &&
-                    m.params.indices.all { i -> TypeAssignability.sameBase(argTypes[i], m.params[i]) }
+                    m.params.indices.all { i -> TypeAssignability.isExact(argTypes[i], m.params[i]) }
             } ?: byName.firstOrNull { m ->
                 m.params.size == argTypes.size &&
-                    m.params.indices.all { i -> TypeAssignability.isAssignable(argTypes[i], m.params[i]) }
+                    m.params.indices.all { i -> isAssignableArg(argTypes[i], m.params[i]) }
+            } ?: byName.firstOrNull { m ->
+                m.params.size == argTypes.size &&
+                    m.params.indices.all { i -> TypeAssignability.sameBase(argTypes[i], m.params[i]) }
             } ?: byName.firstOrNull()
         }
         return chosen?.let { jvmCall(it, jc.qualifiedName) }
+    }
+
+    /**
+     * 实参 → 形参 可赋值匹配（重载选择专用）：`Any` 实参只接受 `Object`/`Any` 形参
+     * （Any 为顶层类型，赋给具体形参（如 StringBuffer）不成立），其余委托 [TypeAssignability.isAssignable]。
+     */
+    private fun isAssignableArg(arg: SemaType, param: SemaType): Boolean {
+        val a = SemaType.resolveVar(arg)
+        val p = SemaType.resolveVar(param)
+        if (a is SemaType.Basic && a.name == "Any") {
+            if (p is SemaType.Basic && p.name == "Any") return true
+            return p is SemaType.Declared && (p.symbol as? JvmClassSymbol)?.qualifiedName == "java.lang.Object"
+        }
+        return TypeAssignability.isAssignable(a, p)
     }
 
     /** 静态方法：`System.currentTimeMillis()`。按实参类型匹配重载（Math.max 等）。 */
@@ -163,7 +182,7 @@ class JvmCallResolver(
         "Byte" -> "java.lang.Byte"
         "Any" -> "java.lang.Object"
         "Iterable" -> "java.lang.Iterable"
-        "Range" -> "java.lang.Integer" // 镜像 TypeChecker.jvmForBasic（Range 成员映射到 Integer）
+        "Range" -> "yux.core.Range" // 镜像 TypeChecker.jvmForBasic（Range 成员映射到 yux.core.Range）
         else -> null
     }
 }

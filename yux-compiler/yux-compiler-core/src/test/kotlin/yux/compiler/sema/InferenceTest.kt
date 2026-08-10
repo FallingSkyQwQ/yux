@@ -1,9 +1,12 @@
 package yux.compiler.sema
 
+import org.junit.jupiter.api.Assertions.assertDoesNotThrow
 import org.junit.jupiter.api.Test
+import yux.compiler.diag.DiagnosticSink
 import yux.compiler.diag.ErrorCodes
 import yux.compiler.sema.SemaType.Basic
 import kotlin.test.assertFalse
+import kotlin.test.assertSame
 import kotlin.test.assertTrue
 
 /**
@@ -196,5 +199,35 @@ class InferenceTest {
     fun `byte overflow literal rejected`() {
         val r = SemaTestSupport.analyze("fun main() {\n  x:Byte = 200\n}")
         assertTrue(r.hasCode(ErrorCodes.TYPE_MISMATCH), r.diagnostics.toString())
+    }
+
+    @Test
+    fun `opposite direction var constraints do not create solution cycle`() {
+        // 回归：旧实现 A:=B 后再 B:=A 会生成 A.solution=B、B.solution=A 的环 → 解链无限递归
+        val inf = Inference(DiagnosticSink())
+        val a = inf.freshVar()
+        val b = inf.freshVar()
+        assertDoesNotThrow {
+            inf.expectAssignable(a, b, null, "测试")
+            inf.expectAssignable(b, a, null, "测试")
+        }
+        // 环被阻断：仅 A→B，B 未求解；解链终止且不产生 ErrorT
+        assertSame(b, SemaType.resolveVar(a))
+        assertSame(b, SemaType.resolveVar(b))
+    }
+
+    @Test
+    fun `pre-existing var cycle resolves to error without stack overflow`() {
+        // 直接构造 A↔B 环（历史数据/外部写入场景）：统一与解链必须终止，环 → ErrorT
+        val inf = Inference(DiagnosticSink())
+        val a = inf.freshVar()
+        val b = inf.freshVar()
+        a.solution = b
+        b.solution = a
+        assertDoesNotThrow {
+            assertSame(SemaType.ErrorT, inf.unify(a, b))
+        }
+        assertSame(SemaType.ErrorT, SemaType.resolveVar(a))
+        assertSame(SemaType.ErrorT, SemaType.resolveVar(b))
     }
 }

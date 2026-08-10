@@ -277,20 +277,31 @@ class YuxBuild(
         if (compiler.diagnostics.hasErrors) {
             return CompiledProject(emptyMap(), plan.mainClassName, compiler.diagnostics, success = false, upToDate = false)
         }
-        val module = compiler.generate(declsByFile, analysis)
-        val artifacts = AsmBackend().generate(module, compiler.diagnostics).toMutableList()
-        val resourceArtifacts = mutableListOf<PluginArtifact>()
-        // T-M6-5：插件 CodegenHook 附加产物（与 CLI Runner.kt 的合并模式一致）；
-        // M8（T-M8-12）：非 .class 产物（plugin.yml 等）与类分离，进入打包流程。
-        for (hook in pluginManager.hooks) {
-            for (artifact in hook.generate(module, compiler.diagnostics)) {
-                if (artifact.name.endsWith(".class")) {
-                    artifacts += AsmBackend.OutputArtifact(artifact.name, artifact.bytes)
-                } else {
-                    resourceArtifacts += artifact
+        val generated = try {
+            val module = compiler.generate(declsByFile, analysis)
+            val artifacts = AsmBackend(classLoader = compiler.classLoader).generate(module, compiler.diagnostics).toMutableList()
+            // T-M6-5：插件 CodegenHook 附加产物（与 CLI Runner.kt 的合并模式一致）；
+            // M8（T-M8-12）：非 .class 产物（plugin.yml 等）与类分离，进入打包流程。
+            val resourceArtifacts = mutableListOf<PluginArtifact>()
+            for (hook in pluginManager.hooks) {
+                for (artifact in hook.generate(module, compiler.diagnostics)) {
+                    if (artifact.name.endsWith(".class")) {
+                        artifacts += AsmBackend.OutputArtifact(artifact.name, artifact.bytes)
+                    } else {
+                        resourceArtifacts += artifact
+                    }
                 }
             }
+            Pair(artifacts, resourceArtifacts)
+        } catch (e: RuntimeException) {
+            // IRGen/后端对语义合法但不支持的输入抛异常（async 内 return、'' 字面量、`..=`、
+            // ASM 生成失败等）：转为 ERROR 诊断使构建走正常失败路径（runBuild/runProject 打印
+            // 诊断并返回 1），而不是让异常逃逸成笼统的「构建异常」。
+            compiler.diagnostics.error("编译错误: ${e.message}")
+            return CompiledProject(emptyMap(), plan.mainClassName, compiler.diagnostics, success = false, upToDate = false)
         }
+        val artifacts = generated.first
+        val resourceArtifacts = generated.second
         if (compiler.diagnostics.hasErrors) {
             return CompiledProject(emptyMap(), plan.mainClassName, compiler.diagnostics, success = false, upToDate = false)
         }

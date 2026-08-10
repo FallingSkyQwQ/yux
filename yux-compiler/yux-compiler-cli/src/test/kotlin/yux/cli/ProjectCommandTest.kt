@@ -84,6 +84,18 @@ class ProjectCommandTest {
     }
 
     @Test
+    fun `run project mode executes packaged main`() {
+        val project = tempProject()
+        Files.writeString(
+            project.resolve("src/main.yux"),
+            "package com.example\nfun main() {\n  print \"Hello packaged project\"\n}",
+        )
+        val (out, err, code) = capture("run", "-p", project.toString())
+        assertEquals(0, code, err)
+        assertTrue(out.contains("Hello packaged project"), out)
+    }
+
+    @Test
     fun `build project produces jar`() {
         val project = tempProject()
         assumeTrue(gradleAvailable(project), "Gradle 不可用，跳过")

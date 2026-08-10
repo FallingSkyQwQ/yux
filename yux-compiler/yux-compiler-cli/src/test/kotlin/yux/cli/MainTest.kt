@@ -1,11 +1,13 @@
 package yux.cli
 
 import org.junit.jupiter.api.Test
+import yux.compiler.source.SourceFile
 import java.io.ByteArrayOutputStream
 import java.io.PrintStream
 import java.nio.charset.StandardCharsets
 import java.nio.file.Files
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class MainTest {
@@ -112,6 +114,28 @@ class MainTest {
     }
 
     @Test
+    fun `run command executes packaged main`() {
+        val file = Files.createTempFile("yux", ".yux")
+        Files.writeString(
+            file,
+            "package com.example\nfun main() {\n  p = Player(\"Steve\")\n  print p.name\n}\ndata Player {\n  name: String\n}",
+        )
+        val (out, err, code) = capture("run", file.toString())
+        assertEquals(0, code, err)
+        assertEquals("Steve", out)
+    }
+
+    @Test
+    fun `run command executes packaged main from non-main file name`() {
+        val dir = Files.createTempDirectory("yux-pkg")
+        val file = dir.resolve("Main.yux")
+        Files.writeString(file, "package com.example\nfun main() {\n  print \"packaged\"\n}")
+        val (out, err, code) = capture("run", file.toString())
+        assertEquals(0, code, err)
+        assertEquals("packaged", out)
+    }
+
+    @Test
     fun `run command with data class toString`() {
         val file = Files.createTempFile("yux", ".yux")
         Files.writeString(
@@ -146,6 +170,47 @@ class MainTest {
         val (_, err, code) = capture("run", "/nonexistent/run.yux")
         assertEquals(1, code)
         assertTrue(err.contains("文件不存在"), err)
+    }
+
+    @Test
+    fun `run command async return reports IRGen error without stack trace`() {
+        val file = Files.createTempFile("yux", ".yux")
+        Files.writeString(file, "fun main() {\n  async {\n    return\n  }\n}")
+        val (_, err, code) = capture("run", file.toString())
+        assertEquals(1, code)
+        assertTrue(err.contains("编译错误"), err)
+        assertFalse(err.contains("Exception"), "不应出现异常堆栈: $err")
+        assertFalse(err.contains("at yux.compiler"), "不应出现堆栈帧: $err")
+    }
+
+    @Test
+    fun `Runner compile async return yields error diagnostics instead of throwing`() {
+        val file = Files.createTempFile("yux", ".yux")
+        Files.writeString(file, "fun main() {\n  async {\n    return\n  }\n}")
+        val source = SourceFile(file.toString(), Files.readString(file))
+        val compiled = Runner.compile(file.toString(), source)
+        assertTrue(compiled.diagnostics.hasErrors, "应产生 ERROR 诊断")
+        assertTrue(compiled.classes.isEmpty(), "失败时不应产出类字节")
+    }
+
+    @Test
+    fun `Runner compile malformed char literal yields error diagnostics instead of throwing`() {
+        val file = Files.createTempFile("yux", ".yux")
+        Files.writeString(file, "fun main() {\n  c = ''\n}")
+        val source = SourceFile(file.toString(), Files.readString(file))
+        val compiled = Runner.compile(file.toString(), source)
+        assertTrue(compiled.diagnostics.hasErrors, "应产生 ERROR 诊断")
+        assertTrue(compiled.classes.isEmpty(), "失败时不应产出类字节")
+    }
+
+    @Test
+    fun `ir command reports backend error instead of stack trace`() {
+        val file = Files.createTempFile("yux", ".yux")
+        Files.writeString(file, "fun main() {\n  async {\n    return\n  }\n}")
+        val (_, err, code) = capture("ir", file.toString())
+        assertEquals(1, code)
+        assertTrue(err.contains("IRGen 错误"), err)
+        assertFalse(err.contains("at yux.compiler"), "不应出现堆栈帧: $err")
     }
 
     @Test

@@ -8,15 +8,37 @@ package yux.compiler.ir
  * 载体表达，此为最小必要补充）。
  */
 sealed interface IrStmt {
+    /** 源码行号（LineNumberTable，T-M12；null = 合成语句无源码位置）。 */
+    val line: Int? get() = null
+
+    /** 标注源码行号（后端行号表；[IrStmt.Nop] 原样返回）。 */
+    fun withLine(line: Int): IrStmt = when (this) {
+        is Label -> copy(line = line)
+        is LocalAssign -> copy(line = line)
+        is Call -> copy(line = line)
+        is New -> copy(line = line)
+        is Eval -> copy(line = line)
+        is FieldAccess -> copy(line = line)
+        is Branch -> copy(line = line)
+        is Goto -> copy(line = line)
+        is Return -> copy(line = line)
+        is Throw -> copy(line = line)
+        is Monitor -> copy(line = line)
+        is Try -> copy(line = line)
+        IrStmt.Nop -> this
+    }
+
     /** 标签定位点：`Goto/Branch` 的目标（02-§8.2 补充）。 */
     data class Label(
         val label: IrLabel,
+        override val line: Int? = null,
     ) : IrStmt
 
     /** 局部赋值：`local = value`。 */
     data class LocalAssign(
         val local: IrLocal,
         val value: IrExpr,
+        override val line: Int? = null,
     ) : IrStmt
 
     /** 语句位置调用（结果丢弃）：`foo(args)` / `obj.foo(args)`（表达式位置用 [IrExpr.Invoke]）。 */
@@ -29,17 +51,20 @@ sealed interface IrStmt {
         val ret: IrType,
         /** super 调用：对父类非虚拟调用（INVOKESPECIAL，S-8.7.1）。 */
         val isSuper: Boolean = false,
+        override val line: Int? = null,
     ) : IrStmt
 
     /** 语句位置构造（结果丢弃，通常被优化器移除）：`Type(args)`。 */
     data class New(
         val type: IrType,
         val args: List<IrExpr>,
+        override val line: Int? = null,
     ) : IrStmt
 
     /** 表达式求值并丢弃结果（表达式语句的下沉；结果无用但副作用必须保留）。 */
     data class Eval(
         val expr: IrExpr,
+        override val line: Int? = null,
     ) : IrStmt
 
     /** 字段访问（[write]=false 读取并丢弃 / true 写入 [value]）。 */
@@ -49,6 +74,7 @@ sealed interface IrStmt {
         val write: Boolean,
         /** 写入值（[write]=true 时必须非 null；读取位置为 null）。 */
         val value: IrExpr?,
+        override val line: Int? = null,
     ) : IrStmt
 
     /** 条件跳转：cond 为真跳 [then]，否则跳 [elseLabel]。 */
@@ -56,27 +82,32 @@ sealed interface IrStmt {
         val cond: IrExpr,
         val then: IrLabel,
         val elseLabel: IrLabel,
+        override val line: Int? = null,
     ) : IrStmt
 
     /** 无条件跳转。 */
     data class Goto(
         val label: IrLabel,
+        override val line: Int? = null,
     ) : IrStmt
 
     /** 返回（无返回值时为 null）。 */
     data class Return(
         val value: IrExpr?,
+        override val line: Int? = null,
     ) : IrStmt
 
     /** 抛出异常。 */
     data class Throw(
         val value: IrExpr,
+        override val line: Int? = null,
     ) : IrStmt
 
     /** 监视器进入/退出（`synchronized`，02-§8.2）。 */
     data class Monitor(
         val expr: IrExpr,
         val enter: Boolean,
+        override val line: Int? = null,
     ) : IrStmt
 
     /** try/catch/finally（结构化表示，后端映射 JVM 异常表；02-§8.2 的 TryCatch 具体化）。 */
@@ -84,6 +115,7 @@ sealed interface IrStmt {
         val body: List<IrStmt>,
         val catches: List<IrCatch>,
         val finallyBody: List<IrStmt>?,
+        override val line: Int? = null,
     ) : IrStmt
 
     /** 空操作（占位/优化器产物）。 */

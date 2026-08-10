@@ -78,6 +78,25 @@ class IRGen(
     val exprTypes: Map<yux.compiler.ast.YxExpr, SemaType> get() = analysis.exprTypes
     val resolvedRefs: Map<yux.compiler.ast.YxNode, yux.compiler.sema.Symbol> get() = analysis.resolvedRefs
 
+    /**
+     * 用作接口的类（qualifiedName 集合，含传递闭包）：任一类的 `implements` 列表引用的 Yux 类。
+     * 判定与 sema `YxClassSymbol.interfaceSymbols()` 一致（仅 Yux 声明类；JVM 接口走反射，
+     * 如 `implements org.bukkit.event.Listener` 不受影响）。
+     */
+    private val interfaceClassNames: Set<String> by lazy {
+        val names = mutableSetOf<String>()
+        for (file in analysis.symbolTable.files) {
+            for (sym in file.types.values) {
+                val cls = sym as? YxClassSymbol ?: continue
+                for (t in cls.interfaces) {
+                    val iface = (t as? SemaType.Declared)?.symbol as? YxClassSymbol ?: continue
+                    names += iface.qualifiedName
+                }
+            }
+        }
+        names
+    }
+
     fun generate(declsByFile: Map<String, List<YxDecl>>): IrModule {
         for ((path, decls) in declsByFile) {
             registerFile(path, decls, analysis.symbolTable.fileFor(path))
@@ -102,7 +121,7 @@ class IRGen(
             decls.filterIsInstance<yux.compiler.ast.YxService>().map { it.name }
         val fileName = if (baseName in topLevelTypeNames) baseName + "_File" else baseName
         val fileClass = IrClass(
-            name = fileName,
+            name = qualify(fileScope.packageName, fileName),
             isFileClass = true,
             isData = false,
             isService = false,
@@ -142,10 +161,11 @@ class IRGen(
         val shape = classShape(decl) ?: return
         val sym = fileScope.types[shape.name] as? YxClassSymbol ?: return
         val irClass = IrClass(
-            name = shape.name,
+            name = qualify(fileScope.packageName, shape.name),
             isFileClass = false,
             isData = sym.isData,
             isService = sym.isService,
+            isInterface = sym.qualifiedName in interfaceClassNames,
             typeParams = sym.typeParams,
             superType = shape.superType?.let { resolveIrType(it, fileScope) },
             interfaces = shape.interfaces.map { resolveIrType(it, fileScope) },
@@ -443,6 +463,10 @@ class IRGen(
         return stem.replaceFirstChar { it.uppercaseChar() }
     }
 
+    /** 包前缀限定名：`com.example` + `Main` → `com.example.Main`；默认包原样返回。 */
+    private fun qualify(pkg: String, simpleName: String): String =
+        if (pkg.isEmpty()) simpleName else "$pkg.$simpleName"
+
     private fun getterName(propName: String, type: IrType): String {
         val cap = propName.replaceFirstChar { it.uppercaseChar() }
         val bool = type is IrType.Basic && type.name == "Boolean"
@@ -546,10 +570,14 @@ class MethodGen(
 
     val currentLoop: Pair<IrLabel, IrLabel>? get() = loops.lastOrNull()
 
-    /** 发射到当前目标（默认方法体；子块生成时切到子列表）。 */
+    /** 发射到当前目标（默认方法体；子块生成时切到子列表）。当前源码行号非空时自动标注。 */
     fun emit(stmt: IrStmt) {
-        emitTarget.add(stmt)
+        val line = currentLine
+        emitTarget.add(if (line != null && stmt.line == null) stmt.withLine(line) else stmt)
     }
+
+    /** 当前源码行号（StmtGen 入口设置；合成发射保持 null 不标注）。 */
+    var currentLine: Int? = null
 
     /** 临时切换发射目标（Try/catch/finally 子块），块结束后恢复。 */
     fun <T> withTarget(target: MutableList<IrStmt>, block: () -> T): T {

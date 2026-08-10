@@ -20,6 +20,6 @@
 6:1 NEWLINE "\n"
 6:1 IDENTIFIER "quoted"
 6:8 ASSIGN "="
-6:10 CHAR_LITERAL "'it\\'s'"
+6:10 CHAR_LITERAL "'\\''"
 7:1 NEWLINE "\n"
 7:1 EOF ""

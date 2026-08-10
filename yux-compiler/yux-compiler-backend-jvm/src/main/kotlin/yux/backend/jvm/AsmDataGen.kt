@@ -19,6 +19,10 @@ internal class AsmDataGen(
     private val irClass: IrClass,
 ) {
     private val props = irClass.properties
+    /** 类 JVM 内部名（`cls.name` 为点分限定名，如 `com.example.Player`）。 */
+    private val internalName: String = JvmTypeMapper.internalClassName(irClass.name)
+    /** toString 前缀（简单名，Kotlin data class 风格：`User(id=1, ...)`）。 */
+    private val displayName: String = irClass.name.substringAfterLast('.')
 
     fun emit(cw: ClassWriter) {
         emitToString(cw)
@@ -32,14 +36,14 @@ internal class AsmDataGen(
         mv.visitTypeInsn(Opcodes.NEW, "java/lang/StringBuilder")
         mv.visitInsn(Opcodes.DUP)
         mv.visitMethodInsn(Opcodes.INVOKESPECIAL, "java/lang/StringBuilder", "<init>", "()V", false)
-        appendConst(mv, "${irClass.name}(")
+        appendConst(mv, "$displayName(")
         props.forEachIndexed { i, prop ->
             if (i > 0) appendConst(mv, ", ")
             appendConst(mv, "${prop.name}=")
             mv.visitVarInsn(Opcodes.ALOAD, 0)
             mv.visitFieldInsn(
                 Opcodes.GETFIELD,
-                irClass.name,
+                internalName,
                 prop.backingField!!.name,
                 JvmTypeMapper.descriptor(prop.type),
             )
@@ -72,23 +76,23 @@ internal class AsmDataGen(
         // !(o instanceof User) → false
         val isType = Label()
         mv.visitVarInsn(Opcodes.ALOAD, 1)
-        mv.visitTypeInsn(Opcodes.INSTANCEOF, irClass.name)
+        mv.visitTypeInsn(Opcodes.INSTANCEOF, internalName)
         mv.visitJumpInsn(Opcodes.IFNE, isType)
         mv.visitInsn(Opcodes.ICONST_0)
         mv.visitInsn(Opcodes.IRETURN)
         mv.visitLabel(isType)
         // other = (User) o；逐属性比较
         mv.visitVarInsn(Opcodes.ALOAD, 1)
-        mv.visitTypeInsn(Opcodes.CHECKCAST, irClass.name)
+        mv.visitTypeInsn(Opcodes.CHECKCAST, internalName)
         mv.visitVarInsn(Opcodes.ASTORE, 2)
         for (prop in props) {
             val field = prop.backingField!!
             val desc = JvmTypeMapper.descriptor(prop.type)
             val mismatch = Label()
             mv.visitVarInsn(Opcodes.ALOAD, 0)
-            mv.visitFieldInsn(Opcodes.GETFIELD, irClass.name, field.name, desc)
+            mv.visitFieldInsn(Opcodes.GETFIELD, internalName, field.name, desc)
             mv.visitVarInsn(Opcodes.ALOAD, 2)
-            mv.visitFieldInsn(Opcodes.GETFIELD, irClass.name, field.name, desc)
+            mv.visitFieldInsn(Opcodes.GETFIELD, internalName, field.name, desc)
             when {
                 desc == "J" -> {
                     mv.visitInsn(Opcodes.LCMP)
@@ -145,7 +149,7 @@ internal class AsmDataGen(
             mv.visitIntInsn(Opcodes.BIPUSH, 31)
             mv.visitInsn(Opcodes.IMUL)
             mv.visitVarInsn(Opcodes.ALOAD, 0)
-            mv.visitFieldInsn(Opcodes.GETFIELD, irClass.name, field.name, desc)
+            mv.visitFieldInsn(Opcodes.GETFIELD, internalName, field.name, desc)
             emitFieldHash(mv, prop.type, desc)
             mv.visitInsn(Opcodes.IADD)
             mv.visitVarInsn(Opcodes.ISTORE, 1)

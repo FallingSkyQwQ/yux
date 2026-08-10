@@ -30,33 +30,60 @@ import yux.compiler.ir.IrType
  */
 class AsmEmitter(
     private val module: IrModule,
-    private val resolver: JvmDescResolver = JvmDescResolver(),
+    /** 项目类解析加载器（M10 混合项目：Java/Kotlin 产物目录的 URLClassLoader）；默认编译管线自身加载器。 */
+    private val classLoader: ClassLoader = JvmDescResolver::class.java.classLoader,
 ) {
-    private val ownerName: String get() = cls.name
+    /** JVM 接口默认方法标志（JVMS 4.6 的 ACC_DEFAULT=0x1000；ASM 未导出常量）。 */
+    private val defaultMethodFlag = 0x1000
+
+    private val resolver: JvmDescResolver = JvmDescResolver(classLoader)
+    /** 当前类 JVM 内部名（`cls.name` 为点分限定名，如 `com.example.Player`）。 */
+    private val ownerName: String get() = JvmTypeMapper.internalClassName(cls.name)
     private lateinit var cls: IrClass
 
     /** 当前类内部名（StmtEmitter 字段访问/捕获用）。 */
-    val ownerInternalName: String get() = cls.name
+    val ownerInternalName: String get() = JvmTypeMapper.internalClassName(cls.name)
 
     fun emitClass(irClass: IrClass): ByteArray {
         cls = irClass
-        val cw = ClassWriter(ClassWriter.COMPUTE_FRAMES)
-        val superInternal = irClass.superType?.let { JvmTypeMapper.internalName(it) } ?: "java/lang/Object"
+        val cw = newClassWriter()
+        // 接口类（Yux 类被 implements 引用）：JVM 接口 = ACC_INTERFACE|ACC_ABSTRACT，父类恒 Object，
+        // 其 extends/implements 目标经 interfaces 数组以「接口继承接口」表达
+        val superInternal = if (irClass.isInterface) {
+            "java/lang/Object"
+        } else {
+            irClass.superType?.let { JvmTypeMapper.internalName(it) } ?: "java/lang/Object"
+        }
         val interfaces = irClass.interfaces.map { JvmTypeMapper.internalName(it) }.toTypedArray()
+        val access = if (irClass.isInterface) {
+            Opcodes.ACC_PUBLIC or Opcodes.ACC_INTERFACE or Opcodes.ACC_ABSTRACT
+        } else {
+            Opcodes.ACC_PUBLIC
+        }
+        // T-M12 Signature 属性：泛型类型参数/实参（`Box<T>` → `<T:Ljava/lang/Object;>Ljava/lang/Object;`）
+        val signature = JvmTypeMapper.classSignature(
+            irClass.typeParams,
+            if (irClass.isInterface) null else irClass.superType,
+            irClass.interfaces,
+        )
         cw.visit(
             Opcodes.V21,
-            Opcodes.ACC_PUBLIC,
+            access,
             ownerName,
-            null,
+            signature,
             superInternal,
             interfaces,
         )
         emitAnnotations(cw::visitAnnotation, irClass.annotations)
 
-        // 字段：私有（T-M5-2）；文件类静态字段 + 静态访问器由 IRGen 生成
+        // 字段：私有（T-M5-2）；文件类静态字段 + 静态访问器由 IRGen 生成。
+        // 接口类跳过实例字段（JVM 接口不允许实例字段；接口类属性为不支持场景）
         for (field in irClass.fields) {
-            val access = if (field.isStatic) Opcodes.ACC_PRIVATE or Opcodes.ACC_STATIC else Opcodes.ACC_PRIVATE
-            cw.visitField(access, field.name, JvmTypeMapper.descriptor(field.type), null, null)
+            if (irClass.isInterface) continue
+            val fieldAccess = if (field.isStatic) Opcodes.ACC_PRIVATE or Opcodes.ACC_STATIC else Opcodes.ACC_PRIVATE
+            // T-M12 Signature 属性：字段泛型实参（`List<String>` 保留类型信息供反射）
+            val fieldSig = JvmTypeMapper.typeSignature(field.type)
+            cw.visitField(fieldAccess, field.name, JvmTypeMapper.descriptor(field.type), fieldSig, null)
         }
 
         // 方法（含构造器、$clinit、访问器、Lambda 合成方法）
@@ -82,6 +109,8 @@ class AsmEmitter(
     }
 
     private fun emitMethodInner(cw: ClassWriter, method: IrMethod) {
+        // 接口类不发射构造器（JVM 接口无 <init>；接口不可实例化，构造由实现类承担）
+        if (cls.isInterface && method.isConstructor) return
         val jvmName = when {
             method.isConstructor -> "<init>"
             method.name == "\$clinit" -> "<clinit>"
@@ -89,7 +118,9 @@ class AsmEmitter(
         }
         val access = buildAccess(method)
         val desc = methodDescriptor(method)
-        val mv = cw.visitMethod(access, jvmName, desc, null, null)
+        // T-M12 Signature 属性：方法泛型参数/返回（`(Ljava/util/List<Ljava/lang/String;>;)V`）
+        val methodSig = JvmTypeMapper.methodSignature(method.params.map { it.type }, method.returnType)
+        val mv = cw.visitMethod(access, jvmName, desc, methodSig, null)
         emitAnnotations(mv::visitAnnotation, method.annotations)
         mv.visitCode()
         if (method.isConstructor) {
@@ -112,7 +143,14 @@ class AsmEmitter(
         mv.visitEnd()
     }
     private fun buildAccess(method: IrMethod): Int {
-        var access = visibilityAccess(method.visibility)
+        var access = if (cls.isInterface) {
+            // 接口方法必须 public；Yux 方法恒有体 → 具体方法 = 默认方法（ACC_DEFAULT + Code）。
+            // 静态方法不置 ACC_DEFAULT（JVM 禁止 static default 组合）
+            if (method.isStatic) Opcodes.ACC_PUBLIC or Opcodes.ACC_STATIC
+            else Opcodes.ACC_PUBLIC or defaultMethodFlag
+        } else {
+            visibilityAccess(method.visibility)
+        }
         if (method.isStatic || method.name == "\$clinit") access = access or Opcodes.ACC_STATIC
         return access
     }
@@ -133,15 +171,14 @@ class AsmEmitter(
     fun resolveCallable(callable: IrCallable): JvmDescResolver.ResolvedMethod = when (callable) {
         is IrMethodRef -> {
             val m = callable.method
-            // isInterface 恒为 false：Yux 当前无法声明接口（YxClassSymbol.isInterface 恒 false，
-            // parser 无 interface 关键字），Yux 方法所有者不可能是接口，INVOKEVIRTUAL 正确；
-            // 若未来支持接口声明，须从 IrClass.isInterface（或 interfaces 继承关系）判定并改 INVOKEINTERFACE。
+            // 接口分发（T-M11-5 接口运行时）：方法所有者是接口类（Yux 类被 implements 引用）时
+            // 以 INVOKEINTERFACE 调用；非接口类维持 INVOKEVIRTUAL。
             JvmDescResolver.ResolvedMethod(
-                ownerInternal = m.owner?.name ?: ownerName,
+                ownerInternal = m.owner?.name?.let(JvmTypeMapper::internalClassName) ?: ownerName,
                 name = m.name,
                 desc = methodDescriptor(m),
                 isStatic = m.isStatic,
-                isInterface = false,
+                isInterface = m.owner?.isInterface == true,
                 realParamDescs = m.params.map { JvmTypeMapper.descriptor(it.type) },
                 realRetDesc = if (m.isConstructor) "V" else JvmTypeMapper.descriptor(m.returnType),
             )
@@ -159,8 +196,11 @@ class AsmEmitter(
             }
             is IrType.Declared -> when (val s = t.symbol) {
                 is yux.compiler.sema.YxClassSymbol -> {
-                    val irClass = module.classNamed(s.name)
-                        ?: error("M5 构造器解析失败: 类未生成 ${s.name}")
+                    val irClass = module.classNamed(s.qualifiedName)
+                        ?: error("M5 构造器解析失败: 类未生成 ${s.qualifiedName}")
+                    if (irClass.isInterface) {
+                        error("接口类不可实例化（Yux 接口 = 被 implements 引用的类，JVM 接口无构造器）: ${s.name}")
+                    }
                     val ctor = irClass.constructor
                         ?: error("M5 构造器解析失败: 无构造器 ${s.name}")
                     return ResolvedConstructor(methodDescriptor(ctor), ctor.params.map { JvmTypeMapper.descriptor(it.type) })
@@ -191,6 +231,28 @@ class AsmEmitter(
             }
             av.visitEnd()
         }
+    }
+
+    /** COMPUTE_FRAMES 用类写入器：getCommonSuperClass 以注入 classLoader 解析（项目类帧合并正确）。 */
+    private fun newClassWriter(): ClassWriter = object : ClassWriter(ClassWriter.COMPUTE_FRAMES) {
+        override fun getCommonSuperClass(type1: String, type2: String): String {
+            val c1 = loadFrameClass(type1) ?: return "java/lang/Object"
+            val c2 = loadFrameClass(type2) ?: return "java/lang/Object"
+            if (c1.isAssignableFrom(c2)) return type1
+            if (c2.isAssignableFrom(c1)) return type2
+            if (c1.isInterface || c2.isInterface) return "java/lang/Object"
+            var cur = c1
+            while (!cur.isAssignableFrom(c2)) {
+                cur = cur.superclass
+            }
+            return cur.name.replace('.', '/')
+        }
+    }
+
+    private fun loadFrameClass(internal: String): Class<*>? = try {
+        Class.forName(internal.replace('/', '.'), false, classLoader)
+    } catch (_: Throwable) {
+        null
     }
 }
 

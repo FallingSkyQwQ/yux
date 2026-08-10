@@ -10,6 +10,8 @@ import yux.compiler.ast.YxBreak
 import yux.compiler.ast.YxCall
 import yux.compiler.ast.YxCharLiteral
 import yux.compiler.ast.YxContinue
+import yux.compiler.ast.YxElseCondition
+import yux.compiler.ast.YxExprCondition
 import yux.compiler.ast.YxExpr
 import yux.compiler.ast.YxExprStmt
 import yux.compiler.ast.YxFloatLiteral
@@ -20,6 +22,7 @@ import yux.compiler.ast.YxIfExpr
 import yux.compiler.ast.YxIndexExpr
 import yux.compiler.ast.YxIntLiteral
 import yux.compiler.ast.YxIs
+import yux.compiler.ast.YxIsCondition
 import yux.compiler.ast.YxLambda
 import yux.compiler.ast.YxMemberAccess
 import yux.compiler.ast.YxNode
@@ -43,6 +46,8 @@ import yux.compiler.ast.YxUnary
 import yux.compiler.ast.YxUnsafeBlock
 import yux.compiler.ast.YxVarDecl
 import yux.compiler.ast.YxWhen
+import yux.compiler.ast.YxWhenExpr
+import yux.compiler.ast.YxWhenExprBranch
 import yux.compiler.ast.YxWhile
 import yux.compiler.ir.ArithOp
 import yux.compiler.ir.CompareOp
@@ -111,6 +116,7 @@ class ExprGen(
         is YxBinary -> genBinary(expr, g, fileScope)
         is YxUnary -> genUnary(expr, g, fileScope)
         is YxIfExpr -> genIfExpr(expr, g, fileScope)
+        is YxWhenExpr -> genWhenExpr(expr, g, fileScope)
         is YxIndexExpr -> genIndexExpr(expr, g, fileScope)
         is YxLambda -> genLambda(expr, g, fileScope)
         is YxBlockLambda -> genBlockLambda(expr, g, fileScope)
@@ -172,10 +178,18 @@ class ExprGen(
             }
         } else {
             val receiver = gen(expr.receiver, g, fileScope)
-            result = resolveMemberExpr(receiver, receiverType, expr.name, emptyList(), isSuper = isSuper)
+            result = resolveMemberExpr(castSmartReceiver(receiver, receiverType), receiverType, expr.name, emptyList(), isSuper = isSuper)
                 ?: error("IRGen: 成员不存在: ${expr.name} on ${receiverType.render()}")
         }
         return if (expr in irGen.guardSet) IrExpr.NullGuard(result) else result
+    }
+
+    /** 智能转型接收者适配（T-M12）：sema 已按 is 分支收窄 receiverType（Shape→Circle），
+     *  但局部仍为声明类型；成员调用需 CHECKCAST 到收窄类型（emitConvert 对同描述符 no-op）。 */
+    private fun castSmartReceiver(receiver: IrExpr, receiverType: SemaType): IrExpr {
+        val from = receiver.inferType() ?: return receiver
+        val to = TypeBridge.toIr(receiverType)
+        return if (from.equivalent(to)) receiver else IrExpr.Convert(receiver, to)
     }
 
     /** 成员解析：Yux 属性→getter 调用；Yux 函数/JVM 方法→调用；Object 方法→JVM 调用回退。 */
@@ -194,7 +208,7 @@ class ExprGen(
                 irGen.propertyAccessors[prop]?.getter?.let { IrExpr.Invoke(IrMethodRef(it), receiver, emptyList(), isSuper) }
             } ?: sym.functionsIncludingSuper(name).firstOrNull()?.let { fn ->
                 irGen.functionMethods[fn]?.let { IrExpr.Invoke(IrMethodRef(it), receiver, args, isSuper) }
-            } ?: objectMethodCall(sym.name, name, args)?.let { IrExpr.Invoke(it, receiver, args, isSuper) }
+            } ?: objectMethodCall(sym.qualifiedName, name, args)?.let { IrExpr.Invoke(it, receiver, args, isSuper) }
         }
         else -> resolveMemberExprJvm(receiver, rt, name, args, argTypes, isSuper)
     }
@@ -287,10 +301,10 @@ class ExprGen(
             if (extSym is FunctionSymbol && extSym.receiverType != null) {
                 val method = irGen.functionMethods[extSym]
                     ?: error("IRGen: 扩展函数未登记: ${extSym.name}")
-                val receiver = gen(callee.receiver, g, fileScope)
+                val receiver = castSmartReceiver(gen(callee.receiver, g, fileScope), receiverType)
                 result = IrExpr.Invoke(IrMethodRef(method), null, listOf(receiver) + args)
             } else {
-                val receiver = gen(callee.receiver, g, fileScope)
+                val receiver = castSmartReceiver(gen(callee.receiver, g, fileScope), receiverType)
                 result = resolveMemberExpr(receiver, receiverType, callee.name, args, argTypes, isSuper = callee.receiver is YxSuper)
                     ?: error("IRGen: 成员方法不存在: ${callee.name} on ${receiverType.render()}")
             }
@@ -300,7 +314,7 @@ class ExprGen(
 
     /**
      * 内置函数（M3 注册的 decl==null 函数）→ 运行时宿主：
-     * `print`/`println` → yux.core.CoreLib；`serialize`/`deserialize`（S-8.3）→ yux.json.Json。
+     * `print`/`println` → yux.core.CoreLib；`serialize`/`deserialize`（S-8.3）→ yux.serializer.YuxSerializer。
      */
     private fun builtinCall(sym: FunctionSymbol): IrCallable = IrJvmCall(
         name = sym.name,
@@ -406,6 +420,77 @@ class ExprGen(
         g.emit(IrStmt.LocalAssign(tmp, gen(expr.elseExpr, g, fileScope)))
         g.emit(IrStmt.Label(endL))
         return IrExpr.LocalRead(tmp)
+    }
+
+    /** when 表达式（T-M12）：subject 求值一次 → if 链分支 → 各分支体落同一临时变量（镜像 genIfExpr）。 */
+    private fun genWhenExpr(expr: YxWhenExpr, g: MethodGen, fileScope: FileScope): IrExpr {
+        val type = TypeBridge.toIr(irGen.exprTypes[expr] ?: SemaType.ErrorT)
+        val tmp = g.newLocal("whenTmp", type)
+        val subjectLocal = g.newLocal("whenSubject", TypeBridge.toIr(irGen.exprTypes[expr.subject] ?: SemaType.ErrorT))
+        g.emit(IrStmt.LocalAssign(subjectLocal, gen(expr.subject, g, fileScope)))
+        val hasElse = expr.branches.any { it.condition is YxElseCondition }
+        val endL = g.newLabel()
+        for (branch in expr.branches) {
+            val bodyL = g.newLabel()
+            when (val cond = branch.condition) {
+                is YxElseCondition -> {
+                    g.emit(IrStmt.Label(bodyL))
+                    g.emit(IrStmt.LocalAssign(tmp, gen(branch.body, g, fileScope)))
+                    g.emit(IrStmt.Goto(endL))
+                }
+                is YxIsCondition -> {
+                    val nextL = g.newLabel()
+                    g.emit(
+                        IrStmt.Branch(
+                            IrExpr.IsType(IrExpr.LocalRead(subjectLocal), irGen.resolveIrType(cond.type, fileScope)),
+                            bodyL,
+                            nextL,
+                        ),
+                    )
+                    g.emit(IrStmt.Label(bodyL))
+                    g.emit(IrStmt.LocalAssign(tmp, gen(branch.body, g, fileScope)))
+                    g.emit(IrStmt.Goto(endL))
+                    g.emit(IrStmt.Label(nextL))
+                }
+                is YxExprCondition -> {
+                    val nextL = g.newLabel()
+                    g.emit(
+                        IrStmt.Branch(
+                            IrExpr.Compare(CompareOp.EQ, IrExpr.LocalRead(subjectLocal), gen(cond.expr, g, fileScope)),
+                            bodyL,
+                            nextL,
+                        ),
+                    )
+                    g.emit(IrStmt.Label(bodyL))
+                    g.emit(IrStmt.LocalAssign(tmp, gen(branch.body, g, fileScope)))
+                    g.emit(IrStmt.Goto(endL))
+                    g.emit(IrStmt.Label(nextL))
+                }
+            }
+        }
+        // T-M12：无 else 时（密封穷尽），最后的 nextL 直落 endL——whenTmp 需在 merge 点前初始化
+        //（否则 COMPUTE_FRAMES 在 endL 报 local=top；Kotlin 以 NoWhenBranchMatchedException 兜底）。
+        // 该路径运行时不可达（sema 穷尽性保证），初始化成类型默认值即可。
+        if (!hasElse) {
+            g.emit(IrStmt.LocalAssign(tmp, defaultConst(type)))
+        }
+        g.emit(IrStmt.Label(endL))
+        return IrExpr.LocalRead(tmp)
+    }
+
+    /** 类型默认值（T-M12）：无 else 的 when 表达式 merge 点兜底初始化；运行时不可达。 */
+    private fun defaultConst(type: IrType): IrExpr = when (val t = type.nonNull()) {
+        is IrType.Basic -> when (t.name) {
+            "Int" -> IrExpr.Const(0)
+            "Long" -> IrExpr.Const(0L)
+            "Float" -> IrExpr.Const(0f)
+            "Double" -> IrExpr.Const(0.0)
+            "Boolean" -> IrExpr.Const(false)
+            "Char" -> IrExpr.Const('\u0000')
+            "Byte" -> IrExpr.Const(0.toByte())
+            else -> IrExpr.Const(null)
+        }
+        else -> IrExpr.Const(null)
     }
 
     /** 索引读取（M9）：Map→`get(k)`、List/Set→`get(i)`、数组→arrayload。 */
@@ -661,6 +746,14 @@ class ExprGen(
                     collectCaptures(b.body, bound, captures)
                 }
             }
+            is YxWhenExpr -> {
+                collectCaptures(node.subject, bound, captures)
+                node.branches.forEach { b ->
+                    (b.condition as? yux.compiler.ast.YxExprCondition)
+                        ?.let { collectCaptures(it.expr, bound, captures) }
+                    collectCaptures(b.body, bound, captures)
+                }
+            }
             is YxTry -> {
                 collectCaptures(node.body, bound, captures)
                 node.catches.forEach { c ->
@@ -733,7 +826,7 @@ class ExprGen(
                     null
                 } else {
                     val local = g.newLocal("receiver", TypeBridge.toIr(receiverType))
-                    g.emit(IrStmt.LocalAssign(local, gen(t.receiver, g, fileScope)))
+                    g.emit(IrStmt.LocalAssign(local, castSmartReceiver(gen(t.receiver, g, fileScope), receiverType)))
                     local
                 }
                 val value = gen(expr.value, g, fileScope)

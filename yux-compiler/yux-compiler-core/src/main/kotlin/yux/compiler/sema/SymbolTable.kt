@@ -52,6 +52,9 @@ class SymbolTable(
     /** 同一包下其他文件的同名类型（用于「同包免导入」解析）。 */
     fun typeInPackage(pkg: String, name: String): TypeSymbol? = typesByPackage[pkg]?.get(name)
 
+    /** 包内全部类型（star 导入解析 Yux 声明类用；未知包返回 null）。 */
+    fun typesInPackage(pkg: String): Map<String, TypeSymbol>? = typesByPackage[pkg]
+
     /** 已注册的全部类型（诊断/调试用）。 */
     fun allTypeNames(): List<String> = typesByPackage.values.flatMap { it.keys }
 
@@ -89,6 +92,7 @@ class SymbolTable(
             interfaces = emptyList(),
             members = mutableListOf(),
             isAbstract = false,
+            isSealed = decl.isSealed,
             annotations = decl.annotations,
             visibility = decl.visibility,
             fileScope = file,
@@ -107,6 +111,7 @@ class SymbolTable(
             interfaces = emptyList(),
             members = mutableListOf(),
             isAbstract = false,
+            isSealed = decl.isSealed,
             annotations = decl.annotations,
             visibility = decl.visibility,
             fileScope = file,
@@ -125,6 +130,7 @@ class SymbolTable(
             interfaces = emptyList(),
             members = mutableListOf(),
             isAbstract = false,
+            isSealed = false,
             annotations = decl.annotations,
             fileScope = file,
             span = decl.span,

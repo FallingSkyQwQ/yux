@@ -176,14 +176,14 @@ class Parser(
         return when {
             atKeyword("package") -> parsePackageDecl()
             atKeyword("import") -> parseImportDecl()
-            atKeyword("data") -> parseDataClass(annotations, null)
+            atKeyword("data") -> parseDataClass(annotations, null, null)
             atKeyword("service") -> parseService(annotations)
             at(ID) || atSoft("private") || atSoft("protected") ||
                 atKeyword("fun") || atKeyword("async") -> {
                 val flags = parseDeclFlags()
                 when {
                     atKeyword("fun") -> parseFunction(annotations, flags, funKw = advance())
-                    atKeyword("data") -> parseDataClass(annotations, flags.modifier)
+                    atKeyword("data") -> parseDataClass(annotations, flags.modifier, flags.sealed)
                     atKeyword("service") -> parseService(annotations)
                     at(ID) -> {
                         val nxt = peek(1)
@@ -239,6 +239,7 @@ class Parser(
         val async: Token? = null,
         val override: Token? = null,
         val modifier: Token? = null,
+        val sealed: Token? = null,
     )
 
     /** 扩展关键字委托（T-M6-4）：消费关键字 token，交由插件解析器接管剩余语法。 */
@@ -253,16 +254,28 @@ class Parser(
         var async: Token? = null
         var override: Token? = null
         var modifier: Token? = null
+        var sealed: Token? = null
         var looping = true
         while (looping) {
             when {
                 atKeyword("async") -> async = advance()
                 atSoft("override") -> override = advance()
                 atSoft("private") || atSoft("protected") -> modifier = advance()
+                // `sealed` 为软关键字：仅当后随类声明首符（类名 / `data`）时视为修饰符，
+                // 其余位置（属性名、表达式、成员名）保持普通标识符语义（T-M12）。
+                at(ID) && current.text == "sealed" && isSealedModifierAhead() -> sealed = advance()
                 else -> looping = false
             }
         }
-        return DeclFlags(async, override, modifier)
+        return DeclFlags(async, override, modifier, sealed)
+    }
+
+    /** `sealed` 作为类修饰符的判定：后随类名 / `data`（此时 `sealed` 不可能是属性名）。 */
+    private fun isSealedModifierAhead(): Boolean {
+        val nxt = peek(1)
+        return nxt.kind == IDENTIFIER ||
+            (nxt.kind == KEYWORD && nxt.text == "data") ||
+            (nxt.kind == SOFT_KEYWORD && (nxt.text == "extends" || nxt.text == "implements"))
     }
 
     private fun parsePackageDecl(): CstDecl {
@@ -293,14 +306,14 @@ class Parser(
         return CstImportDecl(importKw, name, star, spanOf(importKw, star ?: name.last()))
     }
 
-    private fun parseDataClass(annotations: List<CstAnnotation>, modifier: Token?): CstDecl {
+    private fun parseDataClass(annotations: List<CstAnnotation>, modifier: Token?, sealedKw: Token?): CstDecl {
         val dataKw = expect(KEYWORD, "'data'")
         val name = expectIdent("class name")
         val typeParams = parseTypeParams()
         val (extendsKw, extendsType, implementsKw, implements) = parseExtendsImplements()
         val body = parseClassBody()
         return CstDataClassDecl(
-            dataKw, modifier, annotations, name, typeParams,
+            dataKw, modifier, sealedKw, annotations, name, typeParams,
             extendsKw, extendsType, implementsKw, implements, body,
             spanOf(dataKw, body),
         )
@@ -320,7 +333,7 @@ class Parser(
         val (extendsKw, extendsType, implementsKw, implements) = parseExtendsImplements()
         val body = parseClassBody()
         return CstClassDecl(
-            flags.modifier, annotations, name, typeParams,
+            flags.modifier, flags.sealed, annotations, name, typeParams,
             extendsKw, extendsType, implementsKw, implements, body,
             spanOf(name, body),
         )
@@ -730,6 +743,38 @@ class Parser(
         return CstIfExpr(ifKw, condition, thenKw, thenExpr, elseKw, elseExpr, spanOf(ifKw, elseExpr))
     }
 
+    /** when 表达式（T-M12）：`when <subject> { cond -> expr ... [else -> expr] }`，分支体为单个表达式。 */
+    private fun parseWhenExpr(): CstExpr {
+        val whenKw = expect(KEYWORD, "'when'")
+        val subject = parseCondition()
+        val lbrace = expect(LBRACE, "'{'")
+        val branches = mutableListOf<CstWhenExprBranch>()
+        skipNewlines()
+        while (!at(RBRACE) && !at(EOF)) {
+            skipNewlines()
+            if (at(RBRACE)) break
+            val condition: CstWhenCondition
+            if (atKeyword("else")) {
+                val kw = advance()
+                condition = CstElseWhenCondition(kw, spanOf(kw, kw))
+            } else if (atKeyword("is")) {
+                val kw = advance()
+                val type = parseType()
+                condition = CstIsWhenCondition(kw, type, spanOf(kw, type))
+            } else {
+                val expr = parseCondition()
+                condition = CstExprWhenCondition(expr, expr.span)
+            }
+            val arrow = expect(ARROW, "'->'")
+            // 分支体为单表达式：解析到下一条分支条件 / `}` 处自然终止（`->` 非中缀运算符）
+            val body = pratt.parseExpression()
+            branches += CstWhenExprBranch(condition, arrow, body, spanOf(condition, body))
+            skipNewlines()
+        }
+        val rbrace = expect(RBRACE, "'}'")
+        return CstWhenExpr(whenKw, subject, lbrace, branches, rbrace, spanOf(whenKw, rbrace))
+    }
+
     private fun parseWhen(): CstStmt {
         val whenKw = expect(KEYWORD, "'when'")
         val subject = parseCondition()
@@ -885,6 +930,7 @@ class Parser(
             t.kind == KEYWORD && t.text == "this" -> CstThis(advance(), spanOf(t))
             t.kind == KEYWORD && t.text == "super" -> CstSuper(advance(), spanOf(t))
             t.kind == KEYWORD && t.text == "if" -> parseIfExpr()
+            t.kind == KEYWORD && t.text == "when" -> parseWhenExpr()
             t.kind == KEYWORD && t.text == "throw" -> {
                 advance()
                 val expr = pratt.parseExpression()

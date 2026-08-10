@@ -69,6 +69,8 @@ import yux.compiler.ast.YxVarDecl
 import yux.compiler.ast.YxVisibility
 import yux.compiler.ast.YxWhen
 import yux.compiler.ast.YxWhenBranch
+import yux.compiler.ast.YxWhenExpr
+import yux.compiler.ast.YxWhenExprBranch
 import yux.compiler.ast.YxWhile
 import yux.compiler.ast.YxNode
 import yux.compiler.ast.YxExtensionDecl
@@ -314,7 +316,17 @@ object AstPrinter {
         is YxRange -> "Range(${renderExpr(expr.from)}, ${renderExpr(expr.to)})"
         is YxAssign -> "Assign(${renderExpr(expr.target)}, ${expr.op}, ${renderExpr(expr.value)})"
         is YxIfExpr -> "IfExpr(${renderExpr(expr.condition)}, ${renderExpr(expr.thenExpr)}, ${renderExpr(expr.elseExpr)})"
+        is YxWhenExpr -> "WhenExpr(${renderExpr(expr.subject)}, [${expr.branches.joinToString("; ") { renderWhenExprBranch(it) }}])"
         is YxIndexExpr -> "Index(${renderExpr(expr.base)}, ${renderExpr(expr.index)})"
+    }
+
+    private fun renderWhenExprBranch(branch: YxWhenExprBranch): String {
+        val cond = when (val c = branch.condition) {
+            is YxIsCondition -> "is ${renderType(c.type)}"
+            is YxElseCondition -> "else"
+            is YxExprCondition -> renderExpr(c.expr)
+        }
+        return "$cond -> ${renderExpr(branch.body)}"
     }
 
     /** 块 Lambda 体：语句以 `; ` 连接的单行形式。 */

@@ -93,4 +93,24 @@ class BuildPlannerTest {
 
         assertEquals("com.example.Server", plan.mainClassName)
     }
+
+    @Test
+    fun `packaged main yux yields qualified default main class`() {
+        Files.createDirectories(projectDir.resolve("src"))
+        projectDir.resolve("src/main.yux").writeText("package com.example\nfun main() {}\n")
+
+        val plan = planner.plan(projectDir, baseConfig)
+
+        assertEquals("com.example.Main", plan.mainClassName)
+    }
+
+    @Test
+    fun `default package main yux keeps simple main class`() {
+        Files.createDirectories(projectDir.resolve("src"))
+        projectDir.resolve("src/main.yux").writeText("fun main() {}\n")
+
+        val plan = planner.plan(projectDir, baseConfig)
+
+        assertEquals("Main", plan.mainClassName)
+    }
 }
