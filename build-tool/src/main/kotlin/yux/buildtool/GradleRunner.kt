@@ -4,6 +4,7 @@ import java.io.ByteArrayOutputStream
 import java.io.IOException
 import java.nio.file.Files
 import java.nio.file.Path
+import java.util.concurrent.TimeUnit
 
 /** Gradle 调用结果：退出码 + 合并的 stdout/stderr 输出。 */
 data class GradleResult(val exitCode: Int, val output: String)
@@ -13,6 +14,7 @@ data class GradleResult(val exitCode: Int, val output: String)
  *
  * 支持 `--offline`（禁止访问网络仓库）与 `--no-daemon`（不驻留守护进程）开关；
  * stdout/stderr 合并为单一输出串。输出通过读取线程边执行边消费，避免大输出撑满管道导致死锁。
+ * 进程挂起超过 [timeoutMillis] 时强制终止并返回失败结果（输出截断）。
  */
 class GradleRunner(
     /** 显式指定 gradle 可执行文件；null → [locateGradle] 自动定位。 */
@@ -21,6 +23,8 @@ class GradleRunner(
     private val offline: Boolean = false,
     /** 以 `--no-daemon` 运行（不驻留守护进程）。 */
     private val noDaemon: Boolean = false,
+    /** 进程最大等待时长（毫秒）；超时后 [Process.destroyForcibly] 并报错。 */
+    private val timeoutMillis: Long = DEFAULT_TIMEOUT_MILLIS,
 ) {
 
     /** 在 [workDir] 下运行 Gradle [tasks]；合并 stdout/stderr 为单一输出。 */
@@ -44,12 +48,22 @@ class GradleRunner(
             process.inputStream.use { input -> input.copyTo(output) }
         }
         reader.start()
-        val exitCode = process.waitFor()
+        if (!process.waitFor(timeoutMillis, TimeUnit.MILLISECONDS)) {
+            process.destroyForcibly()
+            reader.join()
+            return GradleResult(
+                -1,
+                "Gradle 构建超时，已强制终止（上限 ${timeoutMillis}ms）:\n" + output.toString(Charsets.UTF_8).takeLast(2000),
+            )
+        }
         reader.join()
-        return GradleResult(exitCode, output.toString(Charsets.UTF_8))
+        return GradleResult(process.exitValue(), output.toString(Charsets.UTF_8))
     }
 
     companion object {
+        /** 默认进程超时：5 分钟（Gradle 全量构建含依赖解析与守护进程启动）。 */
+        const val DEFAULT_TIMEOUT_MILLIS: Long = 5 * 60 * 1000
+
         /** 定位顺序：YUX_GRADLE 环境变量 → GRADLE_HOME/bin/gradle → 项目树向上找 gradlew → PATH 上的 gradle。 */
         fun locateGradle(projectDir: Path): String {
             val env = System.getenv("YUX_GRADLE")

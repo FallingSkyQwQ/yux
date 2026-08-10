@@ -96,6 +96,30 @@ class YuxBuildTest {
     }
 
     @Test
+    fun `修改构建配置后缓存失效并重新编译`() {
+        writeProject("fun main() { print \"Hello Yux build\" }\n")
+        val build = yuxBuild()
+        assertTrue(build.build(offline = true).success)
+
+        // 改 mainClass（jar 名不变，仅影响生成的 Gradle 脚本与 plugin.yml 内容）
+        projectDir.resolve("build.yml").writeText(
+            """
+            name: demo
+            version: 1.0.0
+            language:
+              yux: "1.0"
+            target:
+              jvm: 21
+            main: com.example.Main
+            """.trimIndent() + "\n",
+        )
+        val result = build.build(offline = true)
+
+        assertTrue(result.success, result.message)
+        assertTrue(result.compiled, "build.yml 变更后应重新编译（不再 upToDate）")
+    }
+
+    @Test
     fun `clean 构建强制重新编译并重建缓存`() {
         writeProject("fun main() { print \"Hello Yux build\" }\n")
         val build = yuxBuild()

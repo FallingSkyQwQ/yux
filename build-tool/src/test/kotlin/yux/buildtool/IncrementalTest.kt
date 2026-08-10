@@ -36,6 +36,18 @@ class IncrementalTest {
     }
 
     @Test
+    fun `build 配置哈希变更时增量失效`() {
+        val source = projectDir.resolve("src/main.yux")
+        Files.createDirectories(source.parent)
+        source.writeText("fun main() {}\n")
+        val yuxCache = cache()
+        yuxCache.save(listOf(source), configHash = "config-v1")
+
+        assertTrue(yuxCache.isUpToDate(listOf(source), configHash = "config-v1"))
+        assertFalse(yuxCache.isUpToDate(listOf(source), configHash = "config-v2"))
+    }
+
+    @Test
     fun `编译器版本不匹配时增量失效`() {
         val source = projectDir.resolve("src/main.yux")
         Files.createDirectories(source.parent)

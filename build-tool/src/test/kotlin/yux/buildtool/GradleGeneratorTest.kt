@@ -1,7 +1,9 @@
 package yux.buildtool
 
 import org.junit.jupiter.api.Test
+import org.yaml.snakeyaml.Yaml
 import yux.testsupport.GoldenFile
+import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
@@ -11,6 +13,60 @@ import kotlin.test.assertTrue
 class GradleGeneratorTest {
 
     private val generator = GradleGenerator()
+
+    @Test
+    fun `特殊字符在生成脚本中正确转义`() {
+        val name = "a\"b\$c\\d"
+        val mainClass = "com.example.\"Main\""
+        val path = "C:\\yux\\build"
+        val config = BuildConfig(
+            name = name,
+            version = "1.0.0",
+            mainClass = mainClass,
+            sourceJava = path,
+            sourceKotlin = path,
+            resourcesDir = path,
+            mavenDeps = listOf(MavenCoord("com.example", "api", "2.0\$beta")),
+            pluginsEnabled = setOf("minecraft"),
+            paperVersion = "1.21",
+        )
+        val project = generator.generate(config, yuxClassesDir = path)
+
+        val escapedName = "a\\\"b\\\$c\\\\d"
+        val escapedMain = "com.example.\\\"Main\\\""
+        val escapedPath = "C:\\\\yux\\\\build"
+        val escapedDep = "com.example:api:2.0\\\$beta"
+        assertTrue(project.settingsGradle.contains("""rootProject.name = "$escapedName""""), project.settingsGradle)
+        assertTrue(project.buildGradleKts.contains("""mainClass.set("$escapedMain")"""), project.buildGradleKts)
+        assertTrue(project.buildGradleKts.contains("""implementation(files("$escapedPath"))"""), project.buildGradleKts)
+        assertTrue(project.buildGradleKts.contains("""implementation("$escapedDep")"""), project.buildGradleKts)
+        assertTrue(project.buildGradleKts.contains("""srcDir("$escapedPath")"""), project.buildGradleKts)
+        assertTrue(project.buildGradleKts.contains("""resources.srcDir("$escapedPath")"""), project.buildGradleKts)
+        assertTrue(project.buildGradleKts.contains("""from("$escapedPath")"""), project.buildGradleKts)
+        // plugin.yml 可被 YAML 解析器读取且值完整还原
+        val parsed = Yaml().load<Map<String, Any?>>(assertNotNull(project.pluginYml))
+        assertEquals(name, parsed["name"])
+        assertEquals("1.0.0", parsed["version"])
+        assertEquals(mainClass, parsed["main"])
+        assertEquals("1.21", parsed["api-version"])
+    }
+
+    @Test
+    fun `含冒号井号与前导引号的值在 plugin yml 中可解析`() {
+        val config = BuildConfig(
+            name = "plugin: #1",
+            version = "1.0",
+            mainClass = "\"Quoted\"Main",
+            pluginsEnabled = setOf("minecraft"),
+            paperVersion = "1.21",
+        )
+        val project = generator.generate(config)
+
+        val parsed = Yaml().load<Map<String, Any?>>(assertNotNull(project.pluginYml))
+        assertEquals("plugin: #1", parsed["name"])
+        assertEquals("1.0", parsed["version"])
+        assertEquals("\"Quoted\"Main", parsed["main"])
+    }
 
     @Test
     fun `pure yux project generates settings build and no plugin yml`() {
@@ -55,6 +111,6 @@ class GradleGeneratorTest {
         val project = generator.generate(config)
 
         GoldenFile().assertMatches("gradle.build.minecraft.txt", project.buildGradleKts)
-        assertTrue(assertNotNull(project.pluginYml).contains("main: HomePlugin"))
+        assertTrue(assertNotNull(project.pluginYml).contains("main: \"HomePlugin\""))
     }
 }

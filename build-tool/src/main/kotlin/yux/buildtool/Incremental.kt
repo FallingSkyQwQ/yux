@@ -9,9 +9,9 @@ import java.security.MessageDigest
 import java.util.Comparator
 
 /**
- * 文件级增量缓存（T-M7-6，02-§12.3）：以「全部源文件 SHA-256 + 编译器版本」为键，
- * 判定既有产物是否过期。清单 `manifest.json` 为单行确定性 JSON：
- * `{"version": "0.1.0-SNAPSHOT", "files": {"src/main.yux": "sha256hex"}}`。
+ * 文件级增量缓存（T-M7-6，02-§12.3）：以「全部源文件 SHA-256 + 编译器版本 + build 配置
+ * 哈希」为键，判定既有产物是否过期。清单 `manifest.json` 为单行确定性 JSON：
+ * `{"version": "0.1.0-SNAPSHOT", "config": "...", "files": {"src/main.yux": "sha256hex"}}`。
  *
  * 清单键为相对项目根的正斜杠路径（绝对输入相对化、相对输入直接采用——与
  * [YuxSymbols] 的 relativePath 一致），按键排序保证确定性。清单解析走 SnakeYAML
@@ -22,12 +22,17 @@ class YuxCache(
     val cacheDir: Path = BuildPaths.resolve(projectDir, BuildPaths.CACHE_DIR),
 ) {
 
-    /** 全部源文件哈希与清单一致 → 增量命中。 */
-    fun isUpToDate(sources: List<Path>, compilerVersion: String = COMPILER_VERSION): Boolean {
+    /** 全部源文件哈希与清单一致、且 build 配置哈希与编译器版本匹配 → 增量命中。 */
+    fun isUpToDate(
+        sources: List<Path>,
+        compilerVersion: String = COMPILER_VERSION,
+        configHash: String = "",
+    ): Boolean {
         val manifest = cacheDir.resolve(MANIFEST_FILE)
         if (!Files.isRegularFile(manifest)) return false
         val parsed = readManifest(manifest) ?: return false
         if (parsed.version != compilerVersion) return false
+        if (parsed.config != configHash) return false
         val current = try {
             hash(sources)
         } catch (e: IOException) {
@@ -36,11 +41,18 @@ class YuxCache(
         return parsed.files == current
     }
 
-    /** 写入新清单（源文件 → SHA-256）；缓存目录不存在时自动创建。 */
-    fun save(sources: List<Path>, compilerVersion: String = COMPILER_VERSION) {
+    /** 写入新清单（源文件 → SHA-256 + build 配置哈希）；缓存目录不存在时自动创建。 */
+    fun save(
+        sources: List<Path>,
+        compilerVersion: String = COMPILER_VERSION,
+        configHash: String = "",
+    ) {
         val hashes = hash(sources)
         Files.createDirectories(cacheDir)
-        Files.writeString(cacheDir.resolve(MANIFEST_FILE), renderManifest(compilerVersion, hashes))
+        Files.writeString(
+            cacheDir.resolve(MANIFEST_FILE),
+            renderManifest(compilerVersion, configHash, hashes),
+        )
     }
 
     /** 删除缓存目录（不存在时静默）。 */
@@ -75,13 +87,14 @@ class YuxCache(
         }
         if (root !is Map<*, *>) return null
         val version = root["version"] as? String ?: return null
+        val config = root["config"] as? String ?: return null
         val files = root["files"] as? Map<*, *> ?: return null
         val fileHashes = sortedMapOf<String, String>()
         for ((key, value) in files.entries) {
             if (key !is String || value !is String) return null
             fileHashes[key] = value
         }
-        return ManifestData(version, fileHashes)
+        return ManifestData(version, config, fileHashes)
     }
 
     /** 源路径 → 清单键：绝对路径相对 [projectDir] 规约，相对路径直接采用。 */
@@ -91,9 +104,9 @@ class YuxCache(
     }
 
     /** 渲染单行确定性清单（冒号后空两格；文件项按键排序）。 */
-    private fun renderManifest(version: String, files: Map<String, String>): String {
+    private fun renderManifest(version: String, configHash: String, files: Map<String, String>): String {
         val entries = files.entries.joinToString(", ") { "${quote(it.key)}: ${quote(it.value)}" }
-        return "{\"version\": ${quote(version)}, \"files\": {$entries}}"
+        return "{\"version\": ${quote(version)}, \"config\": ${quote(configHash)}, \"files\": {$entries}}"
     }
 
     /** JSON 字符串转义（与 [YuxSymbols] 一致：仅处理 `\` 与 `"`）。 */
@@ -101,7 +114,7 @@ class YuxCache(
         "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
 
     /** 解析后的清单模型。 */
-    private data class ManifestData(val version: String, val files: Map<String, String>)
+    private data class ManifestData(val version: String, val config: String, val files: Map<String, String>)
 
     companion object {
         /** 编译器版本：清单键的一部分；编译器变更后强制全量重编。 */

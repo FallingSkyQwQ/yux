@@ -1,4 +1,4 @@
-name: MyServer
-version: 1.0.0
-main: com.example.Main
-api-version: 1.21
+name: "MyServer"
+version: "1.0.0"
+main: "com.example.Main"
+api-version: "1.21"
