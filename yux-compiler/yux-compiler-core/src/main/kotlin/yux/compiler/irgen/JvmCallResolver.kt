@@ -105,8 +105,10 @@ class JvmCallResolver(
         )
     }
 
-    /** 元素类型（S-6.4.1 迭代）：镜像 TypeChecker.elementType，供 for 循环展开。 */
-    fun elementType(iterable: SemaType): SemaType? = when (iterable) {
+    /** 按限定名解析 JVM 类符号（IRGen 构造运行时集合类型等场景）。 */
+    fun resolveJvmClass(qualifiedName: String): JvmClassSymbol? = classPath.resolve(qualifiedName)
+
+    /** 元素类型（S-6.4.1 迭代）：镜像 TypeChecker.elementType，供 for 循环展开。 */    fun elementType(iterable: SemaType): SemaType? = when (iterable) {
         is SemaType.Basic -> when (iterable.name) {
             "Range" -> SemaType.INT
             "Iterable" -> SemaType.ANY
@@ -118,6 +120,7 @@ class JvmCallResolver(
             val sym = iterable.symbol
             // JvmClassSymbol.isIterable() 覆盖 Iterable 本身与所有实现类（List/Set/...）
             when {
+                sym is JvmClassSymbol && sym.qualifiedName.startsWith("[") -> classPath.arrayElementType(sym.qualifiedName)
                 sym is JvmClassSymbol && sym.isIterable() -> iterable.args.getOrNull(0) ?: SemaType.ANY
                 sym is yux.compiler.sema.YxClassSymbol && iterable.args.isNotEmpty() -> iterable.args[0]
                 else -> null

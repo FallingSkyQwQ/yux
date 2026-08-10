@@ -81,4 +81,25 @@ class HomeStoreTest {
         HomeStore.save(dataFolder, "present.yml", HomeData("x", emptyMap()))
         assertTrue(HomeStore.exists(dataFolder, "present.yml"))
     }
+
+    @Test
+    fun `save 原子写不留残留临时文件`() {
+        HomeStore.save(dataFolder, "data/steve.yml", HomeData("steve", emptyMap()))
+        assertTrue(File(dataFolder, "data/steve.yml").isFile)
+        assertFalse(File(dataFolder, "data/steve.yml.tmp").exists(), "不应残留 .tmp 临时文件")
+        val loaded = HomeStore.load(dataFolder, "data/steve.yml", HomeData::class.java) as HomeData
+        assertEquals("steve", loaded.player)
+    }
+
+    @Test
+    fun `load 损坏文件回退 null`() {
+        File(dataFolder, "broken.yml").writeText("player: [unclosed\n: : bad")
+        assertNull(HomeStore.load(dataFolder, "broken.yml", HomeData::class.java))
+    }
+
+    @Test
+    fun `loadMap 损坏文件回退空映射`() {
+        File(dataFolder, "broken-map.yml").writeText("player: [unclosed")
+        assertTrue(HomeStore.loadMap(dataFolder, "broken-map.yml", LocationData()).isEmpty())
+    }
 }

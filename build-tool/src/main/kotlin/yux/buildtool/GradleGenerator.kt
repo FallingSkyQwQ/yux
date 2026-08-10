@@ -37,7 +37,7 @@ class GradleGenerator {
 
     /** settings.gradle：声明仓库，供 kotlin 插件解析 kotlin-stdlib 与 maven 依赖（M10 混合项目必需）。 */
     private fun renderSettingsGradle(config: BuildConfig): String = buildString {
-        append("rootProject.name = \"${config.name}\"\n")
+        append("rootProject.name = \"${kt(config.name)}\"\n")
         append("dependencyResolutionManagement {\n")
         append("    repositories {\n")
         append("        mavenCentral()\n")
@@ -104,7 +104,7 @@ class GradleGenerator {
     private fun applicationSection(config: BuildConfig): String? = config.mainClass?.let { main ->
         buildString {
             append("application {\n")
-            append("    mainClass.set(\"$main\")\n")
+            append("    mainClass.set(\"${kt(main)}\")\n")
             append("}")
         }
     }
@@ -121,14 +121,14 @@ class GradleGenerator {
         return buildString {
             append("dependencies {\n")
             for (dep in config.mavenDeps) {
-                append("    implementation(\"${dep.toGradleNotation()}\")\n")
+                append("    implementation(\"${kt(dep.toGradleNotation())}\")\n")
             }
             if (config.paperVersion != null) {
-                append("    implementation(\"io.papermc.paper:paper-api:${config.paperVersion}-R0.1-SNAPSHOT\")\n")
+                append("    implementation(\"io.papermc.paper:paper-api:${kt(config.paperVersion)}-R0.1-SNAPSHOT\")\n")
             }
             if (mixed) {
                 append("    // M10（05-§4）：Yux 编译产物加入编译 classpath（Yux 类型对 Java/Kotlin 可见）\n")
-                append("    implementation(files(\"$yuxClassesDir\"))\n")
+                append("    implementation(files(\"${kt(yuxClassesDir)}\"))\n")
             }
             append("}")
         }
@@ -139,15 +139,15 @@ class GradleGenerator {
         append("sourceSets {\n")
         append("    main {\n")
         append("        java {\n")
-        append("            srcDir(\"$yuxClassesDir\")\n")
+        append("            srcDir(\"${kt(yuxClassesDir)}\")\n")
         if (config.sourceJava != null) {
-            append("            srcDir(\"${config.sourceJava}\")\n")
+            append("            srcDir(\"${kt(config.sourceJava)}\")\n")
         }
         if (config.sourceKotlin != null) {
-            append("            srcDir(\"${config.sourceKotlin}\")\n")
+            append("            srcDir(\"${kt(config.sourceKotlin)}\")\n")
         }
         append("        }\n")
-        append("        resources.srcDir(\"${config.resourcesDir}\")\n")
+        append("        resources.srcDir(\"${kt(config.resourcesDir)}\")\n")
         append("    }\n")
         append("}")
     }
@@ -157,11 +157,11 @@ class GradleGenerator {
      */
     private fun jarSection(config: BuildConfig, yuxClassesDir: String, shadeJars: List<String>): String = buildString {
         append("tasks.jar {\n")
-        append("    from(\"$yuxClassesDir\")\n")
+        append("    from(\"${kt(yuxClassesDir)}\")\n")
         // M9（T-M9-1）：Paper 加载要求插件 jar 自包含 SDK 运行时与第三方依赖
         // （PluginBootstrap/注解/HomeStore + snakeyaml/kotlin-stdlib，服务器不提供）
         for (jar in shadeJars) {
-            append("    from(zipTree(\"$jar\")) {\n")
+            append("    from(zipTree(\"${kt(jar)}\")) {\n")
             append("        exclude(\"META-INF/**\")\n")
             append("    }\n")
         }
@@ -170,9 +170,17 @@ class GradleGenerator {
 
     /** plugin.yml：主类缺省回退项目名；api-version 缺省 `1.21`。 */
     private fun renderPluginYml(config: BuildConfig): String = buildString {
-        append("name: ${config.name}\n")
-        append("version: ${config.version}\n")
-        append("main: ${config.mainClass ?: config.name}\n")
-        append("api-version: ${config.paperVersion ?: "1.21"}")
+        append("name: ${yaml(config.name)}\n")
+        append("version: ${yaml(config.version)}\n")
+        append("main: ${yaml(config.mainClass ?: config.name)}\n")
+        append("api-version: ${yaml(config.paperVersion ?: "1.21")}")
     }
+
+    /** Kotlin DSL 双引号字符串转义：`\`、`"`、`$`（Windows 反斜杠路径与内插符号均安全）。 */
+    private fun kt(value: String): String =
+        value.replace("\\", "\\\\").replace("\"", "\\\"").replace("$", "\\$")
+
+    /** YAML 双引号字符串：始终加引号（规避冒号/井号/前导引号/数字字面量等解析歧义），值内转义 `\`、`"`、换行。 */
+    private fun yaml(value: String): String =
+        "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n") + "\""
 }

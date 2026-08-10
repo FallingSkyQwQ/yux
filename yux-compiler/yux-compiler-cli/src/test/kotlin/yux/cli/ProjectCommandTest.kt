@@ -8,6 +8,7 @@ import java.nio.charset.StandardCharsets
 import java.nio.file.Files
 import java.nio.file.Path
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 /**
@@ -121,9 +122,81 @@ class ProjectCommandTest {
     @Test
     fun `test command reports pass on successful build`() {
         val project = tempProject()
-        assumeTrue(gradleAvailable(project), "Gradle 不可用，跳过")
-        val (out, err, code) = capture("test", "-p", project.toString(), "--offline")
+        val (out, err, code) = capture("test", "-p", project.toString())
         assertEquals(0, code, err)
         assertTrue(out.contains("测试通过"), out)
+    }
+
+    /** 构造带 @Test 用例的临时项目：通过/失败各一个 + 无注解函数。 */
+    private fun tempTestProject(): Path {
+        val dir = Files.createTempDirectory("yux-testproj")
+        Files.writeString(
+            dir.resolve("build.yml"),
+            """
+            name: demotest
+            version: 1.0.0
+            language:
+              yux: "1.0"
+            target:
+              jvm: 21
+            source:
+              main: src
+            """.trimIndent(),
+        )
+        Files.createDirectories(dir.resolve("src"))
+        Files.writeString(
+            dir.resolve("src/math.yux"),
+            """
+            @Test fun testAdd() {
+                TestFramework.assertEquals(3, 1 + 2)
+            }
+            @Test fun testTrue() {
+                TestFramework.assertTrue(2 > 1, "2 应大于 1")
+            }
+            fun helper() {
+                print "helper"
+            }
+            """.trimIndent(),
+        )
+        Files.writeString(
+            dir.resolve("src/fail.yux"),
+            """
+            @Test fun testFail() {
+                TestFramework.assertTrue(1 > 2, "预期失败")
+            }
+            """.trimIndent(),
+        )
+        return dir
+    }
+
+    @Test
+    fun `test command discovers and runs passing tests`() {
+        val project = tempTestProject()
+        Files.delete(project.resolve("src/fail.yux"))
+        val (out, err, code) = capture("test", "-p", project.toString())
+        assertEquals(0, code, err)
+        assertTrue(out.contains("PASS: Math.testAdd"), out)
+        assertTrue(out.contains("PASS: Math.testTrue"), out)
+        assertTrue(out.contains("测试通过: 2 passed, 0 failed"), out)
+        assertFalse(out.contains("testFail"), out)
+    }
+
+    @Test
+    fun `test command fails with non zero exit on assertion failure`() {
+        val project = tempTestProject()
+        val (out, err, code) = capture("test", "-p", project.toString())
+        assertEquals(1, code)
+        assertTrue(out.contains("PASS: Math.testAdd"), out)
+        assertTrue(out.contains("FAIL: Fail.testFail: java.lang.AssertionError: 预期失败"), out)
+        assertTrue(out.contains("测试完成: 2 passed, 1 failed"), out)
+        assertTrue(out.contains("测试失败"), out)
+    }
+
+    @Test
+    fun `test command without tests reports pass`() {
+        val project = tempProject()
+        val (out, err, code) = capture("test", "-p", project.toString())
+        assertEquals(0, code, err)
+        assertTrue(out.contains("测试通过（未找到 @Test 测试方法）"), out)
     }
 }

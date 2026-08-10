@@ -16,7 +16,8 @@ sealed interface IrExpr {
      * （CCE）、Invoke/New/StringTemplate/FnInvoke（任意被调代码）。
      */
     fun isDiscardable(): Boolean = when (this) {
-        is Const, is This, is LocalRead -> true
+        is Const, is This, is LocalRead, is ClassLiteral -> true
+        is ArrayLoad -> base.isDiscardable() && index.isDiscardable()
         is Lambda -> captures.all { it.isDiscardable() }
         is FieldRead -> receiver == null || receiver is This // 静态/this 字段读安全；其他接收者可能 NPE
         is Arith -> op != ArithOp.DIV && op != ArithOp.MOD && l.isDiscardable() && r.isDiscardable()
@@ -53,6 +54,8 @@ sealed interface IrExpr {
         is Invoke -> target.retType
         is FnInvoke -> (fn.inferType() as? IrType.Function)?.ret
         is StringTemplate -> IrType.STRING
+        is ClassLiteral -> IrType.ANY
+        is ArrayLoad -> elemType
         is NullGuard -> expr.inferType()
         is Lambda -> null
         is This -> null
@@ -61,6 +64,21 @@ sealed interface IrExpr {
     /** 常量。 */
     data class Const(
         val value: Any?,
+    ) : IrExpr
+
+    /** JVM 数组元素读取 `a[i]`（S-6.4.1 数组迭代/索引访问；后端按元素类型发 xALOAD）。 */
+    data class ArrayLoad(
+        val base: IrExpr,
+        val index: IrExpr,
+        val elemType: IrType,
+    ) : IrExpr
+
+    /**
+     * 类字面量（S-8.3 `deserialize(json, PlayerData)` 的运行时值）：
+     * 表达式位置的类型引用编译为 JVM 类常量（`ldc Type.class`）。
+     */
+    data class ClassLiteral(
+        val type: IrType,
     ) : IrExpr
 
     /** 当前实例引用（隐式 this 的实例成员访问；静态上下文不使用）。 */
@@ -124,6 +142,8 @@ sealed interface IrExpr {
         val target: IrCallable,
         val receiver: IrExpr?,
         val args: List<IrExpr>,
+        /** super 调用：对父类非虚拟调用（INVOKESPECIAL，S-8.7.1）。 */
+        val isSuper: Boolean = false,
     ) : IrExpr
 
     /** 函数类型值调用（S-7.4 高阶函数）：`fn(args)`，[fn] 为函数类型表达式（LocalRead/Lambda）。 */

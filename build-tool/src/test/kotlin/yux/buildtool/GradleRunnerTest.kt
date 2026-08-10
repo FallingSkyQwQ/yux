@@ -20,6 +20,23 @@ class GradleRunnerTest {
     /** repo 根 gradlew 绝对路径（显式传入，绕过环境变量定位）。 */
     private val repoGradlew: String = findRepoGradlew()
 
+    /** 挂起进程测试用的短超时（毫秒）。 */
+    private val hangTimeoutMs: Long = 1000
+
+    @Test
+    fun `进程挂起超过超时时间时强制终止并报错`() {
+        val hangScript = workDir.resolve("hang.sh")
+        hangScript.writeText("#!/bin/sh\nexec sleep 60\n")
+        assertTrue(hangScript.toFile().setExecutable(true))
+
+        val result = GradleRunner(gradleBinary = hangScript.toString(), timeoutMillis = hangTimeoutMs)
+            .run(workDir, "jar")
+
+        assertEquals(-1, result.exitCode)
+        assertTrue(result.output.contains("超时"), result.output)
+        assertTrue(result.output.contains("强制终止"), result.output)
+    }
+
     @Test
     fun `定位 gradle 可执行文件并运行最小项目 jar 构建`() {
         val repoRoot = Path.of(repoGradlew).parent

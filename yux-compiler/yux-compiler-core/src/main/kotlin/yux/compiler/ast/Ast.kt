@@ -69,17 +69,19 @@ class YxClass(
     override val span: SourceSpan,
 ) : YxDecl
 
-/** data 类（01-§5.3）。 */
+/** data 类（01-§5.3）。成员仅允许属性（S-5.3.1）；函数/初始化块保留供 sema 报 E0011。 */
 class YxDataClass(
     val name: String,
     val typeParams: List<YxTypeParam>,
     val superType: YxType?,
     val interfaces: List<YxType>,
-    val properties: List<YxProperty>,
+    val members: List<YxClassMember>,
     val visibility: YxVisibility,
     val annotations: List<YxAnnotation>,
     override val span: SourceSpan,
-) : YxDecl
+) : YxDecl {
+    val properties: List<YxProperty> get() = members.filterIsInstance<YxProperty>()
+}
 
 /** service 声明（01-§5.4）。 */
 class YxService(
@@ -112,6 +114,7 @@ class YxProperty(
     val accessors: List<YxAccessor>,
     val annotations: List<YxAnnotation>,
     val isTopLevel: Boolean,
+    val visibility: YxVisibility = YxVisibility.PUBLIC,
     override val span: SourceSpan,
 ) : YxClassMember, YxDecl
 

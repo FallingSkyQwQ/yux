@@ -7,7 +7,8 @@ import yux.compiler.ir.IrModule
  * JVM 后端入口（T-M5-1 / 06-§9.2 的 AsmBackend）：IrModule → `.class` 字节。
  *
  * 02-§13.1 的 Backend 接口形态：输入 IR，输出产物清单（类名 → 字节）。
- * async 降级（R3/02-§9.1）：v0.1 同步执行 + REMIND 诊断（T-M5-9）。
+ * 并发语义（S-8.4，T-M11-2）：`async fun` 声明仍以同步方法编译（REMIND 提示）；
+ * `async { }`/`parallel { }` 块在 IRGen 编译为 Tasks.launch/parallelAll 调用（真并发）。
  */
 class AsmBackend {
 
@@ -21,10 +22,10 @@ class AsmBackend {
         val emitter = AsmEmitter(module)
         val artifacts = mutableListOf<OutputArtifact>()
         for (cls in module.classes) {
-            // T-M5-9（R3）：async 同步降级——方法体照常同步发射 + REMIND
+            // `async fun` 声明：方法体照常同步发射 + REMIND（块级 `async {}` 已由 IRGen 降级为 Tasks.launch）
             for (method in cls.methods) {
                 if (method.isAsync) {
-                    diagnostics.remind("async 同步降级（R3）：`${cls.name}.${method.name}` 在 v0.1 同步执行，真正协程 M11")
+                    diagnostics.remind("async fun 声明同步执行（S-8.4）：`${cls.name}.${method.name}` 方法体不挂起；块级 `async {}` 经 yux.async.Tasks.launch 真并发")
                 }
             }
             artifacts += try {

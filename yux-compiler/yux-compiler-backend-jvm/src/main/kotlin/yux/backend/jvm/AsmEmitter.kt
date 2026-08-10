@@ -98,9 +98,9 @@ class AsmEmitter(
             mv.visitVarInsn(Opcodes.ALOAD, 0)
             mv.visitMethodInsn(Opcodes.INVOKESPECIAL, superInternal, "<init>", "()V", false)
         }
-        // 局部槽位分配：this(0) + 参数 + 方法体局部
-        val slots = LocalSlotAllocator(method, cls.isFileClass).allocate()
-        val emitter = StmtEmitter(mv, this, slots, method)
+        // 局部槽位分配：this(0) + 参数 + 方法体局部；临时槽（try/finally）从分配末尾高位申请
+        val alloc = LocalSlotAllocator(method, cls.isFileClass).allocate()
+        val emitter = StmtEmitter(mv, this, alloc, method)
         for (stmt in method.body) {
             emitter.emitStmt(stmt)
         }
@@ -112,9 +112,15 @@ class AsmEmitter(
         mv.visitEnd()
     }
     private fun buildAccess(method: IrMethod): Int {
-        var access = Opcodes.ACC_PUBLIC
+        var access = visibilityAccess(method.visibility)
         if (method.isStatic || method.name == "\$clinit") access = access or Opcodes.ACC_STATIC
         return access
+    }
+
+    private fun visibilityAccess(visibility: yux.compiler.ast.YxVisibility): Int = when (visibility) {
+        yux.compiler.ast.YxVisibility.PRIVATE -> Opcodes.ACC_PRIVATE
+        yux.compiler.ast.YxVisibility.PROTECTED -> Opcodes.ACC_PROTECTED
+        yux.compiler.ast.YxVisibility.PUBLIC -> Opcodes.ACC_PUBLIC
     }
 
     private fun methodDescriptor(method: IrMethod): String {
@@ -127,6 +133,9 @@ class AsmEmitter(
     fun resolveCallable(callable: IrCallable): JvmDescResolver.ResolvedMethod = when (callable) {
         is IrMethodRef -> {
             val m = callable.method
+            // isInterface 恒为 false：Yux 当前无法声明接口（YxClassSymbol.isInterface 恒 false，
+            // parser 无 interface 关键字），Yux 方法所有者不可能是接口，INVOKEVIRTUAL 正确；
+            // 若未来支持接口声明，须从 IrClass.isInterface（或 interfaces 继承关系）判定并改 INVOKEINTERFACE。
             JvmDescResolver.ResolvedMethod(
                 ownerInternal = m.owner?.name ?: ownerName,
                 name = m.name,
@@ -190,7 +199,7 @@ internal class LocalSlotAllocator(
     private val method: IrMethod,
     private val isFileClass: Boolean,
 ) {
-    fun allocate(): Map<IrLocal, Int> {
+    fun allocate(): SlotAllocation {
         val all = LinkedHashMap<Int, IrLocal>()
         method.paramLocals.forEach { all[it.index] = it }
         collectLocals(method.body, all)
@@ -201,7 +210,9 @@ internal class LocalSlotAllocator(
             slots[local] = slot
             slot += if (JvmTypeMapper.isWide(local.type)) 2 else 1
         }
-        return slots
+        // nextFreeSlot：已分配末尾后的首个空闲槽；try/finally 异常临时槽从该处高位申请，
+        // 保证不与 this/参数/局部重叠（含 Long/Double 双槽局部）
+        return SlotAllocation(slots, slot)
     }
 
     private fun collectLocals(stmts: List<IrStmt>, out: MutableMap<Int, IrLocal>) {
@@ -236,31 +247,8 @@ internal class LocalSlotAllocator(
     }
 
     private fun collectCatchParam(c: IrCatch, out: MutableMap<Int, IrLocal>) {
-        // catch 参数局部已由 IRGen 登记；按名字在 catch 体中回找
-        findLocalByName(c.body, c.paramName)?.let { out[it.index] = it }
-    }
-
-    private fun findLocalByName(stmts: List<IrStmt>, name: String): IrLocal? {
-        for (stmt in stmts) {
-            if (stmt is IrStmt.LocalAssign && stmt.local.name == name) return stmt.local
-        }
-        // catch 参数以 LocalRead 出现
-        var found: IrLocal? = null
-        fun walk(e: IrExpr?) {
-            if (found != null || e == null) return
-            if (e is IrExpr.LocalRead && e.local.name == name) found = e.local
-        }
-        for (stmt in stmts) {
-            when (stmt) {
-                is IrStmt.LocalAssign -> walk(stmt.value)
-                is IrStmt.Return -> walk(stmt.value)
-                is IrStmt.Eval -> walk(stmt.expr)
-                is IrStmt.Branch -> walk(stmt.cond)
-                is IrStmt.Call -> { walk(stmt.receiver); stmt.args.forEach { walk(it) } }
-                else -> Unit
-            }
-        }
-        return found
+        // catch 参数局部已由 IRGen 登记；递归搜索 catch 体（含嵌套表达式/嵌套 Try）回找
+        findLocalByNameRecursive(c.body, c.paramName)?.let { out[it.index] = it }
     }
 
     private fun collectExpr(e: IrExpr?, out: MutableMap<Int, IrLocal>) {
@@ -290,3 +278,56 @@ internal class LocalSlotAllocator(
         }
     }
 }
+
+/** 槽位分配结果：[slots] 为 IrLocal → JVM 槽位；[nextFreeSlot] 为方法级临时槽起点。 */
+internal data class SlotAllocation(
+    val slots: Map<IrLocal, Int>,
+    val nextFreeSlot: Int,
+)
+
+/** 递归查找语句/表达式树中指定名字的局部变量（catch 参数槽位定位用；须与槽位分配一致）。 */
+internal fun findLocalByNameRecursive(stmts: List<IrStmt>, name: String): IrLocal? =
+    stmts.firstNotNullOfOrNull { findLocalInStmt(it, name) }
+
+private fun findLocalInStmt(stmt: IrStmt, name: String): IrLocal? = when (stmt) {
+    is IrStmt.Label -> null
+    is IrStmt.LocalAssign -> findLocalInExpr(stmt.value, name) ?: stmt.local.takeIf { it.name == name }
+    is IrStmt.Call -> findLocalInExpr(stmt.receiver, name) ?: findLocalInExprs(stmt.args, name)
+    is IrStmt.New -> findLocalInExprs(stmt.args, name)
+    is IrStmt.Eval -> findLocalInExpr(stmt.expr, name)
+    is IrStmt.FieldAccess -> findLocalInExpr(stmt.receiver, name) ?: findLocalInExpr(stmt.value, name)
+    is IrStmt.Branch -> findLocalInExpr(stmt.cond, name)
+    is IrStmt.Goto -> null
+    is IrStmt.Return -> findLocalInExpr(stmt.value, name)
+    is IrStmt.Throw -> findLocalInExpr(stmt.value, name)
+    is IrStmt.Monitor -> findLocalInExpr(stmt.expr, name)
+    is IrStmt.Try -> findLocalByNameRecursive(stmt.body, name)
+        ?: stmt.catches.firstNotNullOfOrNull { findLocalByNameRecursive(it.body, name) }
+        ?: stmt.finallyBody?.let { findLocalByNameRecursive(it, name) }
+    is IrStmt.Nop -> null
+}
+
+private fun findLocalInExpr(e: IrExpr?, name: String): IrLocal? {
+    if (e == null) return null
+    return when (e) {
+        is IrExpr.Const, is IrExpr.This, is IrExpr.ClassLiteral -> null
+        is IrExpr.ArrayLoad -> findLocalInExpr(e.base, name) ?: findLocalInExpr(e.index, name)
+        is IrExpr.LocalRead -> e.local.takeIf { it.name == name }
+        is IrExpr.FieldRead -> findLocalInExpr(e.receiver, name)
+        is IrExpr.New -> findLocalInExprs(e.args, name)
+        is IrExpr.Arith -> findLocalInExpr(e.l, name) ?: findLocalInExpr(e.r, name)
+        is IrExpr.Compare -> findLocalInExpr(e.l, name) ?: findLocalInExpr(e.r, name)
+        is IrExpr.Not -> findLocalInExpr(e.operand, name)
+        is IrExpr.Neg -> findLocalInExpr(e.operand, name)
+        is IrExpr.Convert -> findLocalInExpr(e.expr, name)
+        is IrExpr.IsType -> findLocalInExpr(e.expr, name)
+        is IrExpr.Invoke -> findLocalInExpr(e.receiver, name) ?: findLocalInExprs(e.args, name)
+        is IrExpr.FnInvoke -> findLocalInExpr(e.fn, name) ?: findLocalInExprs(e.args, name)
+        is IrExpr.StringTemplate -> findLocalInExprs(e.parts, name)
+        is IrExpr.NullGuard -> findLocalInExpr(e.expr, name)
+        is IrExpr.Lambda -> findLocalInExprs(e.captures, name)
+    }
+}
+
+private fun findLocalInExprs(es: List<IrExpr>, name: String): IrLocal? =
+    es.firstNotNullOfOrNull { findLocalInExpr(it, name) }

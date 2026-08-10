@@ -2,7 +2,10 @@ package yux.minecraft.io
 
 import org.yaml.snakeyaml.DumperOptions
 import org.yaml.snakeyaml.Yaml
+import yux.minecraft.util.atomicWriteText
 import java.io.File
+import java.io.IOException
+import java.util.logging.Logger
 
 /**
  * Home 插件数据存取桥接（M9，T-M9-1）：把 data 类以 YAML 落盘/读回。
@@ -12,8 +15,13 @@ import java.io.File
  *
  * 方法与 ConfigManager 的反射约定一致（getter → 小驼峰属性名、主构造器反序列化），
  * 供 Yux 侧 `@JvmStatic` 调用（04-§6 的 `HomeData.save`/`loadHomeData` 桥接）。
+ *
+ * 落盘为原子写（同目录 .tmp + ATOMIC_MOVE）；读取容错：文件缺失或损坏
+ * （IO/解析异常）时回退默认值并告警，不崩溃。
  */
 object HomeStore {
+
+    private val logger = Logger.getLogger(HomeStore::class.java.name)
 
     /** data 类 → YAML 文本（getter → 属性名；嵌套 data 类递归为映射）。 */
     @JvmStatic
@@ -30,28 +38,44 @@ object HomeStore {
         return fromMap(map, type)
     }
 
-    /** 写 `<dataFolder>/<relPath>` YAML（父目录自动创建）。 */
+    /** 写 `<dataFolder>/<relPath>` YAML（父目录自动创建，原子写）。 */
     @JvmStatic
     fun save(dataFolder: File, relPath: String, data: Any) {
         val file = File(dataFolder, relPath)
         file.parentFile?.mkdirs()
-        file.writeText(toYaml(data))
+        atomicWriteText(file, toYaml(data))
     }
 
-    /** 读 `<dataFolder>/<relPath>` YAML 为 data 类；文件缺失返回 null。 */
+    /** 读 `<dataFolder>/<relPath>` YAML 为 data 类；文件缺失或损坏返回 null。 */
     @JvmStatic
     fun load(dataFolder: File, relPath: String, type: Class<*>): Any? {
         val file = File(dataFolder, relPath)
         if (!file.isFile) return null
-        return fromYaml(file.readText(), type)
+        return try {
+            fromYaml(file.readText(), type)
+        } catch (e: IOException) {
+            logger.warning("读取数据文件失败，回退默认值: $file: ${e.message}")
+            null
+        } catch (e: RuntimeException) {
+            logger.warning("数据文件损坏，回退默认值: $file: ${e.message}")
+            null
+        }
     }
 
-    /** Yux 侧友好加载（M9）：以 defaults 实例类型反序列化，文件缺失返回 null。 */
+    /** Yux 侧友好加载（M9）：以 defaults 实例类型反序列化，文件缺失或损坏返回 null。 */
     @JvmStatic
     fun loadLike(dataFolder: File, relPath: String, defaults: Any): Any? {
         val file = File(dataFolder, relPath)
         if (!file.isFile) return null
-        return fromYaml(file.readText(), defaults.javaClass)
+        return try {
+            fromYaml(file.readText(), defaults.javaClass)
+        } catch (e: IOException) {
+            logger.warning("读取数据文件失败，回退默认值: $file: ${e.message}")
+            null
+        } catch (e: RuntimeException) {
+            logger.warning("数据文件损坏，回退默认值: $file: ${e.message}")
+            null
+        }
     }
 
     /** 加载 `<dataFolder>/<relPath>` 为 `Map<String, V>`（M9）：值类型由 defaults 元素示例确定。 */
@@ -59,7 +83,15 @@ object HomeStore {
     fun loadMap(dataFolder: File, relPath: String, valueExample: Any): Map<String, Any> {
         val file = File(dataFolder, relPath)
         if (!file.isFile) return emptyMap()
-        val loaded = Yaml().load<Any>(file.readText())
+        val loaded = try {
+            Yaml().load<Any>(file.readText())
+        } catch (e: IOException) {
+            logger.warning("读取数据文件失败，回退空映射: $file: ${e.message}")
+            return emptyMap()
+        } catch (e: RuntimeException) {
+            logger.warning("数据文件损坏，回退空映射: $file: ${e.message}")
+            return emptyMap()
+        }
         if (loaded !is Map<*, *>) return emptyMap()
         val result = linkedMapOf<String, Any>()
         for ((k, v) in loaded) {
@@ -72,12 +104,12 @@ object HomeStore {
         return result
     }
 
-    /** 保存 `Map<String, V>` 到 `<dataFolder>/<relPath>`（M9）：值按 data 类递归为映射。 */
+    /** 保存 `Map<String, V>` 到 `<dataFolder>/<relPath>`（M9）：值按 data 类递归为映射，原子写。 */
     @JvmStatic
     fun saveMap(dataFolder: File, relPath: String, map: Map<String, Any>) {
         val file = File(dataFolder, relPath)
         file.parentFile?.mkdirs()
-        file.writeText(dumpYaml(map.entries.associate { it.key to toYamlValue(it.value) }))
+        atomicWriteText(file, dumpYaml(map.entries.associate { it.key to toYamlValue(it.value) }))
     }
 
     private fun dumpYaml(map: Map<String, Any?>): String {

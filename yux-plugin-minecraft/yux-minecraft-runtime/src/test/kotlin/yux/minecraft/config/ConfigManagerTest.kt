@@ -39,12 +39,16 @@ class ConfigManagerTest {
     @TempDir
     lateinit var dataFolder: File
 
-    /** 构造假 Plugin：getDataFolder → [dir]，其余方法抛 UnsupportedOperationException。 */
+    /** 构造假 Plugin：getDataFolder → [dir]、getLogger → 测试 Logger，其余方法抛 UnsupportedOperationException。 */
     private fun fakePlugin(dir: File): Plugin = Proxy.newProxyInstance(
         Plugin::class.java.classLoader,
         arrayOf(Plugin::class.java),
         InvocationHandler { _, method, _ ->
-            if (method.name == "getDataFolder") dir else throw UnsupportedOperationException("stub")
+            when (method.name) {
+                "getDataFolder" -> dir
+                "getLogger" -> java.util.logging.Logger.getLogger("ConfigManagerTest")
+                else -> throw UnsupportedOperationException("stub: ${method.name}")
+            }
         },
     ) as Plugin
 
@@ -107,5 +111,31 @@ class ConfigManagerTest {
         ConfigManager.save(plugin, original)
         val loaded = ConfigManager.load(plugin, ServerConfig())
         assertEquals(original, loaded)
+    }
+
+    @Test
+    fun `save 原子写不留残留临时文件且可读回`() {
+        val original = ServerConfig(motd = "Hi", maxPlayers = 42, spawn = "1,2,3")
+        ConfigManager.save(plugin, original)
+        assertTrue(configFile().isFile, "应写入 config.yml")
+        assertTrue(!File(dataFolder, "config.yml.tmp").exists(), "不应残留 .tmp 临时文件")
+        assertEquals(original, ConfigManager.load(plugin, ServerConfig()))
+    }
+
+    @Test
+    fun `损坏配置文件回退默认值不崩溃`() {
+        configFile().writeText("maxPlayers: [unclosed\n: : bad yaml")
+        val cfg = ConfigManager.load(plugin, ServerConfig())
+        assertEquals(100, cfg.maxPlayers)
+        assertEquals("Welcome!", cfg.motd)
+    }
+
+    @Test
+    fun `save 可覆盖损坏文件并重新读回`() {
+        configFile().writeText("maxPlayers: [unclosed")
+        ConfigManager.save(plugin, ServerConfig(motd = "ok", maxPlayers = 1, spawn = "0,0,0"))
+        val reloaded = ConfigManager.load(plugin, ServerConfig())
+        assertEquals("ok", reloaded.motd)
+        assertEquals(1, reloaded.maxPlayers)
     }
 }

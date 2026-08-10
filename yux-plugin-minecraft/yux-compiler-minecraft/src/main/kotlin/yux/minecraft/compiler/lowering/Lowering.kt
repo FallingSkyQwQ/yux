@@ -51,10 +51,18 @@ import yux.minecraft.compiler.extension.TaskPayload
  * 语义规则（SemanticRule）刻意不注册：领域类型约束（事件类存在性、字段可赋值性等）
  * 由 M3 类型检查器在**下沉后的普通 AST** 上完成，领域专属规则留待 M9 集成期补充。
  */
+// allow: SIZE_OK — 单一职责的下沉变换类（六个扩展关键字共享 collector/计数器状态，
+// 拆分会引入跨类管线；既有规模 338 行，本修复 +16 行）。
 class MinecraftLowering(
     private val collector: PluginYmlCollector,
     private val cstToAst: CstToAst = CstToAst(),
 ) : SyntaxTransform {
+
+    /** 本编译单元已占用的类名：碰撞时追加 `_<n>` 后缀，保证同编译单元类名唯一。 */
+    private val usedClassNames = mutableSetOf<String>()
+
+    /** 已下沉的 config 类数量：首个保持 "config.yml"（兼容既有插件），后续派生独立路径。 */
+    private var configCount = 0
 
     /** 下沉分发：不匹配的关键字返回 null（留给其他插件，02-§10.4）。 */
     override fun transform(node: YxExtensionDecl): List<YxDecl>? = when (node.keyword) {
@@ -181,7 +189,7 @@ class MinecraftLowering(
         payload.tab?.let { members += tabFunction(it, span) }
         return listOf(
             YxClass(
-                name = commandClassName(payload.path),
+                name = uniqueClassName(commandClassName(payload.path)),
                 typeParams = emptyList(),
                 superType = null,
                 interfaces = emptyList(),
@@ -264,14 +272,14 @@ class MinecraftLowering(
                 typeParams = emptyList(),
                 superType = null,
                 interfaces = emptyList(),
-                properties = properties,
+                members = properties,
                 visibility = YxVisibility.PUBLIC,
                 annotations = listOf(
                     YxAnnotation(
                         qualifiedName = listOf("yux", "minecraft", "annotations", "YuxConfig"),
                         args = listOf(
                             YxAnnotationArg("name", stringLiteral(payload.name, span), span),
-                            YxAnnotationArg("path", stringLiteral("config.yml", span), span),
+                            YxAnnotationArg("path", stringLiteral(configPath(payload.name), span), span),
                         ),
                         span = span,
                     ),
@@ -298,7 +306,7 @@ class MinecraftLowering(
         val suffix = if (payload.async) "_A" else ""
         return listOf(
             YxClass(
-                name = "Task_${delay}_$interval$suffix",
+                name = uniqueClassName("Task_${delay}_$interval$suffix"),
                 typeParams = emptyList(),
                 superType = null,
                 interfaces = emptyList(),
@@ -351,6 +359,20 @@ class MinecraftLowering(
     private fun commandClassName(path: String): String {
         val segment = path.substringAfterLast('/').ifEmpty { path }
         return segment.replaceFirstChar { it.uppercase() } + "Command"
+    }
+
+    /** 配置文件名：首个 config 保持 "config.yml"（兼容既有插件），后续按类名派生避免互污染。 */
+    private fun configPath(name: String): String {
+        configCount += 1
+        return if (configCount == 1) "config.yml" else "config_$name.yml"
+    }
+
+    /** 编译单元内唯一类名：首次用原名，碰撞追加 `_<n>` 自增序号。 */
+    private fun uniqueClassName(base: String): String {
+        if (usedClassNames.add(base)) return base
+        var n = 1
+        while (!usedClassNames.add("${base}_$n")) n++
+        return "${base}_$n"
     }
 
     /** 值重新加引号为 Yux 字符串字面量（转义 `\`/`"`/换行/`$`，词法器以 `$` 起插值）。 */

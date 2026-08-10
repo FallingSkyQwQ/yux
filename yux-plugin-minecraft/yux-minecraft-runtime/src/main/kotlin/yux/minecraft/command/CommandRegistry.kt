@@ -9,6 +9,7 @@ import yux.minecraft.annotations.YuxCommand
 import java.lang.reflect.InvocationTargetException
 import java.lang.reflect.Method
 import java.util.Arrays
+import java.util.Optional
 import java.util.concurrent.ConcurrentHashMap
 
 /**
@@ -24,8 +25,11 @@ import java.util.concurrent.ConcurrentHashMap
  */
 object CommandRegistry {
 
-    /** 方法查找缓存（同类只反射一次）。 */
-    private val methodCache = ConcurrentHashMap<Class<*>, Method>()
+    /** 方法查找缓存键：同类同名方法只反射一次。 */
+    private data class MethodKey(val clazz: Class<*>, val name: String)
+
+    /** 方法查找缓存（computeIfAbsent 原子填充；Optional 表示“无此方法”的负缓存）。 */
+    private val methodCache = ConcurrentHashMap<MethodKey, Optional<Method>>()
 
     /** 注册命令；无 @YuxCommand 注解、路径未在 plugin.yml 注册时静默返回。 */
     fun register(plugin: Plugin, command: Any) {
@@ -62,9 +66,13 @@ object CommandRegistry {
         }
 
     private fun methodOrNull(clazz: Class<*>, name: String): Method? =
-        try {
-            clazz.getMethod(name, CommandSender::class.java, List::class.java)
-        } catch (e: NoSuchMethodException) {
-            null
-        }
+        methodCache.computeIfAbsent(MethodKey(clazz, name)) { key ->
+            Optional.ofNullable(
+                try {
+                    key.clazz.getMethod(key.name, CommandSender::class.java, List::class.java)
+                } catch (e: NoSuchMethodException) {
+                    null
+                },
+            )
+        }.orElse(null)
 }

@@ -216,6 +216,13 @@ class YuxBuild(
         return URLClassLoader(urls, ClassPathSymbolProvider::class.java.classLoader)
     }
 
+    /** build.yml 内容哈希（缓存键的一部分）：改 mainClass/paperVersion/mavenDeps/plugins 等配置即失效重编译。 */
+    private fun buildConfigHash(): String = try {
+        YuxCache.sha256(Files.readAllBytes(projectDir.resolve("build.yml")))
+    } catch (e: IOException) {
+        "" // 解析已成功仅剩并发删除场景；回退空哈希仍以源码哈希为准
+    }
+
     /** 解析 build.yml 并编制计划；失败返回 null（原因记入 [lastParseError]）。 */
     private fun parseAndPlan(): BuildPlan? {
         val config = try {
@@ -240,7 +247,8 @@ class YuxBuild(
      */
     private fun compileInternal(plan: BuildPlan, config: BuildConfig, clean: Boolean, projectClasspath: List<Path>): CompiledProject {
         val cache = YuxCache(projectDir)
-        if (!clean && cache.isUpToDate(plan.yuxSources, compilerVersion)) {
+        val configHash = buildConfigHash()
+        if (!clean && cache.isUpToDate(plan.yuxSources, compilerVersion, configHash)) {
             return CompiledProject(emptyMap(), plan.mainClassName, DiagnosticSink(), success = true, upToDate = true)
         }
         // M10：混合项目以项目类加载器解析 Java/Kotlin 类型（compileMixed 传入 build/classes 产物目录）。
@@ -288,7 +296,7 @@ class YuxBuild(
         }
         try {
             writeClasses(BuildPaths.resolve(projectDir, BuildPaths.YUX_CLASSES_DIR), artifacts)
-            cache.save(plan.yuxSources, compilerVersion)
+            cache.save(plan.yuxSources, compilerVersion, configHash)
         } catch (e: IOException) {
             compiler.diagnostics.error("写入编译产物失败: ${e.message}")
             return CompiledProject(emptyMap(), plan.mainClassName, compiler.diagnostics, success = false, upToDate = false)

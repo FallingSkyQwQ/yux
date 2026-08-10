@@ -90,6 +90,7 @@ class SymbolTable(
             members = mutableListOf(),
             isAbstract = false,
             annotations = decl.annotations,
+            visibility = decl.visibility,
             fileScope = file,
             span = decl.span,
         )
@@ -107,6 +108,7 @@ class SymbolTable(
             members = mutableListOf(),
             isAbstract = false,
             annotations = decl.annotations,
+            visibility = decl.visibility,
             fileScope = file,
             span = decl.span,
         )
@@ -165,6 +167,7 @@ object Builtins {
         "Text" to "yux.core.Text",
         "Colls" to "yux.collection.Colls",
         "Tasks" to "yux.async.Tasks",
+        "TestFramework" to "yux.test.TestFramework",
     )
 
     val typeParamNames = BASIC.keys

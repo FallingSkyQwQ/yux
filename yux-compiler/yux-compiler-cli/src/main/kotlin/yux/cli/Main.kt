@@ -10,8 +10,10 @@ import yux.compiler.plugin.PluginLoader
 import yux.compiler.plugin.PluginManager
 import yux.compiler.sema.AnalysisPrinter
 import yux.compiler.source.SourceFile
+import yux.buildtool.CompiledProject
 import yux.buildtool.YuxBuild
 import java.lang.reflect.InvocationTargetException
+import java.lang.reflect.Method
 import java.net.URLClassLoader
 import java.nio.file.Files
 import java.nio.file.Path
@@ -270,8 +272,9 @@ private fun runBuild(cli: CliArgs, pluginManager: PluginManager): Int {
 }
 
 /**
- * `yuxc test [-p <dir>] [--clean] [--offline]`（T-M7-5 v0.1 最小实现）：
- * 以构建成功作为测试通过依据；yux.test 框架 M11 落地后改为执行真实测试。
+ * `yuxc test [-p <dir>]`（01-§10.8 / T-M7-5 真实化）：
+ * 进程内编译项目 → 类加载器加载产物 → 反射扫描 `@Test` 方法（文件类静态方法 + 类成员）
+ * → 逐个执行 → 输出每项结果与摘要 → 有失败返回非零退出码。
  */
 private fun runTest(cli: CliArgs, pluginManager: PluginManager): Int {
     val projectDir = cli.projectDir ?: Path.of(".")
@@ -280,20 +283,79 @@ private fun runTest(cli: CliArgs, pluginManager: PluginManager): Int {
         return 1
     }
     return try {
-        val result = YuxBuild(projectDir, pluginManager, gradleBinary = System.getenv("YUX_GRADLE"))
-            .build(clean = cli.clean, offline = cli.offline)
-        if (result.success) {
-            println("测试通过（yux.test 框架 M11 落地，v0.1 以构建成功为准）")
-            0
-        } else {
-            printDiagnostics(result.diagnostics)
-            System.err.println("错误: ${result.message ?: "构建失败"}")
-            1
+        val result = YuxBuild(projectDir, pluginManager).compile(clean = cli.clean)
+        printDiagnostics(result.diagnostics)
+        if (!result.success) {
+            System.err.println("错误: Yux 编译失败")
+            return 1
         }
+        runDiscoveredTests(result)
     } catch (e: Exception) {
-        System.err.println("错误: 构建异常: ${e.message}")
+        System.err.println("错误: 测试执行异常: ${e.message}")
         1
     }
+}
+
+/** 测试发现 + 执行：编译产物类 → @Test 方法 → 逐项执行 → 摘要与退出码。 */
+private fun runDiscoveredTests(result: CompiledProject): Int {
+    val loader = executeMainLoader(result)
+    val tests = result.classes.keys.flatMap { discoverTests(it, loader) }.sortedBy { it.first + "." + it.second.name }
+    if (tests.isEmpty()) {
+        println("测试通过（未找到 @Test 测试方法）")
+        return 0
+    }
+    var passed = 0
+    var failed = 0
+    for ((owner, method) in tests) {
+        try {
+            val instance = if (java.lang.reflect.Modifier.isStatic(method.modifiers)) null else newTestInstance(owner, loader)
+            method.invoke(instance)
+            println("PASS: $owner.${method.name}")
+            passed++
+        } catch (e: InvocationTargetException) {
+            failed++
+            println("FAIL: $owner.${method.name}: ${e.targetException}")
+        } catch (e: ReflectiveOperationException) {
+            failed++
+            println("ERROR: $owner.${method.name}: ${e.message}")
+        }
+    }
+    println("测试完成: $passed passed, $failed failed")
+    if (failed > 0) {
+        println("测试失败（$failed 个用例未通过）")
+        return 1
+    }
+    println("测试通过: $passed passed, 0 failed")
+    return 0
+}
+
+/** 反射扫描类的 @Test 方法（含继承的公开方法）；带参数的方法报错并记为失败。 */
+private fun discoverTests(className: String, loader: ClassLoader): List<Pair<String, Method>> {
+    val cls = try {
+        Class.forName(className, true, loader)
+    } catch (_: LinkageError) {
+        return emptyList()
+    } catch (_: ClassNotFoundException) {
+        return emptyList()
+    }
+    val testAnnotation = yux.test.Test::class.java
+    return cls.methods
+        .filter { it.isAnnotationPresent(testAnnotation) }
+        .flatMap { method ->
+            if (method.parameterCount != 0) {
+                System.err.println("ERROR: $className.${method.name}: @Test 方法不接受参数（v0.1）")
+                emptyList()
+            } else {
+                listOf(className to method)
+            }
+        }
+}
+
+/** 无参构造器实例化测试类（文件类静态方法为 null）；缺失时报错返回失败。 */
+private fun newTestInstance(className: String, loader: ClassLoader): Any {
+    val ctor = Class.forName(className, true, loader).getDeclaredConstructor()
+    ctor.isAccessible = true
+    return ctor.newInstance()
 }
 
 /**
@@ -329,12 +391,7 @@ private fun runProject(projectDir: Path, pluginManager: PluginManager): Int {
  * 使三方类互相引用可解析（05-§5 三方互调）；纯 Yux 项目沿用 [MemoryClassLoader]。
  */
 private fun executeMain(classes: Map<String, ByteArray>, mainClassName: String, projectClasspath: List<Path> = emptyList()): Int {
-    val loader: ClassLoader = if (projectClasspath.isEmpty()) {
-        MemoryClassLoader(classes, Runner::class.java.classLoader)
-    } else {
-        val urls = projectClasspath.map { it.toUri().toURL() }.toTypedArray()
-        URLClassLoader(urls, Runner::class.java.classLoader)
-    }
+    val loader = executeMainLoader(CompiledProject(classes, mainClassName, DiagnosticSink(), success = true, upToDate = false, projectClasspath = projectClasspath))
     return try {
         val mainClass = Class.forName(mainClassName, true, loader)
         val main = mainClass.getMethod("main")
@@ -348,6 +405,17 @@ private fun executeMain(classes: Map<String, ByteArray>, mainClassName: String, 
         System.err.println("运行时错误: ${e.message}")
         1
     }
+}
+
+/** 编译产物类加载器：纯 Yux 用 [MemoryClassLoader]，混合项目用产物目录 URLClassLoader。 */
+private fun executeMainLoader(result: CompiledProject): ClassLoader {
+    val loader: ClassLoader = if (result.projectClasspath.isEmpty()) {
+        MemoryClassLoader(result.classes, Runner::class.java.classLoader)
+    } else {
+        val urls = result.projectClasspath.map { it.toUri().toURL() }.toTypedArray()
+        URLClassLoader(urls, Runner::class.java.classLoader)
+    }
+    return loader
 }
 
 private fun printDiagnostics(diagnostics: DiagnosticSink) {

@@ -208,11 +208,31 @@ class Parser(
                 null
             }
             else -> {
-                error("unexpected token '${current.text}': expected declaration")
+                // 死关键字（new/native/stack，01-§3 保留字）：明确诊断而非泛化 "unexpected token"
+                if (!deadKeywordDiagnostic()) {
+                    error("unexpected token '${current.text}': expected declaration")
+                }
                 index = Recovery.skipToLineEnd(tokens, index)
                 null
             }
         }
+    }
+
+    /** 死关键字诊断（new/native/stack，S-8.6）：消费并给出 v0.1 明确语义；返回是否命中。 */
+    private fun deadKeywordDiagnostic(): Boolean = when {
+        atKeyword("new") -> {
+            error("`new` 关键字暂不支持（v0.1）：请使用 `Type(...)` 构造对象")
+            true
+        }
+        atKeyword("native") -> {
+            error("`native fun` 暂不支持（v0.1）：JVM 后端未实现原生函数声明（S-8.6.4）")
+            true
+        }
+        atKeyword("stack") -> {
+            error("`stack` 栈分配暂不支持（v0.1）：对象一律 GC 分配（S-8.6.2）")
+            true
+        }
+        else -> false
     }
 
     private data class DeclFlags(
@@ -382,7 +402,9 @@ class Parser(
                 }
             }
             else -> {
-                error("unexpected token '${current.text}' in class body")
+                if (!deadKeywordDiagnostic()) {
+                    error("unexpected token '${current.text}' in class body")
+                }
                 index = Recovery.skipToLineEnd(tokens, index)
                 null
             }
@@ -634,7 +656,13 @@ class Parser(
             }
             at(ID) && peek(1).kind == COLON -> parseVarDeclWithType()
             at(ID) && peek(1).kind == ASSIGN && !isDeclared(current.text) -> parseVarDeclInferred()
-            else -> parseExpressionStatement()
+            else -> if (deadKeywordDiagnostic()) {
+                val kw = advance()
+                finishStatement()
+                CstExprStmt(CstIdentifier(kw, spanOf(kw)), spanOf(kw))
+            } else {
+                parseExpressionStatement()
+            }
         }
     }
 
@@ -865,7 +893,13 @@ class Parser(
             t.kind == IDENTIFIER -> {
                 if (peek(1).kind == ARROW) {
                     lambda.parseArrowLambda()
-                } else if (symbols.isType(t.text) || looksLikeTypeName(t.text)) {
+                } else if (symbols.isType(t.text)) {
+                    parseTypeCallOrRef()
+                } else if (symbols.lookup(t.text) != null) {
+                    // 已声明的函数/属性：按符号表消歧为变量/函数引用（01-§7.7）
+                    CstIdentifier(advance(), spanOf(t))
+                } else if (looksLikeTypeName(t.text) && (peek(1).kind == LPAREN || peek(1).kind == DOT)) {
+                    // 最后回退：未知大写标识符后随 `(`/`.` 视为类型（跨文件类型构造/静态访问）
                     parseTypeCallOrRef()
                 } else {
                     CstIdentifier(advance(), spanOf(t))
@@ -883,14 +917,16 @@ class Parser(
             }
             t.kind == LBRACE -> lambda.parseBlockLambda()
             else -> {
-                error("unexpected token '${t.text}' in expression")
+                if (!deadKeywordDiagnostic()) {
+                    error("unexpected token '${t.text}' in expression")
+                }
                 advance()
                 CstIdentifier(current, spanOf(current))
             }
         }
     }
 
-    /** 命名约定回退（01-§7.7 规则 4）：首字母大写视为类型。 */
+    /** 命名约定回退（01-§7.7 规则 4）：首字母大写视为类型（仅作最后回退）。 */
     private fun looksLikeTypeName(name: String): Boolean =
         name.firstOrNull()?.isUpperCase() == true
 

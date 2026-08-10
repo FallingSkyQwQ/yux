@@ -45,6 +45,7 @@
 | E0030 | `DUPLICATE_EXTENSION_KEYWORD` | 02-§10.4 | 扩展关键字冲突（已被其他插件注册） |
 | E0031 | `RESERVED_EXTENSION_KEYWORD` | 02-§10.4 | 插件注册了内置关键字（隔离性） |
 | E0032 | `EXTENSION_NOT_LOWERED` | 02-§10.4 | 扩展节点未下沉（无匹配 SyntaxTransform） |
+| E0033 | `ILLEGAL_ACCESS` | 01-S-5.1.4 | 跨类/跨文件访问 private/protected 成员 |
 
 ## W 系列：警告
 

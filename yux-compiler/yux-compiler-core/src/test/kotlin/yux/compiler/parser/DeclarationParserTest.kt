@@ -113,7 +113,7 @@ class DeclarationParserTest {
     @Test
     fun `annotation with args`() {
         val ast = dump("@EventHandler(priority = HIGH)\nPlayerListener {\n}")
-        assertTrue(ast.contains("@EventHandler(priority = TypeRef(HIGH))"), ast)
+        assertTrue(ast.contains("@EventHandler(priority = Id(HIGH))"), ast)
     }
 
     @Test
