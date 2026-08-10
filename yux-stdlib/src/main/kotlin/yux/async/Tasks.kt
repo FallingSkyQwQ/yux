@@ -44,6 +44,21 @@ object Tasks {
     }
 
     /**
+     * 并行执行多个块并阻塞至全部完成（S-8.4.3 `parallel { }` 语句级拆分运行时入口）。
+     *
+     * 编译器把 `parallel { }` 块内互相独立的顶层语句各编译为一个 [Function0]，
+     * 一并提交到 ForkJoinPool 并发执行；本方法等待全部任务完成后返回（块尾隐式 join）。
+     *
+     * @param blocks 并行执行体列表（各语句的 lambda）
+     */
+    @JvmStatic
+    fun parallelAll(blocks: List<Function0<Unit>>) {
+        val tasks = blocks.map { ForkJoinTask.adapt { it.invoke() } }
+        tasks.forEach { ForkJoinPool.commonPool().execute(it) }
+        tasks.forEach { it.join() }
+    }
+
+    /**
      * 阻塞当前线程休眠指定毫秒数（S-8.4.4：调度器与 `java.util.concurrent` 互操作）。
      *
      * 设计依据：与 `parallel` 块内 `Thread.sleep` 语义一致；被中断时
