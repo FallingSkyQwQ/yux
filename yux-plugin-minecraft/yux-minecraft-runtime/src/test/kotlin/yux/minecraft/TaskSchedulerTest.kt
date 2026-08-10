@@ -5,6 +5,7 @@ import org.junit.jupiter.api.Test
 import yux.minecraft.annotations.YuxTask
 import yux.minecraft.schedule.TaskScheduler
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
@@ -26,6 +27,16 @@ class TaskSchedulerTest {
     @YuxTask(delay = 50, async = true)
     inner class AsyncTask {
         fun run() { counter++ }
+    }
+
+    @YuxTask(delay = -1)
+    inner class NegativeDelayTask {
+        fun run() = Unit
+    }
+
+    @YuxTask(delay = 5, interval = -1)
+    inner class NegativeIntervalTask {
+        fun run() = Unit
     }
 
     private fun pluginWithScheduler(captured: MutableList<CapturedTask>): Plugin {
@@ -87,5 +98,13 @@ class TaskSchedulerTest {
         TaskScheduler.register(plugin, "not-a-task")
 
         assertEquals(0, captured.size)
+    }
+
+    @Test
+    fun `负 delay 与负 interval 拒绝注册且不产生调度`() {
+        val plugin = pluginWithScheduler(mutableListOf())
+
+        assertFailsWith<IllegalArgumentException>("负 delay 应报错") { TaskScheduler.register(plugin, NegativeDelayTask()) }
+        assertFailsWith<IllegalArgumentException>("负 interval 应报错") { TaskScheduler.register(plugin, NegativeIntervalTask()) }
     }
 }

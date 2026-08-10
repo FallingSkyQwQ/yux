@@ -11,6 +11,8 @@ import yux.minecraft.annotations.YuxEvent
 import yux.minecraft.annotations.YuxTask
 import yux.minecraft.bootstrap.AnnotationScanner
 import yux.minecraft.config.ConfigManager
+import java.io.File
+import java.nio.file.Files
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
@@ -50,11 +52,51 @@ class PluginBootstrapTest {
         val scanned = AnnotationScanner.scanClasses(
             BukkitTestFixtures.testClassesDirUrl(),
             javaClass.classLoader,
+            PluginBootstrapTest::class.java.packageName,
         )
         assertTrue(scanned.any { it == TestListener::class.java }, "应扫描到 @YuxEvent 监听器")
         assertTrue(scanned.any { it == TestCommand::class.java }, "应扫描到 @YuxCommand 命令")
         assertTrue(scanned.any { it == TestTask::class.java }, "应扫描到 @YuxTask 任务")
         assertTrue(scanned.any { it == TestConfig::class.java }, "应扫描到 @YuxConfig 配置")
+        assertTrue(scanned.all { it.name.startsWith("yux.minecraft.") }, "只应扫描主类包内类: ${scanned.map { it.name }}")
+    }
+
+    @Test
+    fun `scanClasses 跳过第三方前缀条目且不触发加载`() {
+        val root = Files.createTempDirectory("scan-scope").toFile()
+        try {
+            copyResource(javaClass.classLoader, "yux/minecraft/PluginBootstrapTest\$TestConfig.class", root)
+            copyResource(javaClass.classLoader, "kotlin/Unit.class", root)
+            copyResource(javaClass.classLoader, "org/bukkit/event/Listener.class", root)
+            copyResource(javaClass.classLoader, "org/yaml/snakeyaml/Yaml.class", root)
+            val counting = object : ClassLoader(javaClass.classLoader) {
+                val loaded = mutableListOf<String>()
+                override fun loadClass(name: String, resolve: Boolean): Class<*> {
+                    loaded += name
+                    return super.loadClass(name, resolve)
+                }
+            }
+            val scanned = AnnotationScanner.scanClasses(
+                root.toURI().toURL(),
+                counting,
+                PluginBootstrapTest::class.java.packageName,
+            )
+            assertEquals(listOf(TestConfig::class.java), scanned, "只应扫描到主类包内的注解类")
+            assertTrue(
+                counting.loaded.none { it.startsWith("kotlin.") || it.startsWith("org.bukkit.") || it.startsWith("org.yaml.") },
+                "第三方前缀条目不应被加载: ${counting.loaded}",
+            )
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    /** 从 classpath 复制 .class 资源到合成扫描目录（模拟含第三方条目的 jar 结构）。 */
+    private fun copyResource(classLoader: ClassLoader, resource: String, root: File) {
+        val bytes = classLoader.getResourceAsStream(resource)?.readBytes() ?: error("资源缺失: $resource")
+        val out = File(root, resource)
+        out.parentFile.mkdirs()
+        out.writeBytes(bytes)
     }
 
     @Test

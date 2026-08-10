@@ -70,4 +70,22 @@ class CommandRegistryTest {
         CommandRegistry.register(fakePlugin, "not-a-command") // 无注解 → 静默
         // 不抛异常即通过
     }
+
+    @Test
+    fun `重复创建适配器走方法缓存且执行正常`() {
+        val yuxCommand = FakeYuxCommand()
+        val first = CommandRegistry.executorFor(yuxCommand)
+        assertEquals(true, first?.onCommand(senderProxy(), FakeCommand(), "home", arrayOf("set")))
+        assertEquals(listOf("set"), yuxCommand.invokedArgs)
+
+        val second = CommandRegistry.executorFor(yuxCommand)
+        assertEquals(true, second?.onCommand(senderProxy(), FakeCommand(), "home", arrayOf("del")))
+        assertEquals(listOf("del"), yuxCommand.invokedArgs)
+
+        val withTab = object : Any() {
+            fun tab(sender: CommandSender, args: List<*>): List<String> = listOf("a", "b")
+        }
+        val completer = CommandRegistry.tabCompleterFor(withTab)
+        assertEquals(listOf("a", "b"), completer?.onTabComplete(senderProxy(), FakeCommand(), "home", arrayOf()))
+    }
 }

@@ -22,6 +22,9 @@ import java.util.jar.JarFile
  * `@YuxEvent/@YuxCommand/@YuxConfig/@YuxTask` 的类实例化并分派注册。
  * 该机制使语言扩展层的下沉产物（普通注解类）无需生成注册代码即可工作。
  *
+ * 扫描范围限定在插件主类所在包及其子包（shaded jar 中的 kotlin-stdlib/snakeyaml
+ * 等第三方类不参与加载）；主类位于默认包时退化为只扫默认包。
+ *
  * 扫描与分派逻辑拆为 [scanClasses]/[dispatch] 内部函数，便于无服务器环境单测。
  */
 object AnnotationScanner {
@@ -31,6 +34,11 @@ object AnnotationScanner {
         YuxCommand::class.java,
         YuxConfig::class.java,
         YuxTask::class.java,
+    )
+
+    /** 第三方包前缀：即使与主类包前缀巧合也跳过（防御性，正常插件主类不可能在此）。 */
+    private val THIRD_PARTY_PREFIXES = listOf(
+        "java.", "javax.", "kotlin.", "org.bukkit.", "org.yaml.", "org.apache.",
     )
 
     /** 扫描并分派注册全部带 SDK 注解的类。 */
@@ -43,11 +51,11 @@ object AnnotationScanner {
     /** 扫描并返回带 SDK 注解的类（供测试/调试）。 */
     fun scan(plugin: JavaPlugin): List<Class<*>> {
         val location = plugin.javaClass.protectionDomain?.codeSource?.location ?: return emptyList()
-        return scanClasses(location, plugin.javaClass.classLoader)
+        return scanClasses(location, plugin.javaClass.classLoader, plugin.javaClass.packageName)
     }
 
-    /** 从 classpath 根扫描带 SDK 注解的类（jar 或目录）。 */
-    internal fun scanClasses(location: URL, classLoader: ClassLoader): List<Class<*>> {
+    /** 从 classpath 根扫描带 SDK 注解的类（jar 或目录），仅限 [mainPackage] 包内。 */
+    internal fun scanClasses(location: URL, classLoader: ClassLoader, mainPackage: String): List<Class<*>> {
         val file = File(location.toURI())
         val names = if (file.isDirectory) {
             file.walkTopDown()
@@ -62,13 +70,24 @@ object AnnotationScanner {
                     .toList()
             }
         }
-        return names.mapNotNull { name ->
-            try {
-                Class.forName(name, false, classLoader)
-            } catch (e: Throwable) {
-                null
+        return names
+            .filter { inScope(it, mainPackage) }
+            .mapNotNull { name ->
+                try {
+                    Class.forName(name, false, classLoader)
+                } catch (e: Throwable) {
+                    null
+                }
             }
-        }.filter { clazz -> SDK_ANNOTATIONS.any { clazz.isAnnotationPresent(it) } }
+            .filter { clazz -> SDK_ANNOTATIONS.any { clazz.isAnnotationPresent(it) } }
+    }
+
+    /** 类名是否在扫描范围内：第三方前缀外，且与主类同包或在其子包。 */
+    private fun inScope(className: String, mainPackage: String): Boolean {
+        if (THIRD_PARTY_PREFIXES.any { className.startsWith(it) }) return false
+        val pkg = className.substringBeforeLast('.', "")
+        if (mainPackage.isEmpty()) return pkg.isEmpty()
+        return pkg == mainPackage || pkg.startsWith("$mainPackage.")
     }
 
     /** 按注解分派注册单个类（供测试直接驱动）。 */

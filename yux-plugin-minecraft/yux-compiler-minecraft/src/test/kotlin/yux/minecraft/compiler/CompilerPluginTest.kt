@@ -354,6 +354,56 @@ class CompilerPluginTest {
         assertEquals("Task_50_0_A", asyncCls.name)
     }
 
+    @Test
+    fun `同编译单元相同参数 task 类名加唯一后缀不碰撞`() {
+        val result = parse(
+            """
+            task delay(50) { print "a" }
+            task delay(50) { print "b" }
+            task repeat(interval:20) { }
+            task repeat(interval:20) { }
+            """.trimIndent(),
+        )
+        assertFalse(result.diagnostics.hasErrors, result.diagnostics.diagnostics.toString())
+        assertNoExtensionLeftover(result)
+        val names = result.decls.filterIsInstance<YxClass>().map { it.name }
+        assertEquals(4, names.size)
+        assertEquals(4, names.toSet().size, "相同参数的任务类名应唯一: $names")
+        assertEquals(setOf("Task_50_0", "Task_50_0_1", "Task_0_20", "Task_0_20_1"), names.toSet())
+    }
+
+    @Test
+    fun `同路径 command 类名加唯一后缀不碰撞`() {
+        val result = parse(
+            """
+            command "/home" { execute(sender, args) { } }
+            command "/home" { execute(sender, args) { } }
+            command "/home" { execute(sender, args) { } }
+            """.trimIndent(),
+        )
+        assertFalse(result.diagnostics.hasErrors, result.diagnostics.diagnostics.toString())
+        assertNoExtensionLeftover(result)
+        val names = result.decls.filterIsInstance<YxClass>().map { it.name }
+        assertEquals(3, names.size)
+        assertEquals(setOf("HomeCommand", "HomeCommand_1", "HomeCommand_2"), names.toSet())
+    }
+
+    @Test
+    fun `多个 config 派生独立文件路径`() {
+        val result = parse(
+            """
+            config Server { motd = "hi" }
+            config World { name = "w" }
+            """.trimIndent(),
+        )
+        assertFalse(result.diagnostics.hasErrors, result.diagnostics.diagnostics.toString())
+        assertNoExtensionLeftover(result)
+        val paths = result.decls.filterIsInstance<YxDataClass>().associate { data ->
+            data.name to assertIs<YxStringLiteral>(data.annotations.single().args.first { it.name == "path" }.value).text
+        }
+        assertEquals(mapOf("Server" to "\"config.yml\"", "World" to "\"config_World.yml\""), paths)
+    }
+
     // ── plugin.yml（T-M8-12）───────────────────────────────────────────────────
 
     @Test
