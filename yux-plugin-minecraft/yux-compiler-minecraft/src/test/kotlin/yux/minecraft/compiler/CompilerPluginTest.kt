@@ -141,7 +141,8 @@ class CompilerPluginTest {
         assertEquals("target", target.name)
         assertEquals("\"PlayerJoinEvent\"", assertIs<YxStringLiteral>(target.value).text)
         val handle = cls.members.filterIsInstance<YxFunction>().single { it.name == "handle" }
-        assertEquals(listOf("EventHandler"), handle.annotations.single().qualifiedName)
+        // Bukkit 全限定名：后端按此发射 `Lorg/bukkit/event/EventHandler;`（单段名 → 默认包，事件永不触发）
+        assertEquals(listOf("org", "bukkit", "event", "EventHandler"), handle.annotations.single().qualifiedName)
         assertEquals(listOf("PlayerJoinEvent"), (handle.params.single().type as YxNamedType).segments)
         val stmts = (handle.body as YxFunctionBody.YxBlockBody).block.statements
         assertEquals(2, stmts.size)
@@ -202,6 +203,10 @@ class CompilerPluginTest {
         assertEquals(1, result.plugin.collector.commandPermissions.size)
         assertEquals("myserver.home", result.plugin.collector.commandPermissions.single().permission)
         assertEquals("/home", result.plugin.collector.commandPermissions.single().commandPath)
+        assertEquals(
+            CommandEntryData("/home", "传送到家", "myserver.home", listOf("h")),
+            result.plugin.collector.commands.single(),
+        )
     }
 
     @Test
@@ -467,6 +472,76 @@ class CompilerPluginTest {
         )
     }
 
+    @Test
+    fun `pluginYml 渲染 commands 节含描述权限别名且命令名为路径末段`() {
+        val collector = PluginYmlCollector().apply {
+            pluginClassName = "HomePlugin"
+            commands += CommandEntryData("/sethome", "设置家", "homeplugin.set", listOf("sh", "s"))
+            commands += CommandEntryData("/home", null, "homeplugin.home", emptyList())
+            commands += CommandEntryData("delhome", null, null, emptyList())
+            commands += CommandEntryData("/admin/back", "嵌套路径取末段", null, emptyList())
+        }
+        assertEquals(
+            """
+            main: HomePlugin
+            commands:
+              sethome:
+                description: 设置家
+                permission: homeplugin.set
+                aliases: [sh, s]
+              home:
+                permission: homeplugin.home
+              delhome:
+              back:
+                description: 嵌套路径取末段
+            """.trimIndent(),
+            renderPluginYml(collector),
+        )
+    }
+
+    @Test
+    fun `pluginYml 渲染命令名先到先得去重`() {
+        val collector = PluginYmlCollector().apply {
+            commands += CommandEntryData("/dup", "first", null, emptyList())
+            commands += CommandEntryData("/dup", "second", null, emptyList())
+        }
+        assertEquals(
+            """
+            main: Main
+            commands:
+              dup:
+                description: first
+            """.trimIndent(),
+            renderPluginYml(collector),
+        )
+    }
+
+    @Test
+    fun `pluginYml 渲染 commands 节在 permissions 之后且权限节点保持原样`() {
+        val collector = PluginYmlCollector().apply {
+            pluginClassName = "MyServer"
+            permissions += PermissionData("myserver.admin", "管理员", "op", emptyList())
+            commandPermissions += CommandPermissionData("myserver.home", "/home")
+            commands += CommandEntryData("/home", "回家", "myserver.home", emptyList())
+        }
+        assertEquals(
+            """
+            main: MyServer
+            permissions:
+              myserver.admin:
+                description: 管理员
+                default: op
+              myserver.home:
+                description: "command /home"
+            commands:
+              home:
+                description: 回家
+                permission: myserver.home
+            """.trimIndent(),
+            renderPluginYml(collector),
+        )
+    }
+
     // ── 全量端到端 ─────────────────────────────────────────────────────────────
 
     @Test
@@ -506,5 +581,9 @@ class CompilerPluginTest {
         assertEquals(listOf("myserver.home"), result.plugin.collector.permissions.single().children)
         assertEquals("myserver.home", result.plugin.collector.commandPermissions.single().permission)
         assertEquals("/home", result.plugin.collector.commandPermissions.single().commandPath)
+        assertEquals(
+            CommandEntryData("/home", null, "myserver.home", emptyList()),
+            result.plugin.collector.commands.single(),
+        )
     }
 }

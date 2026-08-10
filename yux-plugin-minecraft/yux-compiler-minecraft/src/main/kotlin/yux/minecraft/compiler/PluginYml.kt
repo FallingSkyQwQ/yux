@@ -21,6 +21,9 @@ class PluginYmlCollector {
 
     /** 带 `permission` 属性的 command 声明（源码顺序）。 */
     val commandPermissions: MutableList<CommandPermissionData> = mutableListOf()
+
+    /** `command "..."` 声明（源码顺序）：渲染为 plugin.yml 的 `commands:` 节（Bukkit 注册前提）。 */
+    val commands: MutableList<CommandEntryData> = mutableListOf()
 }
 
 /** 单个权限节点元数据（`permission "..."` 声明）。 */
@@ -43,6 +46,18 @@ class CommandPermissionData(
     val commandPath: String,
 )
 
+/** `commands:` 节单条命令元数据（`command "..."` 声明）。 */
+data class CommandEntryData(
+    /** 命令路径（未引号，如 `/sethome`；渲染时取末段去 `/` 作命令名）。 */
+    val path: String,
+    /** `description`（可选，仅非空时输出）。 */
+    val description: String? = null,
+    /** `permission`（可选，仅非空时输出）。 */
+    val permission: String? = null,
+    /** `aliases`（可选，仅非空时输出为内联列表）。 */
+    val aliases: List<String> = emptyList(),
+)
+
 /**
  * 渲染 plugin.yml 文本（T-M8-12）：2 空格缩进、键保持源码顺序、仅输出非空可选节。
  *
@@ -56,10 +71,15 @@ class CommandPermissionData(
  *       myserver.home: true
  *   myserver.home:
  *     description: "command /home"
+ * commands:
+ *   sethome:
+ *     description: 设置家
+ *     permission: myserver.home
+ *     aliases: [sh]
  * ```
  *
  * 重复权限名「先到先得」（仅首个节点输出）；`permission` 与 `command` 权限共用一个
- * 已输出集合去重。
+ * 已输出集合去重；`commands:` 按命令名（路径末段）先到先得去重。
  */
 fun renderPluginYml(collector: PluginYmlCollector): String {
     val lines = mutableListOf("main: ${collector.pluginClassName}")
@@ -82,8 +102,25 @@ fun renderPluginYml(collector: PluginYmlCollector): String {
             lines += "    description: \"command ${command.commandPath}\""
         }
     }
+    if (collector.commands.isNotEmpty()) {
+        lines += "commands:"
+        val emitted = linkedSetOf<String>()
+        for (command in collector.commands) {
+            val name = commandName(command.path)
+            if (!emitted.add(name)) continue
+            lines += "  $name:"
+            command.description?.let { lines += "    description: $it" }
+            command.permission?.let { lines += "    permission: $it" }
+            if (command.aliases.isNotEmpty()) {
+                lines += "    aliases: [${command.aliases.joinToString(", ")}]"
+            }
+        }
+    }
     return lines.joinToString("\n")
 }
+
+/** 命令名：路径末段（`/sethome` → `sethome`；`admin/sethome` → `sethome`）。 */
+private fun commandName(path: String): String = path.substringAfterLast('/').ifEmpty { path }
 
 /** 代码生成钩子（T-M8-12）：把收集器渲染结果作为 `plugin.yml` 产物附加。 */
 fun pluginYmlCodegenHook(collector: PluginYmlCollector): CodegenHook = CodegenHook { _, _ ->
