@@ -40,6 +40,30 @@ class Declarations(
                 validateOverrides(sym)
             }
         }
+        // 密封类校验（T-M12）：父类已解析后判定直接子类约束
+        validateSealedHierarchy()
+    }
+
+    /**
+     * 密封类层级校验（T-M12）：密封类的直接子类必须声明在**同一文件**（推荐简化语义，
+     * 保证编译单元内可穷尽枚举）。直接子类可为普通类/data 类；密封基类不可直接实例化
+     * 由 TypeChecker 在构造处校验（E0035）。
+     */
+    private fun validateSealedHierarchy() {
+        for (file in symbolTable.files) {
+            for (sym in file.types.values.filterIsInstance<YxClassSymbol>()) {
+                if (sym.isService) continue
+                val superSym = (sym.superType as? SemaType.Declared)?.symbol as? YxClassSymbol ?: continue
+                if (!superSym.isSealed) continue
+                if (sym.fileScope !== superSym.fileScope) {
+                    diagnostics.error(
+                        "密封类 '${superSym.name}' 的直接子类 '${sym.name}' 必须声明在同一文件中（T-M12）",
+                        sym.span?.start,
+                        ErrorCodes.SEALED_SUBCLASS_DIFFERENT_FILE,
+                    )
+                }
+            }
+        }
     }
 
     private fun classSymbol(file: FileScope, name: String): YxClassSymbol? {

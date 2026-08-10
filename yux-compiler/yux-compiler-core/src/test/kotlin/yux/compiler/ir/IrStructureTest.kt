@@ -24,6 +24,7 @@ class IrStructureTest {
             interfaces = emptyList(),
             members = mutableListOf(),
             isAbstract = false,
+            isSealed = false,
             annotations = emptyList(),
             fileScope = null,
             span = null,

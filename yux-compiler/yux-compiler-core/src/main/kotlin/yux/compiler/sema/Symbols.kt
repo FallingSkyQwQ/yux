@@ -93,6 +93,8 @@ class YxClassSymbol(
     var interfaces: List<SemaType>,
     val members: MutableList<Symbol>,
     val isAbstract: Boolean,
+    /** `sealed` 密封类（T-M12）：不可直接实例化；直接子类须同文件且同为 sealed。 */
+    val isSealed: Boolean,
     val annotations: List<yux.compiler.ast.YxAnnotation>,
     /** 访问控制（S-5.1.4）：默认 public。 */
     val visibility: yux.compiler.ast.YxVisibility = yux.compiler.ast.YxVisibility.PUBLIC,

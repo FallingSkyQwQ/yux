@@ -55,6 +55,9 @@ import yux.compiler.ast.YxUnsafeBlock
 import yux.compiler.ast.YxVarDecl
 import yux.compiler.ast.YxVisibility
 import yux.compiler.ast.YxWhen
+import yux.compiler.ast.YxWhenCondition
+import yux.compiler.ast.YxWhenExpr
+import yux.compiler.ast.YxWhenExprBranch
 import yux.compiler.ast.YxWhile
 import yux.compiler.ast.SourceSpan
 import yux.compiler.diag.DiagnosticSink
@@ -647,7 +650,133 @@ class TypeChecker(
             checkStatement(branch.body)
             smartCast.exitBlock()
         }
+        // T-M12：密封 subject 穷尽性检查（语句与表达式共用，非密封语句允许无 else 直落，S-6.3.2）
+        checkWhenExhaustiveness(stmt.span.start, stmt.branches.map { it.condition }, subjectType, isExpression = false)
     }
+
+    // ── when 表达式（T-M12）────────────────────────────────────────────────
+
+    /** when 表达式：subject 检查 + 分支智能转型 + 分支体公共类型（镜像 typeOfIfExpr）。 */
+    private fun typeOfWhenExpr(expr: YxWhenExpr, expected: SemaType?): SemaType {
+        val subjectType = typeOf(expr.subject)
+        val branchTypes = mutableListOf<SemaType>()
+        for (branch in expr.branches) {
+            smartCast.enterBlock()
+            when (val cond = branch.condition) {
+                is YxIsCondition -> {
+                    val resolved = typeResolver.resolve(cond.type, currentFile!!)
+                    val name = subjectAsVariable(expr.subject)
+                    val declared = name?.let { lookupVariable(it)?.type }
+                    if (name != null && !resolved.isError && declared != null && !TypeAssignability.possiblySame(declared, resolved)) {
+                        diagnostics.error(
+                            "类型检查不可能成立: '${declared.render()}' 与 '${resolved.render()}' 无交集（S-6.3.1）",
+                            cond.span.start,
+                            ErrorCodes.TYPE_MISMATCH,
+                        )
+                    } else if (name != null && !resolved.isError) {
+                        if (!smartCast.applyIsCast(name, resolved, ::isReassigned)) {
+                            diagnostics.remind("可变引用 '$name' 的智能转型被抑制", cond.span.start, ErrorCodes.SMART_CAST_MUTABLE)
+                        }
+                    }
+                }
+                is YxExprCondition -> {
+                    val condType = typeOf(cond.expr, expected = subjectType)
+                    if (!condType.isError && !subjectType.isError && !TypeAssignability.sameBase(condType, subjectType)) {
+                        diagnostics.error(
+                            "when 分支条件与 subject 类型不匹配: '${condType.render()}' 与 '${subjectType.render()}'",
+                            cond.span.start,
+                            ErrorCodes.TYPE_MISMATCH,
+                        )
+                    }
+                }
+                is YxElseCondition -> {
+                    if (subjectType.nullable) {
+                        val name = subjectAsVariable(expr.subject)
+                        if (name != null) smartCast.register(name, subjectType.nonNull())
+                    }
+                }
+            }
+            branchTypes += typeOf(branch.body, expected)
+            smartCast.exitBlock()
+        }
+        checkWhenExhaustiveness(expr.span.start, expr.branches.map { it.condition }, subjectType, isExpression = true)
+        return commonTypeOf(branchTypes, expected)
+    }
+
+    /** 多分支公共类型（镜像 typeOfIfExpr 的合并规则：Nothing/Error 传播 + 期望优先）。 */
+    private fun commonTypeOf(types: List<SemaType>, expected: SemaType?): SemaType {
+        if (expected != null) return expected
+        val resolved = types.map { SemaType.resolveVar(it) }
+        var acc: SemaType? = null
+        for (t in resolved) {
+            if (acc == null) {
+                acc = t
+            } else if (acc is SemaType.NothingT) {
+                acc = t
+            } else if (t is SemaType.NothingT) {
+                // 保留 acc
+            } else if (acc.isError) {
+                acc = t
+            } else if (!t.isError && TypeAssignability.isAssignable(acc, t)) {
+                acc = t
+            }
+        }
+        return acc ?: SemaType.UnitT
+    }
+
+    /**
+     * when 穷尽性检查（T-M12）：
+     * - 密封 subject（非空）未覆盖全部直接子类且无 else → E0034；
+     * - 可空密封 subject 无 else → E0034（null 只能由 else 覆盖）；
+     * - 非密封 subject 的 when **表达式**无 else → E0034（when 语句允许直落，S-6.3.2）。
+     */
+    private fun checkWhenExhaustiveness(start: SourcePosition, conditions: List<YxWhenCondition>, subjectType: SemaType, isExpression: Boolean) {
+        val resolved = SemaType.resolveVar(subjectType)
+        if (resolved.isError) return
+        val hasElse = conditions.any { it is YxElseCondition }
+        val sealedSym = (resolved as? SemaType.Declared)?.symbol as? YxClassSymbol
+        if (sealedSym != null && sealedSym.isSealed) {
+            if (hasElse) return
+            if (resolved.nullable) {
+                diagnostics.error(
+                    "可空密封类型 '${resolved.render()}' 的 when 需要 else 分支处理 null（T-M12）",
+                    start,
+                    ErrorCodes.WHEN_NOT_EXHAUSTIVE,
+                )
+                return
+            }
+            val missing = missingSealedSubtypes(conditions, resolved, sealedSym)
+            if (missing.isNotEmpty()) {
+                diagnostics.error(
+                    "密封类型 '${resolved.render()}' 的 when 未穷尽覆盖：缺少分支 ${missing.joinToString(", ") { it.name }}（T-M12）",
+                    start,
+                    ErrorCodes.WHEN_NOT_EXHAUSTIVE,
+                )
+            }
+            return
+        }
+        if (isExpression && !hasElse) {
+            diagnostics.error("when 表达式需要 else 分支（非密封 subject 无 else）（T-M12）", start, ErrorCodes.WHEN_NOT_EXHAUSTIVE)
+        }
+    }
+
+    /** 密封基类未被 `is 子类` 分支覆盖的直接子类；命中基类自身（is 基类）视为穷尽。 */
+    private fun missingSealedSubtypes(conditions: List<YxWhenCondition>, subjectType: SemaType, sealedSym: YxClassSymbol): List<YxClassSymbol> {
+        val covered = mutableSetOf<YxClassSymbol>()
+        for (c in conditions) {
+            val isc = c as? YxIsCondition ?: continue
+            val t = SemaType.resolveVar(typeResolver.resolve(isc.type, currentFile!!))
+            (t as? SemaType.Declared)?.symbol?.let { if (it is YxClassSymbol) covered += it }
+            if (TypeAssignability.sameBase(t, subjectType)) return emptyList()
+        }
+        return directSubtypesOf(sealedSym).filter { it !in covered }
+    }
+
+    /** 密封类的直接子类（superType 直接解析到该符号的 Yux 类，跨文件收集）。 */
+    private fun directSubtypesOf(sealedSym: YxClassSymbol): List<YxClassSymbol> =
+        symbolTable.files.flatMap { it.types.values }
+            .filterIsInstance<YxClassSymbol>()
+            .filter { (it.superType as? SemaType.Declared)?.symbol === sealedSym }
 
     private fun subjectAsVariable(subject: YxExpr): String? = (subject as? YxIdentifier)?.name
 
@@ -807,6 +936,7 @@ class TypeChecker(
         is YxCall -> typeOfCall(expr)
         is YxTypeCall -> typeOfTypeCall(expr)
         is YxIfExpr -> typeOfIfExpr(expr, expected)
+        is YxWhenExpr -> typeOfWhenExpr(expr, expected)
         is YxIndexExpr -> typeOfIndexExpr(expr)
         is YxTypeReference -> {
             val resolved = typeResolver.resolve(expr.type, currentFile!!)
@@ -1267,6 +1397,14 @@ class TypeChecker(
         // 使空集合构造（04-§5/§6 的 `Map String LocationData()`）可直接使用。
         val concrete = concreteCollectionType(resolved) ?: resolved
         val sym = concrete.symbol
+        // T-M12：密封类不可直接实例化（仅可通过其 sealed 子类构造具体实例）
+        if (sym is YxClassSymbol && sym.isSealed) {
+            diagnostics.error(
+                "密封类 '${sym.name}' 不可直接实例化（T-M12）：请构造其 sealed 子类",
+                call.span.start,
+                ErrorCodes.SEALED_INSTANTIATION,
+            )
+        }
         val constructorParams: List<SemaType> = when (sym) {
             is JvmClassSymbol -> {
                 val ctor = sym.constructors.firstOrNull { it.params.size == call.args.size } ?: sym.constructors.firstOrNull()

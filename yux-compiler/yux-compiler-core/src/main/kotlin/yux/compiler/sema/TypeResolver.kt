@@ -167,6 +167,8 @@ object TypeAssignability {
                 val boxed = jvmBoxedName(f.name) ?: return false
                 return jvmImplements(boxed, (t.symbol as JvmClassSymbol).qualifiedName)
             }
+            // T-M12：Yux 类继承——子类可赋给可空祖先类型
+            if (isYuxSubtypeOf(f, t)) return true
             return false
         }
         if (from.nullable && !to.nullable) return false
@@ -177,7 +179,18 @@ object TypeAssignability {
             val boxed = jvmBoxedName(f.name) ?: return false
             return jvmImplements(boxed, (t.symbol as JvmClassSymbol).qualifiedName)
         }
+        // T-M12：Yux 类继承——子类可赋给祖先类型（Circle extends Shape → Circle 可传给 Shape 参数）
+        if (isYuxSubtypeOf(f, t)) return true
         return false
+    }
+
+    /** [from] 是否为 [to] 的 Yux 类后代（含自身，沿 superType 链；仅 Yux 声明类）。 */
+    private fun isYuxSubtypeOf(from: SemaType, to: SemaType): Boolean {
+        val f = from as? SemaType.Declared ?: return false
+        val t = to as? SemaType.Declared ?: return false
+        val fs = f.symbol as? YxClassSymbol ?: return false
+        val ts = t.symbol as? YxClassSymbol ?: return false
+        return isYuxSupertypeOf(ts, fs)
     }
 
     /** 基础类型 → JVM 装箱类名（Int→java.lang.Integer）。 */
@@ -266,6 +279,24 @@ object TypeAssignability {
         if (y is SemaType.Basic && y.name == "Any") return true
         if (x is SemaType.TypeParam || y is SemaType.TypeParam) return true
         if (x is SemaType.UnitT || y is SemaType.UnitT) return x is SemaType.UnitT && y is SemaType.UnitT
-        return sameBase(x, y)
+        if (sameBase(x, y)) return true
+        // T-M12：继承关系下 `is T` 检查可能成立（`Shape is Circle` 当 `Circle extends Shape`）——
+        // 沿 superType 链判定 Yux 声明类之间的祖先/后代关系。
+        if (x is SemaType.Declared && y is SemaType.Declared) {
+            val xs = x.symbol as? YxClassSymbol
+            val ys = y.symbol as? YxClassSymbol
+            if (xs != null && ys != null && (isYuxSupertypeOf(xs, ys) || isYuxSupertypeOf(ys, xs))) return true
+        }
+        return false
+    }
+
+    /** [ancestor] 是否为 [desc] 的祖先（含自身，沿 superType 链）。 */
+    private fun isYuxSupertypeOf(ancestor: YxClassSymbol, desc: YxClassSymbol): Boolean {
+        var cur: YxClassSymbol? = desc
+        while (cur != null) {
+            if (cur === ancestor) return true
+            cur = (cur.superType as? SemaType.Declared)?.symbol as? YxClassSymbol
+        }
+        return false
     }
 }

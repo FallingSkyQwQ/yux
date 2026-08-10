@@ -66,6 +66,8 @@ class YxClass(
     val members: List<YxClassMember>,
     val visibility: YxVisibility,
     val annotations: List<YxAnnotation>,
+    /** `sealed` 软关键字修饰（T-M12）：密封类不可直接实例化；直接子类须同文件且同为 sealed。 */
+    val isSealed: Boolean = false,
     override val span: SourceSpan,
 ) : YxDecl
 
@@ -78,6 +80,8 @@ class YxDataClass(
     val members: List<YxClassMember>,
     val visibility: YxVisibility,
     val annotations: List<YxAnnotation>,
+    /** `sealed` 软关键字修饰（T-M12）：语义同 [YxClass.isSealed]。 */
+    val isSealed: Boolean = false,
     override val span: SourceSpan,
 ) : YxDecl {
     val properties: List<YxProperty> get() = members.filterIsInstance<YxProperty>()
@@ -244,6 +248,20 @@ class YxIfExpr(
     val elseExpr: YxExpr,
     override val span: SourceSpan,
 ) : YxExpr
+
+/** when 表达式（T-M12，01-§7 扩展）：`when <subject> { cond -> expr ... [else -> expr] }`。
+ *  与 if 表达式一致产生值；分支体为单个表达式。非密封 subject 要求 else（S-6.2.2 补充）。 */
+class YxWhenExpr(
+    val subject: YxExpr,
+    val branches: List<YxWhenExprBranch>,
+    override val span: SourceSpan,
+) : YxExpr
+
+class YxWhenExprBranch(
+    val condition: YxWhenCondition,
+    val body: YxExpr,
+    override val span: SourceSpan,
+) : YxNode
 
 /** 索引访问（M9）：`expr[index]` 读（04-§7），赋值目标为 `YxAssign(target=YxIndexExpr)`。 */
 class YxIndexExpr(

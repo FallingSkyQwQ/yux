@@ -44,6 +44,7 @@ class CstImportDecl(
 
 class CstClassDecl(
     val modifier: Token?, // private/protected
+    val sealedKw: Token?, // `sealed` 软关键字（T-M12）
     val annotations: List<CstAnnotation>,
     val name: Token,
     val typeParams: List<Token>,
@@ -58,6 +59,7 @@ class CstClassDecl(
 class CstDataClassDecl(
     val dataKw: Token,
     val modifier: Token?,
+    val sealedKw: Token?, // `sealed` 软关键字（T-M12）
     val annotations: List<CstAnnotation>,
     val name: Token,
     val typeParams: List<Token>,
@@ -451,6 +453,23 @@ class CstBinary(
     val right: CstExpr,
     override val span: SourceSpan,
 ) : CstExpr
+
+/** when 表达式（T-M12）：`when <subject> { cond -> expr ... }`（分支体为表达式）。 */
+class CstWhenExpr(
+    val whenKw: Token,
+    val subject: CstExpr,
+    val lbrace: Token,
+    val branches: List<CstWhenExprBranch>,
+    val rbrace: Token,
+    override val span: SourceSpan,
+) : CstExpr
+
+class CstWhenExprBranch(
+    val condition: CstWhenCondition,
+    val arrow: Token,
+    val body: CstExpr,
+    override val span: SourceSpan,
+) : CstNode
 
 /** if 表达式（M9）：`if <cond> then <thenExpr> else <elseExpr>`。 */
 class CstIfExpr(

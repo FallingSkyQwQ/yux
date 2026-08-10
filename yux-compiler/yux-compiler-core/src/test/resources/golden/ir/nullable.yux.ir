@@ -6,7 +6,7 @@ module {
    LocalAssign #0: Any? = Const(null)
    Branch IsType(LocalRead(#0), Sword) L0 L1
    Label L0
-   LocalAssign #1: Int = Invoke Sword.getDamage [LocalRead(#0)]
+   LocalAssign #1: Int = Invoke Sword.getDamage [Convert(LocalRead(#0), Sword)]
    Label L1
    LocalAssign #2: String = Const("Steve")
    Branch Compare(NE, LocalRead(#2), Const(null)) L2 L3
