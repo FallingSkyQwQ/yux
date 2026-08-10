@@ -140,6 +140,41 @@ class AsmBackendTest {
     }
 
     @Test
+    fun `super call invokes parent method not override`() {
+        val out = BackendTestSupport.compileAndRun("""
+            Base {
+                fun greet() = "base"
+            }
+            Child extends Base {
+                override fun greet() = "child"
+                fun parentGreet() = super.greet()
+            }
+            fun main() {
+                c = Child()
+                print c.parentGreet()
+            }
+        """.trimIndent())
+        // super.greet() 必须调用父类版本（INVOKESPECIAL），避免递归到子类覆写
+        assertEquals("base", out)
+    }
+
+    @Test
+    fun `private and protected method access flags`() {
+        val classes = BackendTestSupport.compile("""
+            A {
+                private fun secret() = 1
+                protected fun helper() = 2
+                fun pub() = 3
+            }
+        """.trimIndent())
+        val loader = BackendTestSupport.load(classes)
+        val cls = Class.forName("A", false, loader)
+        assertTrue(java.lang.reflect.Modifier.isPrivate(cls.getDeclaredMethod("secret").modifiers), "secret 应为 private")
+        assertTrue(java.lang.reflect.Modifier.isProtected(cls.getDeclaredMethod("helper").modifiers), "helper 应为 protected")
+        assertTrue(java.lang.reflect.Modifier.isPublic(cls.getDeclaredMethod("pub").modifiers), "pub 应为 public")
+    }
+
+    @Test
     fun `lambda with closure capture and invoke`() {
         val out = BackendTestSupport.compileAndRun("""
             fun main() {

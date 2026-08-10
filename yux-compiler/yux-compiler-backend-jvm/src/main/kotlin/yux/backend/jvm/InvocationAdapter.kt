@@ -20,6 +20,7 @@ internal object InvocationAdapter {
         when {
             isPrimitive(irDesc) && !isPrimitive(realDesc) -> box(mv, irDesc)
             !isPrimitive(irDesc) && isPrimitive(realDesc) -> unbox(mv, realDesc)
+            isPrimitive(irDesc) && isPrimitive(realDesc) -> widen(mv, irDesc, realDesc)
         }
     }
 
@@ -31,9 +32,28 @@ internal object InvocationAdapter {
         when {
             !isPrimitive(realDesc) && isPrimitive(irDesc) -> unbox(mv, irDesc)
             isPrimitive(realDesc) && !isPrimitive(irDesc) -> box(mv, realDesc)
+            isPrimitive(realDesc) && isPrimitive(irDesc) -> widen(mv, realDesc, irDesc)
             !isPrimitive(realDesc) && !isPrimitive(irDesc) -> castTo(mv, irDesc)
         }
     }
+
+    /** 原语宽度转换（`fun f(): Long = 1` / `l:Long = 1` 的 I→J 等加宽；同宽类别（C/B/Z→I）无需指令）。 */
+    fun widen(mv: MethodVisitor, from: String, to: String) {
+        if (from in setOf("C", "B", "Z")) return // 与 int 同栈宽，无需指令
+        when (from to to) {
+            "I" to "J" -> mv.visitInsn(Opcodes.I2L)
+            "I" to "F" -> mv.visitInsn(Opcodes.I2F)
+            "I" to "D" -> mv.visitInsn(Opcodes.I2D)
+            "J" to "F" -> mv.visitInsn(Opcodes.L2F)
+            "J" to "D" -> mv.visitInsn(Opcodes.L2D)
+            "F" to "D" -> mv.visitInsn(Opcodes.F2D)
+            "J" to "I" -> mv.visitInsn(Opcodes.L2I)
+            else -> Unit // 其余窄化由显式 Convert 负责；此处仅加宽
+        }
+    }
+
+    /** 原语装箱（发射器原语接收者调用前用；参见 [box]）。 */
+    fun boxPrimitive(mv: MethodVisitor, primitiveDesc: String) = box(mv, primitiveDesc)
 
     private fun box(mv: MethodVisitor, primitiveDesc: String) {
         when (primitiveDesc) {

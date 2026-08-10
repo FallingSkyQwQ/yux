@@ -26,3 +26,8 @@ fun interface Function2<P1, P2, R> {
 fun interface Function3<P1, P2, P3, R> {
     fun invoke(p1: P1, p2: P2, p3: P3): R
 }
+
+/** 4 参函数。 */
+fun interface Function4<P1, P2, P3, P4, R> {
+    fun invoke(p1: P1, p2: P2, p3: P3, p4: P4): R
+}

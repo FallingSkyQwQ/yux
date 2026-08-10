@@ -29,7 +29,7 @@ object JvmTypeMapper {
             }
             is IrType.Generic -> genericErasure(t)
             is IrType.TypeParam -> t.bound?.let { internalName(it) } ?: "java/lang/Object"
-            is IrType.Function -> functionInternal(t)
+            is IrType.Function -> functionInternal(t) ?: "java/lang/Object"
             else -> "java/lang/Object"
         }
     }
@@ -62,10 +62,10 @@ object JvmTypeMapper {
     /** 类型默认值（02-§9.4：NullGuard null 分支/未初始化数值槽）。 */
     fun defaultValue(type: IrType): Any? = IrType.defaultValue(type)
 
-    /** 函数类型 → FunctionN 接口内部名（01-§4.4；arity 上限 3）。 */
-    fun functionInternal(type: IrType.Function): String {
+    /** 函数类型 → FunctionN 接口内部名（01-§4.4；arity 0..4，更高返回 null 由调用方给诊断）。 */
+    fun functionInternal(type: IrType.Function): String? {
         val arity = type.params.size
-        require(arity <= 3) { "M5 函数类型最多 3 参，实际 $arity" }
+        if (arity > 4) return null
         return "yux/core/function/Function$arity"
     }
 
@@ -107,6 +107,15 @@ object JvmTypeMapper {
         "Char" to "Ljava/lang/Character;",
         "Byte" to "Ljava/lang/Byte;",
     )
+
+    /**
+     * 类字面量内部名（`deserialize(json, Int)` → `java/lang/Integer`）：
+     * 基本类型映射装箱类（原语无内部名），引用类型直接取内部名。
+     */
+    fun classLiteralInternal(type: IrType): String = when (val t = type.nonNull()) {
+        is IrType.Basic -> BOXED_DESC[t.name]?.removePrefix("L")?.removeSuffix(";") ?: internalName(t)
+        else -> internalName(t)
+    }
 
     /** ASM Type（便捷访问）。 */
     fun asmType(type: IrType): Type = Type.getType(descriptor(type))

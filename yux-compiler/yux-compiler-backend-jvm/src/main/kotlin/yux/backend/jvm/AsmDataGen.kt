@@ -95,11 +95,13 @@ internal class AsmDataGen(
                     mv.visitJumpInsn(Opcodes.IFNE, mismatch)
                 }
                 desc == "F" -> {
-                    mv.visitInsn(Opcodes.FCMPL)
+                    // Float.compare 语义：NaN 相等、-0.0f ≠ 0.0f，与 Float.hashCode 契约一致
+                    mv.visitMethodInsn(Opcodes.INVOKESTATIC, "java/lang/Float", "compare", "(FF)I", false)
                     mv.visitJumpInsn(Opcodes.IFNE, mismatch)
                 }
                 desc == "D" -> {
-                    mv.visitInsn(Opcodes.DCMPL)
+                    // Double.compare 语义：NaN 相等、-0.0 ≠ 0.0，与 Double.hashCode 契约一致
+                    mv.visitMethodInsn(Opcodes.INVOKESTATIC, "java/lang/Double", "compare", "(DD)I", false)
                     mv.visitJumpInsn(Opcodes.IFNE, mismatch)
                 }
                 desc == "I" || desc == "Z" || desc == "C" || desc == "B" -> {
@@ -174,7 +176,8 @@ internal class AsmDataGen(
         "J" -> "(J)Ljava/lang/StringBuilder;"
         "F" -> "(F)Ljava/lang/StringBuilder;"
         "D" -> "(D)Ljava/lang/StringBuilder;"
-        "I", "Z", "C", "B" -> "(I)Ljava/lang/StringBuilder;"
+        "C" -> "(C)Ljava/lang/StringBuilder;"
+        "I", "Z", "B" -> "(I)Ljava/lang/StringBuilder;"
         "Ljava/lang/String;" -> "(Ljava/lang/String;)Ljava/lang/StringBuilder;"
         else -> "(Ljava/lang/Object;)Ljava/lang/StringBuilder;"
     }

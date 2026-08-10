@@ -30,21 +30,26 @@ import yux.compiler.ir.IrType
 internal class StmtEmitter(
     private val mv: MethodVisitor,
     private val classEmitter: AsmEmitter,
-    private val slots: Map<IrLocal, Int>,
+    private val allocation: SlotAllocation,
     private val method: IrMethod,
 ) {
     private val labels = HashMap<IrLabel, Label>()
     private var catchTmpCounter = 0
+
+    private val slots: Map<IrLocal, Int> get() = allocation.slots
+
+    /** 方法级临时槽起点（try/finally 异常临时槽从该处高位申请，不与 this/参数/局部重叠）。 */
+    private fun tmpSlot(): Int = allocation.nextFreeSlot + catchTmpCounter++
 
     fun emitStmt(stmt: IrStmt) {
         when (stmt) {
             is IrStmt.Label -> mv.visitLabel(labelOf(stmt.label))
             is IrStmt.LocalAssign -> {
                 emitExpr(stmt.value)
-                storeLocal(stmt.local)
+                storeLocal(stmt.local, stmt.value.inferType())
             }
             is IrStmt.Call -> {
-                emitInvoke(stmt.callee, stmt.receiver, stmt.args)
+                emitInvoke(stmt.callee, stmt.receiver, stmt.args, stmt.isSuper)
                 // 语句位置：结果出栈（void 无需）
                 popIfNeeded(stmt.ret)
             }
@@ -168,7 +173,8 @@ internal class StmtEmitter(
         // finally 的异常路径：catch-all → finally → rethrow
         if (finallyLabel != null) {
             mv.visitLabel(finallyLabel)
-            val tmp = catchTmpCounter++
+            // 临时槽高位申请：异常暂存不得覆盖 this/参数/局部（含宽局部双槽）
+            val tmp = tmpSlot()
             mv.visitVarInsn(Opcodes.ASTORE, tmp)
             stmt.finallyBody?.forEach { emitStmt(it) }
             mv.visitVarInsn(Opcodes.ALOAD, tmp)
@@ -182,12 +188,11 @@ internal class StmtEmitter(
         c.type?.let { JvmTypeMapper.internalName(it) }
 
     private fun resolveCatchLocal(c: IrCatch): Int {
-        // catch 参数局部：IRGen 已登记（index 连续）；无则分配临时槽
-        val local = method.paramLocals.firstOrNull { it.name == c.paramName }
-        if (local != null) return slots[local] ?: error("catch 参数槽位缺失: ${c.paramName}")
-        // 兜底：查找方法体中同名局部
-        val found = slots.keys.firstOrNull { it.name == c.paramName }
-        return found?.let { slots[it]!! } ?: (slots.size + 1 + catchTmpCounter++)
+        // catch 参数局部：递归搜索 catch 体（含嵌套表达式/嵌套 Try），独立槽位——
+        // 不得复用方法参数槽（同名参数场景 ASTORE 会覆盖参数）；未引用时用临时槽
+        val found = findLocalByNameRecursive(c.body, c.paramName)
+        if (found != null) return slots[found] ?: error("catch 参数槽位缺失: ${c.paramName}")
+        return tmpSlot()
     }
 
     // ── 表达式 ────────────────────────────────────────────────────────────────
@@ -195,6 +200,8 @@ internal class StmtEmitter(
     fun emitExpr(e: IrExpr) {
         when (e) {
             is IrExpr.Const -> emitConst(e.value)
+            is IrExpr.ClassLiteral -> mv.visitLdcInsn(Type.getObjectType(JvmTypeMapper.classLiteralInternal(e.type)))
+            is IrExpr.ArrayLoad -> emitArrayLoad(e)
             is IrExpr.This -> mv.visitVarInsn(Opcodes.ALOAD, 0)
             is IrExpr.LocalRead -> loadLocal(e.local)
             is IrExpr.FieldRead -> emitFieldRead(e)
@@ -205,7 +212,7 @@ internal class StmtEmitter(
             is IrExpr.Neg -> emitNeg(e)
             is IrExpr.Convert -> emitConvert(e)
             is IrExpr.IsType -> emitIsType(e)
-            is IrExpr.Invoke -> emitInvoke(e.target, e.receiver, e.args)
+            is IrExpr.Invoke -> emitInvoke(e.target, e.receiver, e.args, e.isSuper)
             is IrExpr.FnInvoke -> emitFnInvoke(e)
             is IrExpr.StringTemplate -> emitStringTemplate(e)
             is IrExpr.NullGuard -> emitNullGuard(e)
@@ -213,8 +220,22 @@ internal class StmtEmitter(
         }
     }
 
-    private fun emitConst(value: Any?) {
-        when (value) {
+    /** JVM 数组元素读取：`a[i]` → 栈 base,index 后按元素描述符发 xALOAD。 */
+    private fun emitArrayLoad(e: IrExpr.ArrayLoad) {
+        emitExpr(e.base)
+        emitExpr(e.index)
+        when (JvmTypeMapper.descriptor(e.elemType)) {
+            "I" -> mv.visitInsn(Opcodes.IALOAD)
+            "J" -> mv.visitInsn(Opcodes.LALOAD)
+            "F" -> mv.visitInsn(Opcodes.FALOAD)
+            "D" -> mv.visitInsn(Opcodes.DALOAD)
+            "Z", "B" -> mv.visitInsn(Opcodes.BALOAD)
+            "C" -> mv.visitInsn(Opcodes.CALOAD)
+            else -> mv.visitInsn(Opcodes.AALOAD)
+        }
+    }
+
+    private fun emitConst(value: Any?) {        when (value) {
             null -> mv.visitInsn(Opcodes.ACONST_NULL)
             is Int -> pushInt(value)
             is Long -> {
@@ -310,14 +331,7 @@ internal class StmtEmitter(
     /** 操作数拓宽到运算宽度（Int 参与 Long 运算时 i2l）。 */
     private fun widenOperand(operand: IrExpr, targetDesc: String) {
         val src = JvmTypeMapper.descriptor(operand.inferType() ?: IrType.INT)
-        if (src == targetDesc) return
-        if (src == "I" && targetDesc == "J") mv.visitInsn(Opcodes.I2L)
-        else if (src == "I" && targetDesc == "F") mv.visitInsn(Opcodes.I2F)
-        else if (src == "I" && targetDesc == "D") mv.visitInsn(Opcodes.I2D)
-        else if (src == "J" && targetDesc == "F") mv.visitInsn(Opcodes.L2F)
-        else if (src == "J" && targetDesc == "D") mv.visitInsn(Opcodes.L2D)
-        else if (src == "F" && targetDesc == "D") mv.visitInsn(Opcodes.F2D)
-        else if (src == "J" && targetDesc == "I") mv.visitInsn(Opcodes.L2I)
+        InvocationAdapter.widen(mv, src, targetDesc)
     }
 
     private fun arithOpcode(op: ArithOp, desc: String): Int = when (desc) {
@@ -356,12 +370,35 @@ internal class StmtEmitter(
         val rType = e.r.inferType() ?: IrType.INT
         val lIsNull = (e.l as? IrExpr.Const)?.let { it.value == null } ?: false
         val rIsNull = (e.r as? IrExpr.Const)?.let { it.value == null } ?: false
-        val lDesc = JvmTypeMapper.descriptor(lType)
-        val rDesc = JvmTypeMapper.descriptor(rType)
-        val refCompare = lIsNull || rIsNull || (!isPrimitiveDesc(lDesc) && !isPrimitiveDesc(rDesc))
+        var lDesc = JvmTypeMapper.descriptor(lType)
+        var rDesc = JvmTypeMapper.descriptor(rType)
+        val lRef = !isPrimitiveDesc(lDesc)
+        val rRef = !isPrimitiveDesc(rDesc)
+        val ordering = e.op == CompareOp.LT || e.op == CompareOp.LE || e.op == CompareOp.GT || e.op == CompareOp.GE
+        // 混合可空/非可空数值：== / != 装箱原语侧走引用比较（null 感知）；
+        // 排序比较拆箱引用侧（null → NPE，与 `as Int` 强制拆箱一致）走原语比较
+        val unboxL = lRef && !rRef && ordering
+        val unboxR = rRef && !lRef && ordering
+        val boxL = !lRef && rRef && !ordering
+        val boxR = !rRef && lRef && !ordering
 
         emitExpr(e.l)
+        when {
+            unboxL -> InvocationAdapter.adaptArg(mv, lType, JvmTypeMapper.descriptor(lType.nonNull()))
+            boxL -> InvocationAdapter.adaptArg(mv, lType, rDesc)
+        }
         emitExpr(e.r)
+        when {
+            unboxR -> InvocationAdapter.adaptArg(mv, rType, JvmTypeMapper.descriptor(rType.nonNull()))
+            boxR -> InvocationAdapter.adaptArg(mv, rType, lDesc)
+        }
+        if (unboxL) lDesc = JvmTypeMapper.descriptor(lType.nonNull())
+        if (unboxR) rDesc = JvmTypeMapper.descriptor(rType.nonNull())
+        if (boxL) lDesc = rDesc
+        if (boxR) rDesc = lDesc
+
+        val refCompare = lIsNull || rIsNull || (!isPrimitiveDesc(lDesc) && !isPrimitiveDesc(rDesc))
+
         when {
             refCompare -> {
                 if (lIsNull || rIsNull) {
@@ -388,20 +425,20 @@ internal class StmtEmitter(
                 }
             }
             lDesc == "J" || rDesc == "J" -> {
-                widenOperand(e.l, "J")
-                widenOperand(e.r, "J")
+                InvocationAdapter.widen(mv, lDesc, "J")
+                InvocationAdapter.widen(mv, rDesc, "J")
                 mv.visitInsn(Opcodes.LCMP)
                 cmpResultJump(e.op)
             }
             lDesc == "F" || rDesc == "F" -> {
-                widenOperand(e.l, "F")
-                widenOperand(e.r, "F")
+                InvocationAdapter.widen(mv, lDesc, "F")
+                InvocationAdapter.widen(mv, rDesc, "F")
                 mv.visitInsn(Opcodes.FCMPL)
                 cmpResultJump(e.op)
             }
             lDesc == "D" || rDesc == "D" -> {
-                widenOperand(e.l, "D")
-                widenOperand(e.r, "D")
+                InvocationAdapter.widen(mv, lDesc, "D")
+                InvocationAdapter.widen(mv, rDesc, "D")
                 mv.visitInsn(Opcodes.DCMPL)
                 cmpResultJump(e.op)
             }
@@ -518,7 +555,7 @@ internal class StmtEmitter(
     }
 
     /** 调用（语句/表达式共用）：接收者 + 实参 + INVOKE*。 */
-    private fun emitInvoke(callable: yux.compiler.ir.IrCallable, receiver: IrExpr?, args: List<IrExpr>) {
+    private fun emitInvoke(callable: yux.compiler.ir.IrCallable, receiver: IrExpr?, args: List<IrExpr>, isSuper: Boolean = false) {
         val resolved = classEmitter.resolveCallable(callable)
         if (resolved.isStatic) {
             args.forEachIndexed { i, arg ->
@@ -528,11 +565,17 @@ internal class StmtEmitter(
             mv.visitMethodInsn(Opcodes.INVOKESTATIC, resolved.ownerInternal, resolved.name, resolved.desc, false)
         } else {
             receiver?.let { emitExpr(it) }
+            boxPrimitiveReceiver(receiver, resolved)
             args.forEachIndexed { i, arg ->
                 emitExpr(arg)
                 InvocationAdapter.adaptArg(mv, argType(arg), resolved.realParamDescs.getOrElse(i) { JvmTypeMapper.descriptor(arg.inferType() ?: IrType.ANY) })
             }
-            val opcode = if (resolved.isInterface) Opcodes.INVOKEINTERFACE else Opcodes.INVOKEVIRTUAL
+            // super 调用：对父类非虚拟调用（INVOKESPECIAL，S-8.7.1）
+            val opcode = when {
+                isSuper -> Opcodes.INVOKESPECIAL
+                resolved.isInterface -> Opcodes.INVOKEINTERFACE
+                else -> Opcodes.INVOKEVIRTUAL
+            }
             mv.visitMethodInsn(opcode, resolved.ownerInternal, resolved.name, resolved.desc, resolved.isInterface)
         }
         // 返回值适配（T-M5-7）：真实 JVM 返回类型 → IR 类型（`Iterator.next()` Object → Int 拆箱）
@@ -541,11 +584,23 @@ internal class StmtEmitter(
         }
     }
 
+    /** 原语接收者装箱（`n.intValue()` / `n.toString()`）：Basic 原语经 jvmForBasic 解析为装箱类
+     *  实例方法时，栈上是原语，需先 valueOf 装箱再 INVOKEVIRTUAL。 */
+    private fun boxPrimitiveReceiver(receiver: IrExpr?, resolved: JvmDescResolver.ResolvedMethod) {
+        val rt = receiver?.inferType() ?: return
+        val rtDesc = JvmTypeMapper.descriptor(rt)
+        if (!isPrimitiveDesc(rtDesc)) return
+        if (JvmTypeMapper.boxedDescriptor(rt) == "L${resolved.ownerInternal};") {
+            InvocationAdapter.boxPrimitive(mv, rtDesc)
+        }
+    }
+
     /** 函数类型值调用（T-M5-4 FnInvoke）：FunctionN.invoke + 装箱适配。 */
     private fun emitFnInvoke(e: IrExpr.FnInvoke) {
         val fnType = e.fn.inferType() as? IrType.Function
             ?: error("M5 FnInvoke 函数类型缺失: ${e.fn.inferType()}")
         val interfaceName = JvmTypeMapper.functionInternal(fnType)
+            ?: error("函数类型参数过多（>4），JVM 后端不支持: ${fnType.render()}")
         emitExpr(e.fn)
         e.args.forEachIndexed { i, arg ->
             emitExpr(arg)
@@ -554,10 +609,11 @@ internal class StmtEmitter(
         }
         val samDesc = "(" + List(e.args.size) { "Ljava/lang/Object;" }.joinToString("") + ")Ljava/lang/Object;"
         mv.visitMethodInsn(Opcodes.INVOKEINTERFACE, interfaceName, "invoke", samDesc, true)
-        // 结果拆箱到返回类型
+        // 结果适配到返回类型；Unit 返回时 FunctionN.invoke 残留 Object，必须弹出保持栈平衡
         val retDesc = JvmTypeMapper.descriptor(fnType.ret)
-        if (retDesc != "Ljava/lang/Object;") {
-            InvocationAdapter.adaptResult(mv, "Ljava/lang/Object;", fnType.ret)
+        when {
+            retDesc == "V" -> mv.visitInsn(Opcodes.POP)
+            retDesc != "Ljava/lang/Object;" -> InvocationAdapter.adaptResult(mv, "Ljava/lang/Object;", fnType.ret)
         }
     }
 
@@ -577,10 +633,12 @@ internal class StmtEmitter(
     private fun appendDesc(part: IrExpr): String {
         val desc = JvmTypeMapper.descriptor(part.inferType() ?: IrType.STRING)
         return when (desc) {
-            "I", "Z", "C", "B" -> "(I)Ljava/lang/StringBuilder;"
             "J" -> "(J)Ljava/lang/StringBuilder;"
             "F" -> "(F)Ljava/lang/StringBuilder;"
             "D" -> "(D)Ljava/lang/StringBuilder;"
+            // Char 走 append(char)：`"a" + 'b'` 输出 "ab" 而非 append(int) 的 "a98"
+            "C" -> "(C)Ljava/lang/StringBuilder;"
+            "I", "Z", "B" -> "(I)Ljava/lang/StringBuilder;"
             "Ljava/lang/String;" -> "(Ljava/lang/String;)Ljava/lang/StringBuilder;"
             else -> "(Ljava/lang/Object;)Ljava/lang/StringBuilder;"
         }
@@ -639,6 +697,7 @@ internal class StmtEmitter(
         val resolved = classEmitter.resolveCallable(invoke.target)
         val opcode = when {
             resolved.isStatic -> Opcodes.INVOKESTATIC
+            invoke.isSuper -> Opcodes.INVOKESPECIAL
             resolved.isInterface -> Opcodes.INVOKEINTERFACE
             else -> Opcodes.INVOKEVIRTUAL
         }
@@ -673,6 +732,7 @@ internal class StmtEmitter(
             ret = target.returnType,
         )
         val interfaceName = JvmTypeMapper.functionInternal(fnType)
+            ?: error("函数类型参数过多（>4），JVM 后端不支持: ${fnType.render()}")
         val samName = "invoke"
         // samMethodType = 擦除的 SAM 签名（Object...）；instantiatedMethodType = 装箱实际类型
         // （LambdaMetafactory 用 asType 把 implMethod (I)I 适配到 (Integer)Integer）
@@ -737,9 +797,13 @@ internal class StmtEmitter(
         )
     }
 
-    private fun storeLocal(local: IrLocal) {
+    private fun storeLocal(local: IrLocal, valueType: IrType?) {
         val slot = slots[local] ?: error("局部槽位缺失: ${local.name}")
         val desc = JvmTypeMapper.descriptor(local.type)
+        // 数值加宽/装箱适配（`l:Long = 1` → I2L；`age:Int? = 18` → valueOf 装箱）
+        if (valueType != null) {
+            InvocationAdapter.adaptArg(mv, valueType, desc)
+        }
         mv.visitVarInsn(
             when (desc) {
                 "J" -> Opcodes.LSTORE
