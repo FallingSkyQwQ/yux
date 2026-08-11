@@ -88,7 +88,7 @@ object AstScan {
                 visit(e.elseExpr, onNode)
             }
             is yux.compiler.ast.YxWhenExpr -> {
-                visit(e.subject, onNode)
+                e.subject?.let { visit(it, onNode) }
                 e.branches.forEach { visit(it.body, onNode) }
             }
             is yux.compiler.ast.YxIndexExpr -> {
@@ -125,7 +125,7 @@ object AstScan {
                 s.elseBranch?.let { visit(it, onNode) }
             }
             is yux.compiler.ast.YxWhen -> {
-                visit(s.subject, onNode)
+                s.subject?.let { visit(it, onNode) }
                 s.branches.forEach { visit(it.body, onNode) }
             }
             is yux.compiler.ast.YxFor -> {

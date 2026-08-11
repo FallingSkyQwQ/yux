@@ -24,6 +24,7 @@ import yux.compiler.lexer.TokenKind.LT
 import yux.compiler.lexer.TokenKind.MINUS
 import yux.compiler.lexer.TokenKind.MINUS_ASSIGN
 import yux.compiler.lexer.TokenKind.NEQ
+import yux.compiler.lexer.TokenKind.NEWLINE
 import yux.compiler.lexer.TokenKind.NOT
 import yux.compiler.lexer.TokenKind.OR
 import yux.compiler.lexer.TokenKind.PERCENT
@@ -43,7 +44,6 @@ import yux.compiler.lexer.TokenKind.STAR
 import yux.compiler.lexer.TokenKind.STAR_ASSIGN
 import yux.compiler.lexer.TokenKind.STRING_LITERAL
 import yux.compiler.lexer.TokenKind.STRING_START
-import yux.compiler.lexer.TokenKind.NEWLINE
 
 /**
  * Pratt 表达式解析（02-§5.1 / T-M2-2、T-M2-7）。
@@ -63,26 +63,30 @@ import yux.compiler.lexer.TokenKind.NEWLINE
  * 无括号单参调用（S-7.2.2）：实参为紧跟的单个 Primary（含其后缀链），
  * 绑定优先级高于二元运算符——`f a + b` == `f(a) + b`。
  */
-internal class PrattParser(private val p: Parser) {
-
+internal class PrattParser(
+    private val p: Parser,
+) {
     /** 二元中缀优先级；返回 null 表示非中缀。第二项为是否右结合。 */
-    private fun infixInfo(tok: Token): Pair<Int, Boolean>? = when (tok.kind) {
-        ASSIGN, PLUS_ASSIGN, MINUS_ASSIGN, STAR_ASSIGN, SLASH_ASSIGN, PERCENT_ASSIGN -> 1 to true
-        RANGE -> 2 to false
-        OR -> 3 to false
-        AND -> 4 to false
-        EQ, NEQ -> 5 to false
-        LT, GT, LE, GE -> 6 to false
-        PLUS, MINUS -> 7 to false
-        STAR, SLASH, PERCENT -> 8 to false
-        else -> null
-    }
+    private fun infixInfo(tok: Token): Pair<Int, Boolean>? =
+        when (tok.kind) {
+            ASSIGN, PLUS_ASSIGN, MINUS_ASSIGN, STAR_ASSIGN, SLASH_ASSIGN, PERCENT_ASSIGN -> 1 to true
+            RANGE -> 2 to false
+            OR -> 3 to false
+            AND -> 4 to false
+            EQ, NEQ -> 5 to false
+            LT, GT, LE, GE -> 6 to false
+            PLUS, MINUS -> 7 to false
+            STAR, SLASH, PERCENT -> 8 to false
+            else -> null
+        }
 
     /** `is`/`as`（TypeTest，01-§7.1）。 */
-    private fun isTypeTest(tok: Token): Boolean =
-        tok.kind == KEYWORD && (tok.text == "is" || tok.text == "as")
+    private fun isTypeTest(tok: Token): Boolean = tok.kind == KEYWORD && (tok.text == "is" || tok.text == "as")
 
-    fun parseExpression(minBp: Int = 0, suppressBlock: Boolean = false): CstExpr {
+    fun parseExpression(
+        minBp: Int = 0,
+        suppressBlock: Boolean = false,
+    ): CstExpr {
         if (suppressBlock) p.enterSuppressBlock()
         val result = parseExpressionInner(minBp)
         if (suppressBlock) p.exitSuppressBlock()
@@ -105,11 +109,12 @@ internal class PrattParser(private val p: Parser) {
                 if (6 < minBp) break
                 p.advance()
                 val type = p.parseType()
-                left = if (t.text == "is") {
-                    CstIsExpr(left, t, type, spanOf(left, type))
-                } else {
-                    CstAsExpr(left, t, type, spanOf(left, type))
-                }
+                left =
+                    if (t.text == "is") {
+                        CstIsExpr(left, t, type, spanOf(left, type))
+                    } else {
+                        CstAsExpr(left, t, type, spanOf(left, type))
+                    }
                 continue
             }
             val info = infixInfo(t) ?: break
@@ -118,19 +123,21 @@ internal class PrattParser(private val p: Parser) {
             if (bp < minBp) break
             p.advance()
             val right = parseExpression(if (rightAssoc) bp else bp + 1)
-            left = when {
-                isAssignOp(t.kind) -> CstAssignmentExpr(left, t, right, spanOf(left, right))
-                t.kind == RANGE -> CstRangeExpr(left, t, right, spanOf(left, right))
-                else -> CstBinary(left, t, right, spanOf(left, right))
-            }
+            left =
+                when {
+                    isAssignOp(t.kind) -> CstAssignmentExpr(left, t, right, spanOf(left, right))
+                    t.kind == RANGE -> CstRangeExpr(left, t, right, spanOf(left, right))
+                    else -> CstBinary(left, t, right, spanOf(left, right))
+                }
         }
         return left
     }
 
-    private fun isAssignOp(kind: TokenKind): Boolean = when (kind) {
-        ASSIGN, PLUS_ASSIGN, MINUS_ASSIGN, STAR_ASSIGN, SLASH_ASSIGN, PERCENT_ASSIGN -> true
-        else -> false
-    }
+    private fun isAssignOp(kind: TokenKind): Boolean =
+        when (kind) {
+            ASSIGN, PLUS_ASSIGN, MINUS_ASSIGN, STAR_ASSIGN, SLASH_ASSIGN, PERCENT_ASSIGN -> true
+            else -> false
+        }
 
     /** 前缀：一元 `!`/`-`、async 上下文内 `await`，或 Primary。后缀链在表达式层应用。 */
     private fun parsePrefix(): CstExpr {
@@ -163,6 +170,7 @@ internal class PrattParser(private val p: Parser) {
                     val name = p.expectIdent("member name")
                     result = CstMemberAccess(result, t, name, spanOf(result, name))
                 }
+
                 t.kind == LPAREN -> {
                     if (p.lambda.looksLikeParenLambda()) {
                         // `callee (a, b -> body)`：括号 Lambda 作无括号单参（01-§7.4）
@@ -174,44 +182,72 @@ internal class PrattParser(private val p: Parser) {
                         result = CstCall(result, lparen, callArgs.args, callArgs.rparen, spanOf(result, callArgs.rparen))
                     }
                 }
+
                 t.kind == QUESTION -> {
                     p.advance()
                     result = CstNullable(result, t, spanOf(result, t))
                 }
+
                 t.kind == LBRACKET -> {
                     val lbracket = p.advance()
                     val index = parseExpression()
                     val rbracket = p.expect(RBRACKET, "']'")
                     result = CstIndexExpr(result, lbracket, index, rbracket, spanOf(result, rbracket))
                 }
+
                 isNoParenArgStart(t) -> {
-                    val arg = parsePostfixChain(p.parsePrimaryExpr())
+                    // 块 lambda 实参是完整单元：尾部 `.`/`(` 属于调用结果而非 lambda 本身
+                    // （`xs.map { }.first()` 的 `.first()` 应作用于 map 的结果）。
+                    val arg = if (t.kind == LBRACE) p.parsePrimaryExpr() else parsePostfixChain(p.parsePrimaryExpr())
                     result = CstCall(result, null, listOf(arg), null, spanOf(result, arg))
                 }
-                else -> return result
+
+                else -> {
+                    return result
+                }
             }
         }
     }
 
     /** 无括号调用实参判定：下个记号可开启一个 Primary 且非结构/中缀终结。 */
-    private fun isNoParenArgStart(t: Token): Boolean = when (t.kind) {
-        IDENTIFIER, INT_LITERAL, FLOAT_LITERAL, CHAR_LITERAL, STRING_LITERAL,
-        RAW_STRING_LITERAL, STRING_START, LPAREN -> true
-        LBRACE -> !p.suppressBlockCall
-        KEYWORD -> t.text == "true" || t.text == "false" || t.text == "null" ||
-            t.text == "this" || t.text == "super" || t.text == "throw"
-        else -> false
-    }
+    private fun isNoParenArgStart(t: Token): Boolean =
+        when (t.kind) {
+            IDENTIFIER, INT_LITERAL, FLOAT_LITERAL, CHAR_LITERAL, STRING_LITERAL,
+            RAW_STRING_LITERAL, STRING_START, LPAREN,
+            -> {
+                true
+            }
+
+            LBRACE -> {
+                // 属性访问器块前瞻（`{ get`/`{ set`）：不当作块 lambda 实参，
+                // 使 `x:Int = 10 { get { } }` 的初始化表达式在访问器块前停下
+                !p.suppressBlockCall && !p.looksLikeAccessorBlock()
+            }
+
+            KEYWORD -> {
+                t.text == "true" || t.text == "false" || t.text == "null" ||
+                    t.text == "this" || t.text == "super" || t.text == "throw"
+            }
+
+            else -> {
+                false
+            }
+        }
 
     /** 表达式语句 / 实参的安全终点：避免把结构记号当作调用实参。 */
-    fun isExpressionEnd(): Boolean = when (p.current.kind) {
-        NEWLINE, SEMICOLON, RBRACE, RPAREN, RBRACKET, COMMA, DOT, EOF, ARROW -> true
-        else -> false
-    }
+    fun isExpressionEnd(): Boolean =
+        when (p.current.kind) {
+            NEWLINE, SEMICOLON, RBRACE, RPAREN, RBRACKET, COMMA, DOT, EOF, ARROW -> true
+            else -> false
+        }
 
-    private fun spanOf(start: CstNode, end: CstNode) =
-        yux.compiler.ast.SourceSpan(start.span.start, end.span.end)
+    private fun spanOf(
+        start: CstNode,
+        end: CstNode,
+    ) = yux.compiler.ast.SourceSpan(start.span.start, end.span.end)
 
-    private fun spanOf(start: yux.compiler.lexer.Token, end: CstNode) =
-        yux.compiler.ast.SourceSpan(start.position, end.span.end)
+    private fun spanOf(
+        start: yux.compiler.lexer.Token,
+        end: CstNode,
+    ) = yux.compiler.ast.SourceSpan(start.position, end.span.end)
 }

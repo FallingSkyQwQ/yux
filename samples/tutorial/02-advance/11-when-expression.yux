@@ -1,0 +1,10 @@
+// 02-进阶 · 第 11 章：when 表达式（作值返回）
+fun pick(n:Int):String = when n {
+    1 -> "one"
+    2 -> "two"
+    else -> "other"
+}
+fun main() {
+    println pick(1)
+    println pick(3)
+}

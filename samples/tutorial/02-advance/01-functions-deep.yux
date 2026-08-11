@@ -1,0 +1,11 @@
+// 02-进阶 · 第 1 章：函数深入（默认值引用更早形参 + 递归 + 表达式体）
+fun scale(x:Int, factor:Int = x * 2):Int = x * factor
+fun fib(n:Int):Int {
+    if n < 2 { return n }
+    return fib(n-1) + fib(n-2)
+}
+fun main() {
+    println scale(3)
+    println scale(3, 10)
+    println fib(8)
+}

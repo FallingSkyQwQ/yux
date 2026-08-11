@@ -87,8 +87,15 @@ class Inference(private val diagnostics: DiagnosticSink) {
         if (actual === expected || (actual is SemaType.InferenceVar && expected is SemaType.InferenceVar && actual.id == expected.id)) {
             return actual
         }
-        // 推断变量：约束收集（S-4.5.4 环防护：expected 已（传递）求解回 actual 时不再绑定）
+        // 推断变量：约束收集（S-4.5.4 环防护：expected 已（传递）求解回 actual 时不再绑定）。
+        // 缺陷修复：actual 已求解时不得被调用点约束覆盖——`println a.speak()`（参数 Any）
+        // 曾把已由函数体解出的 String 顶成 Any，导致后续 `speak().length` 报"成员不存在"。
+        // 现按既有解参与检查（验证兼容性），而非重绑。
         if (actual is SemaType.InferenceVar) {
+            val resolvedActual = actual.resolveInferenceVar()
+            if (resolvedActual !== actual) {
+                return checkAssignable(resolvedActual, expected, position, context, code)
+            }
             val resolvedExpected = expected.resolveInferenceVar()
             if (resolvedExpected === actual) return actual
             actual.solution = resolvedExpected

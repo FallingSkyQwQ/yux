@@ -1,0 +1,12 @@
+// 03-精通 · 反例：密封 when 缺分支（E0034）
+sealed Shape {
+}
+Circle extends Shape {
+}
+Square extends Shape {
+}
+fun area(s:Shape):Int = when s {
+    is Circle -> 1
+}
+fun main() {
+}

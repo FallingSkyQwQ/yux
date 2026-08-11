@@ -30,6 +30,40 @@
 
 - 格式化器解析失败（语法错误）返回诊断而非崩溃；插件源码需 `--plugin` 才能识别扩展语法。
 - `fmt` 对插件扩展块内的代码不重排（原样保留），仅保证整体幂等。
+## [Unreleased] - 2026-08-11 — 教程三缺陷修复（无 subject 的 when / 属性 init+访问器 / 推断被 println 顶成 Any）
+
+### 修复
+
+- **无 subject 的 when（`when { cond -> }`）**：此前 `when` 后直接 `{` 被 `parseCondition` 吞掉，报一串"expected newline or ';'"。现在：解析器在 `when` 后跟 `{` 时 subject 置空；sema 对无 subject 分支检查——表达式条件须为 `Boolean`（否则 E0003）、`is` 分支非法（无转型目标，E0004）、when **表达式**必须 `else` 兑底（布尔条件不可证穷尽，E0034，语句形态可直落）；IRGen 无 subject 时条件直接分支（不再 Compare subject）。
+- **顶层/类属性 `init + 访问器` 组合（`x:Int = 10 { get { } }`）**：初始化表达式 `10 { get { } }` 此前被无括号调用解析吞成 `10(块 lambda)` → "Int 不可调用"。现在 PrattParser 对 `{` 后（可跨行）紧跟 `get`/`set` 再跟 `{` 的访问器块前瞻，不再当作块 lambda 实参；类属性与顶层属性同规则（初始化值仍为构造实参）。
+- **表达式体推断返回类型被调用点参数约束顶成 `Any`**：`println a.speak()` 的 `Any` 参数曾把 `speak` 已由函数体解出的 `String` 覆盖为 `Any`，后续 `a.speak().length` 报"成员 'length' 不存在于类型 'Any'"。现在 `Inference.checkAssignable` 对**已求解**推断变量按既有解验证（不重绑），且表达式体函数的返回类型最终由函数体确定（调用点约束不再参与求解）；顺带修复 when/if 表达式体返回类型直接取期望推断变量导致的自绑定成环（memberLookup 无限递归 StackOverflow）——`commonTypeOf`/`typeOfIfExpr` 在期望为未求解变量时改按分支公共类型求解，`memberLookup` 增加环防护。
+- **同类方法隐式 this 调用 VerifyError**：`g()` 以标识符调用同类方法时 IRGen 曾发 receiver=null 的 Invoke，JVM 后端对非静态方法发 `invokevirtual` 而栈上无接收者 → "Operand stack underflow"。现在表达式/语句两条调用路径对非静态成员补发 `IrExpr.This` 接收者（顶层函数仍 invokestatic）。
+- 回归测试：`StmtEmitterBugfixTest` +9 例、`TypeCheckerTest` +7 例、`PrattParserTest` +4 例、golden AST（statements.yux 无 subject when）；教程示例同步：`03-master/10-when-exhaustive.yux`（无 subject when）、`03-master/18-top-level-accessors.yux`（init+访问器）、`02-advance/03-classes-inheritance.yux`（推断 + 隐式 this），快照同步重新生成。
+
+### 新增
+
+- **教程同步**：`docs/tutorial/04-生态门户.md` 已知限制三项全部移入已修复表（附回归测试与示例指引）；`03-精通` 第 10/18 章、`02-进阶` 第 3 章要点更新。
+
+## [Unreleased] - 2026-08-11 — 入门到精通教程 + 参数默认值修复
+
+### 修复
+
+- **参数默认值（S-5.5.5）**：默认值表达式此前从未被语义分析（类型不匹配被静默接受），且 IRGen 从不合成缺失实参（运行期 VerifyError）。现在：sema 在函数作用域内类型检查 `= 表达式`（类型不匹配报 E0004）；IRGen 在调用点 `padDefaultArgs` 补齐缺失实参——已提供实参物化为以形参名命名的局部，默认值可引用更早形参（`fun f(a:Int, b:Int = a * 2)`）；接入普通调用/成员调用（含扩展函数 receiver 前置）/async 挂起调用/语句位置调用。
+- **MainTest samples e2e 真空 bug**：原先 `Path.of("samples")` 相对测试 CWD 解析，目录不存在而静默 `return`，CI 从未真正验证样例；改为向上定位仓库根并断言样例数 > 0。
+- **教程五缺陷修复**（随 golden 示例同步验证，均有回归测试）：
+  - when 语句 + is 分支内 `return`（密封 subject、无 else）的 JVM VerifyError（`goto` 指向代码末尾悬空 Label）——后端按返回类型补发兜底返回；
+  - 访问器 `value`/`set` 绑定（S-5.2.3）IRGen 报"局部变量未登记"——访问器体物化 `value`（backing field）、`set` 别名 setter 参数；仅引用时物化、setter 赋值时写回；
+  - 块 lambda 后直接链式调用（`xs.map { }.first()`）的 `it` 解析失败——块 lambda 实参是完整单元，尾随 `.`/`(` 归调用结果（PrattParser）；
+  - 基类方法先调用后子类 `super` 调用 StackOverflow——`BasicOpt.foldExpr` 重建 Invoke 时丢失 `isSuper`，super 调用退回 invokevirtual 派发到子类覆盖方法；现保留 `isSuper` 恒发 INVOKESPECIAL；
+  - 基本类型（`String`/`Int`）用户扩展函数解析不到——`checkInstanceCall` Basic 分支补查 `lookupExtensionCall`。
+
+### 新增
+
+- **入门到精通语言圣经** `docs/tutorial/`（6 篇：00-总览 / 01-入门 / 02-进阶 / 03-精通 / 04-生态门户 / 05-附录，锁定 v0.1.0-m15，每章尾速查 + 规范指引）。
+- **golden 示例集** `samples/tutorial/`：74 例（62 正例 `.stdout` + 12 反例 `.err`），覆盖类型/控制流/函数/默认值/扩展函数/继承/访问器/data 类/泛型/集合/密封/when 表达式/空安全/异常/闭包/高阶/顶层属性/导入/注解/service/async 协程/Tasks/parallel/序列化/DI/IO/注册表成员/错误反例；新 harness `TutorialSamplesTest` 扫描并逐字节比对快照。
+- **`setupyux.sh` 一键安装**：curl|bash；Linux/macOS/WSL；JDK 21+ 检测（缺失给指引）；优先 Releases 免编译产物、否则源码编译；安装到 `~/.yux/bin` + 幂等 PATH；`--ref` 锁版。
+- **CI**：`tutorial-docs` job（文档↔示例一致性 `scripts/check-tutorial-docs.sh` + setupyux 语法/帮助/JDK 守卫）；`setupyux-install` job（main 推送时全链路安装冒烟 + 幂等性）。
+- **编译器测试**：IRGen 默认值合成 5 例（缺参补齐/引用更早形参/成员方法/表达式位置/齐全旁路）+ sema 默认值类型检查 2 例。
 
 ## [v0.1.0-m15] - 2026-08-11 — 完整 SSA 优化器
 

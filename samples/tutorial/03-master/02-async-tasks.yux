@@ -1,0 +1,7 @@
+// 03-精通 · 第 2 章：任务（Tasks.launch/await/sleep）
+fun main() {
+    t = Tasks.launch { print "t1" }
+    Tasks.await(t)
+    Tasks.sleep(20)
+    println "done"
+}

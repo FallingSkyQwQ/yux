@@ -9,7 +9,6 @@ import kotlin.test.assertTrue
  * T-M2-2 Pratt 表达式 + T-M2-7 无括号调用（01-§7.1 / S-7.2.2）。
  */
 class PrattParserTest {
-
     private fun dump(text: String) = ParseTestSupport.dump(text)
 
     private fun inFun(body: String): String = "fun main() {\n$body\n}"
@@ -95,6 +94,22 @@ class PrattParserTest {
     }
 
     @Test
+    fun `block lambda arg then chained member call applies to call result`() {
+        // `xs.map { }.first()`：尾随 `.first()` 应作用于 map 的结果，而非块 lambda 本身
+        val ast = dump(inFun("n = xs.map { it * 2 }.first()"))
+        assertTrue(ast.contains("Call(Get(CallNP(Get(Id(xs), map), [BlockLambda"), ast)
+        assertTrue(!ast.contains("BlockLambda{.*}\\.first"), "`.first()` 不应挂到块 lambda 上: $ast")
+    }
+
+    @Test
+    fun `block lambda arg then chained block lambda call`() {
+        // `xs.map { }.map { }`：连续块 lambda 实参
+        val ast = dump(inFun("ys = xs.map { it * 2 }.map { it + 1 }"))
+        assertTrue(ast.contains("CallNP(Get(CallNP(Get(Id(xs), map), [BlockLambda"), ast)
+        assertTrue(ast.contains("CallNP(Get(CallNP(Get(Id(xs), map), [BlockLambda{Binary(*, Id(it), Int(2))}]), map), [BlockLambda"), ast)
+    }
+
+    @Test
     fun `range expression in for loop`() {
         val ast = dump(inFun("for i in 0..10 { print i }"))
         assertTrue(ast.contains("Range(Int(0), Int(10))"), ast)
@@ -160,5 +175,38 @@ class PrattParserTest {
     fun `member access on call result`() {
         val ast = dump(inFun("x = f(a).b"))
         assertTrue(ast.contains("Get(Call(Id(f), [Id(a)]), b)"), ast)
+    }
+
+    // ── 缺陷修复：无 subject 的 when + 属性 init+访问器 ────────────────────────
+
+    @Test
+    fun `subjectless when statement parses`() {
+        // `when { cond -> }`：`{` 不再是 subject 表达式的一部分
+        val ast = dump(inFun("when { x > 0 -> print \"p\"\nelse -> print \"q\" }"))
+        assertTrue(ast.contains("when"), ast)
+        assertFalse(ast.contains("when Id("), ast)
+        assertTrue(ast.contains("branch Binary(>, Id(x), Int(0)) ->"), ast)
+    }
+
+    @Test
+    fun `subjectless when expression parses`() {
+        val ast = dump("fun f(x:Int):String = when { x > 0 -> \"pos\"\nelse -> \"zero\" }")
+        assertTrue(ast.contains("WhenExpr(-, ["), ast)
+        assertTrue(ast.contains("Binary(>, Id(x), Int(0)) -> Str(\"\\\"pos\\\"\")"), ast)
+    }
+
+    @Test
+    fun `property initializer does not swallow accessor block`() {
+        // `x:Int = 10 { get { } }`：初始化表达式在访问器块前停下，不再解析成 10(块 lambda)
+        val ast = dump("counter:Int = 10 { get { return value + 1 } }")
+        assertFalse(ast.contains("CallNP(Int(10)"), ast)
+        assertTrue(ast.contains("property counter: Int = Int(10)"), ast)
+    }
+
+    @Test
+    fun `block lambda still parses after expression`() {
+        // 访问器前瞻不得破坏正常块 lambda 实参：`xs.map { it * 2 }` 仍是无括号调用
+        val ast = dump(inFun("x = xs.map { it * 2 }"))
+        assertTrue(ast.contains("CallNP(Get(Id(xs), map), [BlockLambda"), ast)
     }
 }

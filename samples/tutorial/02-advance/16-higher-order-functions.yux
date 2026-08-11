@@ -1,0 +1,8 @@
+// 02-进阶 · 第 16 章：高阶函数（函数类型作参数）
+fun applyTwice(f:(Int)->Int, v:Int):Int {
+    return f(f(v))
+}
+fun main() {
+    inc:(Int)->Int = x -> x + 1
+    println applyTwice(inc, 5)
+}

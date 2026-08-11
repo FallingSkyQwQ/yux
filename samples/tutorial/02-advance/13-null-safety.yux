@@ -1,0 +1,13 @@
+// 02-进阶 · 第 13 章：空安全（?. 守卫 / is 智能转型 / as 转换）
+fun main() {
+    s:String? = "hi"
+    println s?.length
+    t:String? = null
+    println t?.length
+    x:Any = 42
+    y = x as Int
+    println y
+    if s != null {
+        println (s.uppercase() as String)
+    }
+}

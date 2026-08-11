@@ -1,0 +1,11 @@
+// 04-生态 · 第 8 章：注册表成员（JvmExtensions 语言级成员表面）
+fun main() {
+    println "hello".length
+    parts = "a,b,c".split(",")
+    println parts.size
+    xs = List Int()
+    xs.add(1); xs.add(2)
+    tripled = xs.map { (it as Int) * 3 }
+    n = tripled.first() as Int
+    println n
+}

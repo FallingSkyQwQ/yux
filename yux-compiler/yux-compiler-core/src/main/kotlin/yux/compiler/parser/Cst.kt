@@ -246,7 +246,7 @@ class CstIfStmt(
 
 class CstWhenStmt(
     val whenKw: Token,
-    val subject: CstExpr,
+    val subject: CstExpr?,
     val lbrace: Token,
     val branches: List<CstWhenBranch>,
     val rbrace: Token,
@@ -454,10 +454,10 @@ class CstBinary(
     override val span: SourceSpan,
 ) : CstExpr
 
-/** when 表达式（T-M12）：`when <subject> { cond -> expr ... }`（分支体为表达式）。 */
+/** when 表达式（T-M12）：`when <subject> { cond -> expr ... }`（分支体为表达式；subject 可为空）。 */
 class CstWhenExpr(
     val whenKw: Token,
-    val subject: CstExpr,
+    val subject: CstExpr?,
     val lbrace: Token,
     val branches: List<CstWhenExprBranch>,
     val rbrace: Token,

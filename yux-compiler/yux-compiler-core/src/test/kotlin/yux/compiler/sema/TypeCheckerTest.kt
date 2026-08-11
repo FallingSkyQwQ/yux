@@ -9,7 +9,6 @@ import kotlin.test.assertTrue
  * T-M3-4 类型检查：S-xx 规则的正向/负向用例。
  */
 class TypeCheckerTest {
-
     // ── 条件（S-6.2.1）──────────────────────────────────────────────────────
 
     @Test
@@ -28,46 +27,80 @@ class TypeCheckerTest {
 
     @Test
     fun `function call with default arg`() {
-        val r = SemaTestSupport.analyze(
-            """
-            fun greet(name:String, title:String = "Mr.") {
-            }
-            fun main() {
-                greet "Steve"
-                greet("Alex", "Dr.")
-            }
-            """.trimIndent(),
-        )
+        val r =
+            SemaTestSupport.analyze(
+                """
+                fun greet(name:String, title:String = "Mr.") {
+                }
+                fun main() {
+                    greet "Steve"
+                    greet("Alex", "Dr.")
+                }
+                """.trimIndent(),
+            )
+        assertFalse(r.hasErrors, r.errors.toString())
+    }
+
+    @Test
+    fun `default value type mismatch is rejected`() {
+        // S-5.5.5（T-M12 缺陷修复）：默认值表达式此前未被类型检查，类型不匹配被静默接受
+        val r =
+            SemaTestSupport.analyze(
+                """
+                fun greet(name:String, title:String = 42) {
+                }
+                """.trimIndent(),
+            )
+        assertTrue(r.hasErrors, "默认值类型不匹配应报错: ${r.errors}")
+        assertTrue(r.hasCode("E0004"), "应报类型不匹配 E0004: ${r.errorCodes}")
+    }
+
+    @Test
+    fun `default value may reference earlier params`() {
+        // S-5.5.5：默认值可引用更早形参（物化局部按名解析）
+        val r =
+            SemaTestSupport.analyze(
+                """
+                fun scale(x:Int, factor:Int = x * 2):Int {
+                    return x * factor
+                }
+                fun main() {
+                    print scale(3)
+                }
+                """.trimIndent(),
+            )
         assertFalse(r.hasErrors, r.errors.toString())
     }
 
     @Test
     fun `class method call`() {
-        val r = SemaTestSupport.analyze(
-            """
-            Counter {
-                count:Int = 0
-                fun add(n:Int) = count + n
-            }
-            fun main() {
-                c = Counter(0)
-                x = c.add(5)
-            }
-            """.trimIndent(),
-        )
+        val r =
+            SemaTestSupport.analyze(
+                """
+                Counter {
+                    count:Int = 0
+                    fun add(n:Int) = count + n
+                }
+                fun main() {
+                    c = Counter(0)
+                    x = c.add(5)
+                }
+                """.trimIndent(),
+            )
         assertFalse(r.hasErrors, r.errors.toString())
     }
 
     @Test
     fun `chain of jvm method calls`() {
-        val r = SemaTestSupport.analyze(
-            """
-            fun main() {
-                s = "  hello  ".trim()
-                n = s.length
-            }
-            """.trimIndent(),
-        )
+        val r =
+            SemaTestSupport.analyze(
+                """
+                fun main() {
+                    s = "  hello  ".trim()
+                    n = s.length
+                }
+                """.trimIndent(),
+            )
         assertFalse(r.hasErrors, r.errors.toString())
     }
 
@@ -81,28 +114,30 @@ class TypeCheckerTest {
 
     @Test
     fun `string concat`() {
-        val r = SemaTestSupport.analyze(
-            """
-            fun main() {
-                s = "a" + 1
-                t = 1 + "a"
-            }
-            """.trimIndent(),
-        )
+        val r =
+            SemaTestSupport.analyze(
+                """
+                fun main() {
+                    s = "a" + 1
+                    t = 1 + "a"
+                }
+                """.trimIndent(),
+            )
         assertFalse(r.hasErrors, r.errors.toString())
     }
 
     @Test
     fun `arithmetic promotion`() {
-        val r = SemaTestSupport.analyze(
-            """
-            fun main() {
-                a = 1 + 2
-                b = 1L + 2
-                c = 1.5 + 1
-            }
-            """.trimIndent(),
-        )
+        val r =
+            SemaTestSupport.analyze(
+                """
+                fun main() {
+                    a = 1 + 2
+                    b = 1L + 2
+                    c = 1.5 + 1
+                }
+                """.trimIndent(),
+            )
         assertFalse(r.hasErrors, r.errors.toString())
         val types = r.analysis.exprTypes
         assertTrue(types.values.any { it is SemaType.Basic && it.name == "Long" })
@@ -119,36 +154,38 @@ class TypeCheckerTest {
     fun `compound assignment string concat`() {
         // 复合赋值按 `x = x op e` 展开：`s += 1` 走 String 拼接（S-7.6.1），合法；
         // `s += true` 与二元 `"a" + true` 同规则（String 侧吸收任意操作数）
-        val r = SemaTestSupport.analyze(
-            """
-            fun main() {
-                s = "a"
-                s += 1
-                s += "b"
-                s += true
-            }
-            """.trimIndent(),
-        )
+        val r =
+            SemaTestSupport.analyze(
+                """
+                fun main() {
+                    s = "a"
+                    s += 1
+                    s += "b"
+                    s += true
+                }
+                """.trimIndent(),
+            )
         assertFalse(r.hasErrors, r.errors.toString())
     }
 
     @Test
     fun `compound assignment numeric`() {
         // 数字复合赋值与字面量收窄（S-7.5.4）：`f += 2.5` 的 2.5 以 Float 为目标收窄，不提升为 Double
-        val r = SemaTestSupport.analyze(
-            """
-            fun main() {
-                total = 0
-                total += 1
-                total -= 1
-                total *= 2
-                total /= 2
-                total %= 3
-                f: Float = 1.0
-                f += 2.5
-            }
-            """.trimIndent(),
-        )
+        val r =
+            SemaTestSupport.analyze(
+                """
+                fun main() {
+                    total = 0
+                    total += 1
+                    total -= 1
+                    total *= 2
+                    total /= 2
+                    total %= 3
+                    f: Float = 1.0
+                    f += 2.5
+                }
+                """.trimIndent(),
+            )
         assertFalse(r.hasErrors, r.errors.toString())
     }
 
@@ -156,19 +193,20 @@ class TypeCheckerTest {
 
     @Test
     fun `assigned in both branches is definite`() {
-        val r = SemaTestSupport.analyze(
-            """
-            fun main() {
-                x:Int
-                if true {
-                    x = 1
-                } else {
-                    x = 2
+        val r =
+            SemaTestSupport.analyze(
+                """
+                fun main() {
+                    x:Int
+                    if true {
+                        x = 1
+                    } else {
+                        x = 2
+                    }
+                    print x
                 }
-                print x
-            }
-            """.trimIndent(),
-        )
+                """.trimIndent(),
+            )
         assertFalse(r.hasErrors, r.errors.toString())
     }
 
@@ -182,14 +220,15 @@ class TypeCheckerTest {
 
     @Test
     fun `expr body return inference`() {
-        val r = SemaTestSupport.analyze(
-            """
-            fun add(a:Int, b:Int) = a + b
-            fun main() {
-                x = add(1, 2)
-            }
-            """.trimIndent(),
-        )
+        val r =
+            SemaTestSupport.analyze(
+                """
+                fun add(a:Int, b:Int) = a + b
+                fun main() {
+                    x = add(1, 2)
+                }
+                """.trimIndent(),
+            )
         assertFalse(r.hasErrors, r.errors.toString())
     }
 
@@ -221,18 +260,19 @@ class TypeCheckerTest {
 
     @Test
     fun `break and continue inside loop`() {
-        val r = SemaTestSupport.analyze(
-            """
-            fun main() {
-                for i in 0..10 {
-                    if i == 5 {
-                        break
+        val r =
+            SemaTestSupport.analyze(
+                """
+                fun main() {
+                    for i in 0..10 {
+                        if i == 5 {
+                            break
+                        }
+                        continue
                     }
-                    continue
                 }
-            }
-            """.trimIndent(),
-        )
+                """.trimIndent(),
+            )
         assertFalse(r.hasErrors, r.errors.toString())
     }
 
@@ -240,20 +280,21 @@ class TypeCheckerTest {
 
     @Test
     fun `try catch finally`() {
-        val r = SemaTestSupport.analyze(
-            """
-            fun risky() = 1
-            fun main() {
-                try {
-                    x = risky()
-                } catch e:Exception {
-                    print e
-                } finally {
-                    print "done"
+        val r =
+            SemaTestSupport.analyze(
+                """
+                fun risky() = 1
+                fun main() {
+                    try {
+                        x = risky()
+                    } catch e:Exception {
+                        print e
+                    } finally {
+                        print "done"
+                    }
                 }
-            }
-            """.trimIndent(),
-        )
+                """.trimIndent(),
+            )
         assertFalse(r.hasErrors, r.errors.toString())
     }
 
@@ -261,149 +302,157 @@ class TypeCheckerTest {
 
     @Test
     fun `override valid method`() {
-        val r = SemaTestSupport.analyze(
-            """
-            Base {
-                fun tick() {
+        val r =
+            SemaTestSupport.analyze(
+                """
+                Base {
+                    fun tick() {
+                    }
                 }
-            }
-            Impl extends Base {
-                override fun tick() {
+                Impl extends Base {
+                    override fun tick() {
+                    }
                 }
-            }
-            """.trimIndent(),
-        )
+                """.trimIndent(),
+            )
         assertFalse(r.hasErrors, r.errors.toString())
     }
 
     @Test
     fun `override without super member error`() {
-        val r = SemaTestSupport.analyze(
-            """
-            Base {
-            }
-            Impl extends Base {
-                override fun tick() {
+        val r =
+            SemaTestSupport.analyze(
+                """
+                Base {
                 }
-            }
-            """.trimIndent(),
-        )
+                Impl extends Base {
+                    override fun tick() {
+                    }
+                }
+                """.trimIndent(),
+            )
         assertTrue(r.hasCode(ErrorCodes.OVERRIDE_NO_SUPER), r.diagnostics.toString())
     }
 
     @Test
     fun `override of grandparent method valid`() {
-        val r = SemaTestSupport.analyze(
-            """
-            Base {
-                fun tick() {
+        val r =
+            SemaTestSupport.analyze(
+                """
+                Base {
+                    fun tick() {
+                    }
                 }
-            }
-            Mid extends Base {
-            }
-            Impl extends Mid {
-                override fun tick() {
+                Mid extends Base {
                 }
-            }
-            """.trimIndent(),
-        )
+                Impl extends Mid {
+                    override fun tick() {
+                    }
+                }
+                """.trimIndent(),
+            )
         assertFalse(r.hasErrors, r.errors.toString())
     }
 
     @Test
     fun `interface member callable and overridable`() {
-        val r = SemaTestSupport.analyze(
-            """
-            Bar {
-                fun baz() {
+        val r =
+            SemaTestSupport.analyze(
+                """
+                Bar {
+                    fun baz() {
+                    }
+                    fun qux() {
+                    }
                 }
-                fun qux() {
+                Foo implements Bar {
+                    override fun baz() {
+                    }
                 }
-            }
-            Foo implements Bar {
-                override fun baz() {
+                fun main() {
+                    f = Foo()
+                    f.baz()
+                    f.qux()
                 }
-            }
-            fun main() {
-                f = Foo()
-                f.baz()
-                f.qux()
-            }
-            """.trimIndent(),
-        )
+                """.trimIndent(),
+            )
         assertFalse(r.hasErrors, r.errors.toString())
     }
 
     @Test
     fun `interface property callable on implementing class`() {
-        val r = SemaTestSupport.analyze(
-            """
-            Bar {
-                version:Int = 1
-            }
-            Foo implements Bar {
-            }
-            fun main() {
-                f = Foo()
-                x = f.version
-            }
-            """.trimIndent(),
-        )
+        val r =
+            SemaTestSupport.analyze(
+                """
+                Bar {
+                    version:Int = 1
+                }
+                Foo implements Bar {
+                }
+                fun main() {
+                    f = Foo()
+                    x = f.version
+                }
+                """.trimIndent(),
+            )
         assertFalse(r.hasErrors, r.errors.toString())
     }
 
     @Test
     fun `interface members inherited transitively diamond dedup`() {
-        val r = SemaTestSupport.analyze(
-            """
-            A {
-                fun f() {
+        val r =
+            SemaTestSupport.analyze(
+                """
+                A {
+                    fun f() {
+                    }
                 }
-            }
-            B implements A {
-            }
-            C implements A {
-            }
-            D implements B, C {
-            }
-            fun main() {
-                d = D()
-                d.f()
-            }
-            """.trimIndent(),
-        )
+                B implements A {
+                }
+                C implements A {
+                }
+                D implements B, C {
+                }
+                fun main() {
+                    d = D()
+                    d.f()
+                }
+                """.trimIndent(),
+            )
         assertFalse(r.hasErrors, r.errors.toString())
     }
 
     @Test
     fun `override of interface member with no super valid`() {
-        val r = SemaTestSupport.analyze(
-            """
-            Bar {
-                fun tick() {
+        val r =
+            SemaTestSupport.analyze(
+                """
+                Bar {
+                    fun tick() {
+                    }
                 }
-            }
-            Impl implements Bar {
-                override fun tick() {
+                Impl implements Bar {
+                    override fun tick() {
+                    }
                 }
-            }
-            """.trimIndent(),
-        )
+                """.trimIndent(),
+            )
         assertFalse(r.hasErrors, r.errors.toString())
     }
 
     @Test
     fun `override of nowhere member on implementing class error`() {
-        val r = SemaTestSupport.analyze(
-            """
-            Bar {
-            }
-            Impl implements Bar {
-                override fun nope() {
+        val r =
+            SemaTestSupport.analyze(
+                """
+                Bar {
                 }
-            }
-            """.trimIndent(),
-        )
+                Impl implements Bar {
+                    override fun nope() {
+                    }
+                }
+                """.trimIndent(),
+            )
         assertTrue(r.hasCode(ErrorCodes.OVERRIDE_NO_SUPER), r.diagnostics.toString())
     }
 
@@ -411,17 +460,18 @@ class TypeCheckerTest {
 
     @Test
     fun `this inside class`() {
-        val r = SemaTestSupport.analyze(
-            """
-            Player {
-                name:String = "Steve"
-                fun hello() = this.name
-            }
-            fun main() {
-                p = Player("Steve")
-            }
-            """.trimIndent(),
-        )
+        val r =
+            SemaTestSupport.analyze(
+                """
+                Player {
+                    name:String = "Steve"
+                    fun hello() = this.name
+                }
+                fun main() {
+                    p = Player("Steve")
+                }
+                """.trimIndent(),
+            )
         assertFalse(r.hasErrors, r.errors.toString())
     }
 
@@ -435,51 +485,54 @@ class TypeCheckerTest {
 
     @Test
     fun `block lambda with it`() {
-        val r = SemaTestSupport.analyze(
-            """
-            fun apply(f:(Int) -> Int, x:Int) = x
-            fun main() {
-                y = apply ({ it + 1 }, 5)
-            }
-            """.trimIndent(),
-        )
+        val r =
+            SemaTestSupport.analyze(
+                """
+                fun apply(f:(Int) -> Int, x:Int) = x
+                fun main() {
+                    y = apply ({ it + 1 }, 5)
+                }
+                """.trimIndent(),
+            )
         assertFalse(r.hasErrors, r.errors.toString())
     }
 
     @Test
     fun `try body assignment not definite without catch`() {
-        val r = SemaTestSupport.analyze(
-            """
-            fun risky() = 1
-            fun main() {
-                x:Int
-                try {
-                    x = risky()
-                } catch e:Exception {
+        val r =
+            SemaTestSupport.analyze(
+                """
+                fun risky() = 1
+                fun main() {
+                    x:Int
+                    try {
+                        x = risky()
+                    } catch e:Exception {
+                    }
+                    print x
                 }
-                print x
-            }
-            """.trimIndent(),
-        )
+                """.trimIndent(),
+            )
         assertTrue(r.hasCode(ErrorCodes.VARIABLE_NOT_INITIALIZED), r.diagnostics.toString())
     }
 
     @Test
     fun `try and catch both assign is definite`() {
-        val r = SemaTestSupport.analyze(
-            """
-            fun risky() = 1
-            fun main() {
-                x:Int
-                try {
-                    x = risky()
-                } catch e:Exception {
-                    x = 0
+        val r =
+            SemaTestSupport.analyze(
+                """
+                fun risky() = 1
+                fun main() {
+                    x:Int
+                    try {
+                        x = risky()
+                    } catch e:Exception {
+                        x = 0
+                    }
+                    print x
                 }
-                print x
-            }
-            """.trimIndent(),
-        )
+                """.trimIndent(),
+            )
         assertFalse(r.hasErrors, r.errors.toString())
     }
 
@@ -529,14 +582,196 @@ class TypeCheckerTest {
 
     @Test
     fun `decimal literal beyond int promotes to long`() {
-        val r = SemaTestSupport.analyze(
-            """
-            fun main() {
-                x = 99999999999
-                y:Long = x
-            }
-            """.trimIndent(),
-        )
+        val r =
+            SemaTestSupport.analyze(
+                """
+                fun main() {
+                    x = 99999999999
+                    y:Long = x
+                }
+                """.trimIndent(),
+            )
+        assertFalse(r.hasErrors, r.errors.toString())
+    }
+
+    // ── 扩展函数（M9 缺陷修复：基础类型接收者）────────────────────────────────
+
+    @Test
+    fun `extension function on basic type resolves`() {
+        // checkInstanceCall 的 Basic 分支此前不查扩展函数 → `"hi".shout()` 报 E0016
+        val r =
+            SemaTestSupport.analyze(
+                """
+                fun String.shout(suffix:String = "!"):String {
+                    return this + suffix
+                }
+                fun Int.squared():Int {
+                    return this * this
+                }
+                fun main() {
+                    print "hi".shout()
+                    print 7.squared()
+                }
+                """.trimIndent(),
+            )
+        assertFalse(r.hasErrors, r.errors.toString())
+    }
+
+    @Test
+    fun `nullable basic receiver extension resolves after null check`() {
+        val r =
+            SemaTestSupport.analyze(
+                """
+                fun String.repeat2(sep:String = "|"):String {
+                    return this + sep + this
+                }
+                fun main() {
+                    s:String? = "xy"
+                    if s != null {
+                        print s.repeat2("+")
+                    }
+                }
+                """.trimIndent(),
+            )
+        assertFalse(r.hasErrors, r.errors.toString())
+    }
+
+    // ── 无 subject 的 when（`when { cond -> }`，缺陷修复）──────────────────────
+
+    @Test
+    fun `subjectless when statement accepts boolean conditions`() {
+        val r =
+            SemaTestSupport.analyze(
+                """
+                fun main() {
+                    x = 5
+                    when {
+                        x > 0 -> print "positive"
+                        else -> print "other"
+                    }
+                }
+                """.trimIndent(),
+            )
+        assertFalse(r.hasErrors, r.errors.toString())
+    }
+
+    @Test
+    fun `subjectless when expression requires else`() {
+        // 无 subject 的 when 表达式：布尔条件不可证穷尽 → 必须 else（E0034）
+        val r =
+            SemaTestSupport.analyze(
+                """
+                fun f(x:Int):String = when {
+                    x > 0 -> "pos"
+                    x < 0 -> "neg"
+                }
+                """.trimIndent(),
+            )
+        assertTrue(r.hasCode(ErrorCodes.WHEN_NOT_EXHAUSTIVE), r.errors.toString())
+    }
+
+    @Test
+    fun `subjectless when rejects non boolean condition`() {
+        // 无 subject 时条件必须是 Boolean：`x`（Int）报 E0003
+        val r =
+            SemaTestSupport.analyze(
+                """
+                fun main() {
+                    x = 5
+                    when {
+                        x -> print "x"
+                        else -> print "y"
+                    }
+                }
+                """.trimIndent(),
+            )
+        assertTrue(r.hasCode(ErrorCodes.CONDITION_NOT_BOOLEAN), r.errors.toString())
+    }
+
+    @Test
+    fun `subjectless when rejects is branch`() {
+        // is 分支需要 subject 作转型目标：无 subject 时报 E0004
+        val r =
+            SemaTestSupport.analyze(
+                """
+                Animal {
+                    fun speak() = "x"
+                }
+                fun main() {
+                    when {
+                        is Animal -> print "a"
+                        else -> print "b"
+                    }
+                }
+                """.trimIndent(),
+            )
+        assertTrue(r.hasErrors, "is 分支在无 subject 的 when 中应报错")
+    }
+
+    // ── 表达式体推断不被调用点约束顶成 Any（缺陷修复）──────────────────────────
+
+    @Test
+    fun `println arg does not clobber inferred return type`() {
+        // 修复前：`println a.speak()` 把 speak 的返回推断变量绑定到 Any（println 参数），
+        // 后续 `a.speak().length` 报 E0016 "成员 'length' 不存在于类型 'Any'"
+        val r =
+            SemaTestSupport.analyze(
+                """
+                Animal {
+                    fun speak() = "generic"
+                }
+                fun main() {
+                    a:Animal = Animal()
+                    println a.speak()
+                    println (a.speak().length)
+                }
+                """.trimIndent(),
+            )
+        assertFalse(r.hasErrors, r.errors.toString())
+    }
+
+    @Test
+    fun `inferred return of forward referenced expr body stays concrete`() {
+        // 同类前向引用（caller 在 callee 之前声明）：函数体仍是返回类型的唯一权威
+        val r =
+            SemaTestSupport.analyze(
+                """
+                A {
+                    fun f():String = g()
+                    fun g() = "hi"
+                }
+                fun main() {
+                    a = A()
+                    println a.f()
+                }
+                """.trimIndent(),
+            )
+        assertFalse(r.hasErrors, r.errors.toString())
+        val f =
+            r.analysis.declTypes.values
+                .firstOrNull { it.render() == "String" }
+        assertTrue(f != null, "g 的推断返回应为 String: ${r.analysis.declTypes}")
+    }
+
+    @Test
+    fun `when expression as inferred expression body resolves`() {
+        // 缺陷修复：when/if 表达式体返回类型曾直接取期望推断变量（自绑定成环）→
+        // 后续成员查找 memberLookup 无限递归 StackOverflow；现按分支公共类型求解
+        val r =
+            SemaTestSupport.analyze(
+                """
+                fun classify(x:Int) = when {
+                    x > 0 -> "pos"
+                    else -> "neg"
+                }
+                fun abs(x:Int) = if (x > 0) then x else -x
+                fun main() {
+                    println classify(3)
+                    println (classify(-1).length)
+                    println abs(-4)
+                }
+                """.trimIndent(),
+            )
         assertFalse(r.hasErrors, r.errors.toString())
     }
 }

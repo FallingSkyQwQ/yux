@@ -1,0 +1,5 @@
+// 01-入门 · 第 5 章反例：when 表达式缺 else（E0034，非密封 subject 必须穷尽）
+fun main() {
+    n = 1
+    x = when n { 1 -> "one" }
+}

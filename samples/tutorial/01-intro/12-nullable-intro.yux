@@ -1,0 +1,9 @@
+// 01-入门 · 第 8 章：可空类型入门（? 类型 + 判空）
+fun main() {
+    name:String? = "Steve"
+    if name != null {
+        println name.length
+    }
+    nothing:String? = null
+    println (nothing == null)
+}

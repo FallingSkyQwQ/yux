@@ -1,0 +1,18 @@
+// 03-精通 · 第 16 章：异常链路（嵌套 try + finally）
+fun inner() {
+    throw RuntimeException()
+}
+fun outer() {
+    try {
+        inner()
+    } finally {
+        println "outer finally"
+    }
+}
+fun main() {
+    try {
+        outer()
+    } catch e {
+        println "main caught"
+    }
+}

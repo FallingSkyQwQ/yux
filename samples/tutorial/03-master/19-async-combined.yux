@@ -1,0 +1,16 @@
+// 03-精通 · 第 19 章：综合并发（async 块 + Tasks + parallel）
+async fun doubleAsync(n:Int):Int {
+    return n * 2
+}
+fun main() {
+    async {
+        v = doubleAsync(4)
+        println v
+    }
+    parallel {
+        print "a"
+        print "b"
+    }
+    Tasks.sleep(10)
+    println ""
+}

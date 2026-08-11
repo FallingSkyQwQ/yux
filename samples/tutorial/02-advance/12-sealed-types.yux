@@ -1,0 +1,17 @@
+// 02-进阶 · 第 12 章：密封类型（sealed + extends + 穷尽 when 表达式）
+sealed Shape {
+}
+Circle extends Shape {
+    r:Int
+}
+Square extends Shape {
+    side:Int
+}
+fun area(s:Shape):Int = when s {
+    is Circle -> 3 * s.r * s.r
+    is Square -> s.side * s.side
+}
+fun main() {
+    println area(Circle(2))
+    println area(Square(3))
+}

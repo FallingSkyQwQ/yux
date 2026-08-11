@@ -1,0 +1,10 @@
+// 03-精通 · 第 14 章：异构集合（List Any + 迭代）
+fun main() {
+    mixed = List Any() as List Any
+    mixed.add("yux")
+    mixed.add(42)
+    mixed.add(3.5)
+    for v in mixed {
+        println v
+    }
+}

@@ -1,0 +1,17 @@
+// 04-生态 · 第 2 章：集合库（yux.collection：map/filter/reduce/sort）
+fun main() {
+    xs = List Int()
+    xs.add(5); xs.add(2); xs.add(8)
+    println xs.sum()
+    println (xs.max() as Int)
+    println (xs.first() as Int)
+    ys = xs.map { (it as Int) * 2 }
+    println ys.sum()
+    evens = xs.filter { (it as Int) % 2 == 0 }
+    println evens.size
+    total = xs.reduce((a, b -> (a as Int) + (b as Int))) as Int
+    println total
+    xs.sort((a, b -> (a as Int) > (b as Int)))
+    xs.forEach { print (it as Int) }
+    println ""
+}

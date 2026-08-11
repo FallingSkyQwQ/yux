@@ -1,0 +1,8 @@
+// 01-入门 · 第 7 章反例：默认值类型不匹配（S-5.5.5）
+// 默认值表达式必须可赋值给形参类型：`title:String = 42` 应报 E0004。
+fun greet(name:String, title:String = 42) {
+    print title
+}
+fun main() {
+    greet("Steve")
+}

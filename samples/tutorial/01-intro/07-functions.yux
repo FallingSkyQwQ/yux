@@ -1,0 +1,10 @@
+// 01-入门 · 第 7 章：函数
+fun add(a:Int, b:Int):Int {
+    return a + b
+}
+fun greet(name:String, title:String = "Mr.") = "Hi $title $name"
+fun main() {
+    print add(1, 2)
+    print greet("Steve")
+    print greet("Alex", "Dr.")
+}

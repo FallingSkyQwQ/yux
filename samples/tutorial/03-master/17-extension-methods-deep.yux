@@ -1,0 +1,18 @@
+// 03-精通 · 第 17 章：扩展方法组合（默认值 + 返回值）
+Vec2 {
+    x:Int
+    y:Int
+}
+fun Vec2.norm():Int = this.x * this.x + this.y * this.y
+fun Vec2.distance(other:Vec2, scale:Int = 1):Int {
+    dx = this.x - other.x
+    dy = this.y - other.y
+    return (dx * dx + dy * dy) * scale
+}
+fun main() {
+    a = Vec2(3, 4)
+    b = Vec2(0, 0)
+    println a.norm()
+    println a.distance(b)
+    println a.distance(b, 2)
+}

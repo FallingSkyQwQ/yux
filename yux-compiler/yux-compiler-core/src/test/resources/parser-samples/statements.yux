@@ -14,6 +14,11 @@ fun main() {
         else -> print "其他"
     }
 
+    when {
+        health <= 0 -> print "dead"
+        else -> print "alive"
+    }
+
     for i in 0..10 {
         print i
     }

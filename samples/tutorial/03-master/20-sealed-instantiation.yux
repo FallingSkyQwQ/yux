@@ -1,0 +1,8 @@
+// 03-精通 · 反例：密封类不可直接实例化（E0035）
+sealed Shape {
+}
+Circle extends Shape {
+}
+fun main() {
+    s = Shape()
+}

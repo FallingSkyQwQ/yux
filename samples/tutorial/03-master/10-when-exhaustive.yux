@@ -1,0 +1,31 @@
+// 03-精通 · 第 10 章：穷尽 when（密封 + 无 else；语句 return 与表达式两种形态）
+sealed Shape {
+}
+Circle extends Shape {
+    r:Int
+}
+Square extends Shape {
+    side:Int
+}
+fun describeExpr(s:Shape):String = when s {
+    is Circle -> "circle r=${s.r}"
+    is Square -> "square side=${s.side}"
+}
+fun describeStmt(s:Shape):String {
+    when s {
+        is Circle -> return "circle r=${s.r}"
+        is Square -> return "square side=${s.side}"
+    }
+}
+// 无 subject 的 when：条件为布尔表达式，表达式形态必须 else
+fun grade(score:Int):String = when {
+    score >= 90 -> "A"
+    score >= 80 -> "B"
+    else -> "C"
+}
+fun main() {
+    println describeExpr(Circle(2))
+    println describeStmt(Square(3))
+    println grade(95)
+    println grade(70)
+}

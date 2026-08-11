@@ -1,0 +1,10 @@
+// 02-进阶 · 第 8 章：集合归约（reduce/sort/forEach）
+fun main() {
+    xs = List Int()
+    xs.add(3); xs.add(1); xs.add(2)
+    total = xs.reduce((a, b -> (a as Int) + (b as Int))) as Int
+    println total
+    xs.sort((a, b -> (a as Int) < (b as Int)))
+    xs.forEach { print (it as Int) }
+    println ""
+}

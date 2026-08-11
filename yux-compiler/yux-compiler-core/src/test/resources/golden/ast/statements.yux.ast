@@ -20,6 +20,11 @@ program
           expr CallNP(Id(print), [Str("\"hello\"")])
         branch else ->
           expr CallNP(Id(print), [Str("\"其他\"")])
+      when
+        branch Binary(<=, Id(health), Int(0)) ->
+          expr CallNP(Id(print), [Str("\"dead\"")])
+        branch else ->
+          expr CallNP(Id(print), [Str("\"alive\"")])
       for i in Range(Int(0), Int(10))
         block
           expr CallNP(Id(print), [Id(i)])

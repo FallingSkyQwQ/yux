@@ -1,0 +1,11 @@
+// 01-入门 · 第 10 章：data 类（自动 toString/equals/hashCode）
+data User {
+    id:Int
+    name:String
+}
+fun main() {
+    u = User(1, "Steve")
+    println u.toString
+    v = User(1, "Steve")
+    println (u == v)
+}

@@ -1,0 +1,13 @@
+// 03-精通 · 第 11 章：函数类型（作参数 + 作返回 + 闭包工厂）
+fun applyTwice(f:(Int)->Int, v:Int):Int {
+    return f(f(v))
+}
+fun makeAdder(n:Int):(Int)->Int {
+    return x -> x + n
+}
+fun main() {
+    inc:(Int)->Int = x -> x + 1
+    println applyTwice(inc, 5)
+    add10 = makeAdder(10)
+    println add10(1)
+}

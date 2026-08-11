@@ -1,0 +1,10 @@
+// 04-生态 · 第 7 章：导入（java.* 与 yux.* 混用）
+import java.util.UUID
+import yux.core.Text
+fun main() {
+    id = UUID.randomUUID()
+    println (id != null)
+    args = List Any() as List Any
+    args.add("import")
+    println (Text.format("ok:%s", args) as String)
+}

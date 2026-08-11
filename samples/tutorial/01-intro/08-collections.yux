@@ -1,0 +1,10 @@
+// 01-入门 · 第 8 章：集合起步
+fun main() {
+    xs = List Int()
+    xs.add(3); xs.add(1); xs.add(2)
+    for v in xs {
+        print v
+    }
+    print xs.size
+    print xs.get(0)
+}

@@ -1,0 +1,4 @@
+// 04-生态 · 反例：静态成员不存在（E0016）
+fun main() {
+    println Math.bogus(1)
+}

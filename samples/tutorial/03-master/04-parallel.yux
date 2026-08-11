@@ -1,0 +1,8 @@
+// 03-精通 · 第 4 章：并行块（parallel 语句级拆分 + 块尾 join）
+fun main() {
+    parallel {
+        print "p1"
+        print "p2"
+    }
+    println ""
+}

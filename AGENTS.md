@@ -25,3 +25,12 @@
 ## 文档同步
 
 - 里程碑完成后更新 `docs/06-开发计划.md`、`README.md`、`CHANGELOG.md`。
+
+## 教程与 golden 示例（docs/tutorial/ 活文档）
+
+- 教程（`docs/tutorial/`）是**活文档**：正文引用的示例必须存在于 `samples/tutorial/`，且每章主题与示例目录一一对应。
+- 每个 `samples/tutorial/<篇>/NN-*.yux` **必须有且仅有一个**快照：正例 `.stdout`（`yuxc run` 成功 + stdout 逐字节匹配）、反例 `.err`（编译失败 + stderr 匹配 + 非零退出码）。快照由 `TutorialSamplesTest` 在 CI 强制。
+- 新增/修改示例：先改 `.yux`，再跑 `yuxc run` 重新生成快照，最后跑 `./gradlew :yux-compiler:yux-compiler-cli:test` 验证。
+- 文档代码引用与示例的一致性由 `bash scripts/check-tutorial-docs.sh` 校验（CI 执行）。
+- 语言行为变更导致快照过期时，**必须随 PR 同步更新快照**并在 PR 说明原因。
+- 教程锁定版本：变更教程面向的版本时，同步更新 `docs/tutorial/00-总览.md` 与 `05-附录.md` 的版本声明。
