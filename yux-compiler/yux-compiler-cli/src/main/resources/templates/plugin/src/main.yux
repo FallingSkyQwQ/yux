@@ -1,0 +1,11 @@
+<package>
+// <name> Paper 插件入口（编译需 --plugin yux-compiler-minecraft）
+plugin <Name> {
+    description = "<name> 插件示例"
+    onEnable {
+        print "<name> 已启用"
+    }
+    onDisable {
+        print "<name> 已卸载"
+    }
+}
