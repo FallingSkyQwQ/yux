@@ -27,16 +27,18 @@ import java.nio.file.Path
 private val TEMPLATES: Map<String, Map<String, String>> =
     mapOf(
         "hello" to mapOf("main.yux" to "main.yux"),
-        "project" to mapOf(
-            "build.yml" to "build.yml",
-            "src/main.yux" to "src/main.yux",
-            "gitignore" to ".gitignore",
-        ),
-        "plugin" to mapOf(
-            "build.yml" to "build.yml",
-            "src/main.yux" to "src/main.yux",
-            "gitignore" to ".gitignore",
-        ),
+        "project" to
+            mapOf(
+                "build.yml" to "build.yml",
+                "src/main.yux" to "src/main.yux",
+                "gitignore" to ".gitignore",
+            ),
+        "plugin" to
+            mapOf(
+                "build.yml" to "build.yml",
+                "src/main.yux" to "src/main.yux",
+                "gitignore" to ".gitignore",
+            ),
     )
 
 internal class NewCommand :

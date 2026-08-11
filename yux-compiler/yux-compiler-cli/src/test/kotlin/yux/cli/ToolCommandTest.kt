@@ -13,7 +13,6 @@ import kotlin.test.assertTrue
  * M16 新命令测试：new 脚手架 / fmt 格式化 / version / doc / help / 彩色诊断。
  */
 class ToolCommandTest {
-
     private fun capture(vararg args: String): Triple<String, String, Int> {
         val out = ByteArrayOutputStream()
         val err = ByteArrayOutputStream()
@@ -33,11 +32,15 @@ class ToolCommandTest {
     // ── new（子进程：真实工作目录语义）───────────────────────────────────────
 
     /** 在 [dir] 工作目录下运行 yuxc（子进程，测试 JVM 的 classpath 完整可用）。 */
-    private fun runIn(dir: java.nio.file.Path, vararg args: String): Triple<String, String, Int> {
+    private fun runIn(
+        dir: java.nio.file.Path,
+        vararg args: String,
+    ): Triple<String, String, Int> {
         val javaBin = System.getProperty("java.home") + java.io.File.separator + "bin" + java.io.File.separator + "java"
-        val pb = ProcessBuilder(
-            listOf(javaBin, "-cp", System.getProperty("java.class.path"), "yux.cli.MainKt") + args,
-        ).directory(dir.toFile())
+        val pb =
+            ProcessBuilder(
+                listOf(javaBin, "-cp", System.getProperty("java.class.path"), "yux.cli.MainKt") + args,
+            ).directory(dir.toFile())
         val proc = pb.start()
         val out = proc.inputStream.readBytes().toString(StandardCharsets.UTF_8)
         val err = proc.errorStream.readBytes().toString(StandardCharsets.UTF_8)
