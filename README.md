@@ -39,15 +39,22 @@ yuxc run samples/tutorial/01-intro/02-hello.yux   # Hello Yux
 ./gradlew lint         # detekt 规范检查
 ./gradlew projects     # 列出全部模块
 
-# 里程碑命令
-./gradlew :yux-compiler:yux-compiler-cli:run --args="lex <file.yux>"   # M1 词法
-./gradlew :yux-compiler:yux-compiler-cli:run --args="ast <file.yux>"   # M2 语法
-./gradlew :yux-compiler:yux-compiler-cli:run --args="check <file.yux>" # M3 语义
-./gradlew :yux-compiler:yux-compiler-cli:run --args="ir <file.yux>"    # M4 IR
-./gradlew :yux-compiler:yux-compiler-cli:run --args="run <file.yux>"   # M5 运行（编译 + 执行 main）
+# 里程碑命令（installDist 后直接用 yuxc；开发时也可用 gradle run 转发）
+./gradlew :yux-compiler:yux-compiler-cli:installDist
+YUXC=./yux-compiler/yux-compiler-cli/build/install/yuxc/bin/yuxc
+$YUXC lex <file.yux>        # M1 词法
+$YUXC ast <file.yux>        # M2 语法
+$YUXC check <file.yux>      # M3 语义（彩色诊断 + 源码标注）
+$YUXC ir <file.yux>         # M4 IR
+$YUXC run <file.yux>        # M5 运行（编译 + 执行 main）
+$YUXC new demo              # M16 脚手架：hello/project/plugin 模板
+$YUXC fmt samples/hello.yux # M16 格式化（-i 原地 / --check 校验 / stdin）
+$YUXC version               # M16 版本
+$YUXC --completion bash     # M16 shell 补全
+$YUXC --help                # 全部命令与选项
 
 # M6 插件：--plugin <jar> 加载编译器插件（扩展关键字 → 解析 → 下沉 → 字节码）
-./gradlew :yux-compiler:yux-compiler-cli:run --args="run --plugin samples/extension/build/libs/extension-0.1.0-SNAPSHOT.jar samples/extension/greet.yux"
+$YUXC run --plugin samples/extension/build/libs/extension-0.1.0-SNAPSHOT.jar samples/extension/greet.yux
 # 期望输出: Hello, Yux plugin!
 
 # M7 构建管线：yuxc build -p <项目目录>（build.yml → Yux 编译 → Gradle 打包 → build/libs/*.jar）
@@ -98,6 +105,7 @@ yuxc run samples/tutorial/01-intro/02-hello.yux   # Hello Yux
 | M14 async 协程 | ✅ | `async fun`/`async{}` 完整 CPS 状态机（T-M14-1..7，R3 转正）：`await` 软关键字 + 双 ABI（async 上下文挂起调用 / 同步门面返回 Task）+ `yux.async.Continuation`/`Suspendable`/`Continuations` 运行时 + try/catch/finally 跨挂起点 + await 挂起可取消 + CancellationException 自动重抛 + CPS golden 套件 + AsyncFunE2e 15 例（含深循环栈安全、递归链、async{} 内 await）+ `parallel{}` 保持 ForkJoinPool |
 | M15 完整 SSA 优化器 | ✅ | 完整 SSA 优化框架（T-M15-1..7，02-§8.4 后置转正）：CFG + 支配树/支配边界 + Cytron φ 插入/重命名 + SCCP 全局常量传播（常量分支折叠 + 死边移除）+ 拷贝传播/平凡 φ 消除 + 激进 DCE + φ 销毁（边分裂拷贝）；结构化 Try 不透明节点 + flush 拷贝 + 原寄存器回退；break/continue 跨 try 保守回退 BasicOpt；`SsaOptTest` 12 例 + `SsaE2eTest` 6 例 + 覆盖率 82.0% |
 | M12 发布 + 教程 | ✅ | 入门到精通语言圣经 `docs/tutorial/`（6 篇，锁 v0.1.0-m15）+ golden 示例 `samples/tutorial/` 74 例（62 正例 .stdout + 12 反例 .err，`TutorialSamplesTest` 逐字节比对）+ 参数默认值 IRGen 修复（S-5.5.5）+ `setupyux.sh` 一键安装 + `scripts/check-tutorial-docs.sh` 文档↔示例一致性校验 |
+| M16 实用 CLI | ✅ | Clikt 4.4 重写（T-M16-1..5）：声明式子命令 + 自动 help/usage + `--completion` shell 补全；`yuxc new` 脚手架（hello/project/plugin 模板）；`yuxc fmt` 格式化器（CST 驱动、幂等、注释保留、插件块 raw copy）；彩色诊断 + 源码插入符标注（tty 检测 + `--color`）；构建生成版本号 `yuxc version`；`yuxc doc`/`yuxc help`；核心 + CLI 756 测试全绿 |
 
 ## 文档索引
 

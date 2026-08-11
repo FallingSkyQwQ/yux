@@ -1,3 +1,5 @@
 
 -- 诊断 --
 ERROR[E0002] 3:1: 重复声明函数 'greet'（签名相同）
+  3 | fun greet(name:String) = "hello " + name
+    | ^

@@ -1,3 +1,5 @@
 
 -- 诊断 --
 ERROR[E0016] 7:13: 成员 'health' 不存在于类型 'Player'
+  7 |     println p.health
+    |             ^

@@ -1,3 +1,5 @@
 
 -- 诊断 --
 ERROR[E0034] 8:25: 密封类型 'Shape' 的 when 未穷尽覆盖：缺少分支 Square（T-M12）
+  8 | fun area(s:Shape):Int = when s {
+    |                         ^

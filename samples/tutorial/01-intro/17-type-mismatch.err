@@ -1,3 +1,5 @@
 
 -- 诊断 --
 ERROR[E0004] 3:5: 类型不匹配（变量 'x'）: 期望 Int，实际 String
+  3 |     x:Int = "hello"
+    |     ^

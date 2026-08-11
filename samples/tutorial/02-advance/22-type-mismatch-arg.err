@@ -1,3 +1,5 @@
 
 -- 诊断 --
 ERROR[E0004] 4:20: 类型不匹配（实参 2）: 期望 Int，实际 String
+  4 |     println add(1, "two")
+    |                    ^
