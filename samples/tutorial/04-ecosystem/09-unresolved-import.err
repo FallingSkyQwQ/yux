@@ -1,4 +1,8 @@
 
 -- 诊断 --
 WARNING[W0001] 4:9: 无法解析类型 'NoSuchThing'，按命名约定假定为 JVM 类型（W0001）
+  4 |     x = NoSuchThing()
+    |         ^
 ERROR[E0009] 4:9: 类型无法解析: NoSuchThing
+  4 |     x = NoSuchThing()
+    |         ^
