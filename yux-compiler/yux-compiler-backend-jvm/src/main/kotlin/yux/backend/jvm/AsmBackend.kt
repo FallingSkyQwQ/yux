@@ -7,8 +7,9 @@ import yux.compiler.ir.IrModule
  * JVM 后端入口（T-M5-1 / 06-§9.2 的 AsmBackend）：IrModule → `.class` 字节。
  *
  * 02-§13.1 的 Backend 接口形态：输入 IR，输出产物清单（类名 → 字节）。
- * 并发语义（S-8.4，T-M11-2）：`async fun` 声明仍以同步方法编译（REMIND 提示）；
- * `async { }`/`parallel { }` 块在 IRGen 编译为 Tasks.launch/parallelAll 调用（真并发）。
+ * 并发语义（S-8.4，T-M14）：`async fun` 已由 AsyncCpsLowering 降级为 CPS 状态机
+ * （门面返回 Task + 挂起入口 + 状态机类）；`async { }`/`parallel { }` 块在 IRGen
+ * 编译为 Tasks.launch/parallelAll 调用（真并发）。
  */
 class AsmBackend(
     /** 项目类解析加载器（M10 混合项目：Java/Kotlin 产物目录的 URLClassLoader）；默认编译管线自身加载器。 */
@@ -25,12 +26,6 @@ class AsmBackend(
         val emitter = AsmEmitter(module, classLoader)
         val artifacts = mutableListOf<OutputArtifact>()
         for (cls in module.classes) {
-            // `async fun` 声明：方法体照常同步发射 + REMIND（块级 `async {}` 已由 IRGen 降级为 Tasks.launch）
-            for (method in cls.methods) {
-                if (method.isAsync) {
-                    diagnostics.remind("async fun 声明同步执行（S-8.4）：`${cls.name}.${method.name}` 方法体不挂起；块级 `async {}` 经 yux.async.Tasks.launch 真并发")
-                }
-            }
             artifacts += try {
                 OutputArtifact(cls.name, emitter.emitClass(cls))
             } catch (e: RuntimeException) {

@@ -91,20 +91,23 @@ class MetadataE2eTest {
 
     @Test
     fun `method bodies carry source line numbers`() {
+        // 注：常量赋值会被 SSA 常量传播消除（a=1; b=2; print(a+b) → print(3)），
+        // 故用依赖参数的存活语句验证行号表
         val classes = BackendTestSupport.compile(
             """
+            fun calc(n: Int) {
+                b = n + 1
+                print (b + n)
+            }
             fun main() {
-                a = 1
-                b = 2
-                print (a + b)
+                calc(1)
             }
             """.trimIndent(),
         )
-        val lines = lineNumbers(classes["Main"]!!, "main")
-        assertTrue(lines.isNotEmpty(), "main 应产出 LineNumberTable")
-        assertTrue(lines.contains(2), "a = 1 应在第 2 行: $lines")
-        assertTrue(lines.contains(3), "b = 2 应在第 3 行: $lines")
-        assertTrue(lines.contains(4), "print 应在第 4 行: $lines")
+        val lines = lineNumbers(classes["Main"]!!, "calc")
+        assertTrue(lines.isNotEmpty(), "calc 应产出 LineNumberTable")
+        assertTrue(lines.contains(2), "b = n + 1 应在第 2 行: $lines")
+        assertTrue(lines.contains(3), "print 应在第 3 行: $lines")
     }
 
     @Test

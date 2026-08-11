@@ -2,6 +2,42 @@
 
 本文件记录各里程碑的显著变更（含 breaking changes，见 06-§3）。
 
+## [v0.1.0-m15] - 2026-08-11 — 完整 SSA 优化器
+
+### 新增
+- **完整 SSA 优化框架**（02-§8.4 的「完整 SSA/优化框架」落地，v0.1 后置项转正；`yux.compiler.optimizer.ssa`）：
+  - **SSA 构造**：方法体 → CFG（Label/Goto/Branch 基本块，结构化 Try 为不透明节点）；Cooper-Harvey-Kennedy 支配树 + 支配边界；Cytron φ 插入 + 支配树先序重命名（每赋值产生新版本局部，独占槽位）。
+  - **结构化 Try 数据流**（不透明节点模型）：Try 内被读/写的局部在进入前发射 **flush 拷贝**（把当前版本复制进原寄存器）；Try 后由 Try 定义的局部恢复为原局部作为当前版本——跨 Try 边界（含循环/join）的值流经 φ 正确合并。
+  - **SCCP**（稀疏条件常量传播，不动点）：全局常量传播跨越块/φ/循环；常量分支折叠为 Goto 并移除不可达边；数值赋值按目标类型归一（`fl:Float = 1` → 常量 `1.0f`，替代读取不改变类型语义）；折叠语义与 BasicOpt 一致（除零不折叠、Long 原类型比较、String 拼接）。
+  - **拷贝传播 + 平凡 φ 消除**：`x = y` 用 `y` 替换 `x` 的使用（SSA 下安全）；被 Try 写入的原局部不可作传播源（其寄存器可被 flush/内层代码改写，防止 φ 自引用丢值）。
+  - **激进 DCE**：不可达块删除；以副作用/可抛异常/终结语句/资源拷贝为根，沿 SSA 使用链向后传播活性（φ 活跃则其入边版本活跃）。
+  - **φ 销毁**：φ 落地为前驱块末尾拷贝（真 SSA 版本独立槽位，拷贝均有效）；Branch 前驱需 **边分裂**（单语句分裂块 + 分支重定向）；并行拷贝环用两阶段临时防护；线性化回退为后端可用的 Label/Goto/Branch。
+- 管线接入：`Compiler.generate` = CPS 降级 → **SsaOpt** → BasicOpt（收尾）；`GoldenIrTest`/`GoldenCpsTest`/`BackendTestSupport` 同步跑完整管线。
+- **保守回退**（保持正确性，交回 BasicOpt）：方法体含 `Await`（CPS 后不应出现，防御）；Try 子列表向闭包外层逃逸（break/continue 跨 try）。
+- 测试：`SsaOptTest` 12 例（跨块常量传播、常量分支折叠+死块移除、φ 落地、边分裂、拷贝传播、跨块 DCE、循环 φ、Try flush、跨 try 回退、副作用/除零保留）；`SsaE2eTest` 6 例后端端到端（Try 定义后读取、catch 条件定义、循环内 Try、跨 try break 回退、类型保留的常量传播、运行时 when 全路径）；覆盖率核心模块 82.0%（门禁 ≥70%）。
+
+### 说明
+- 设计偏差（详见 06-§M15）：SSA 版本局部分配独立槽位（不做 coalescing，φ 拷贝保留为真实赋值，正确性优先）；Try 内层代码不参与 SSA（BasicOpt 语句级折叠收尾）；含跨 try 逃逸控制流的方法整体回退 BasicOpt。
+- 已知限制：Try 内局部不做全局常量传播/拷贝传播（不透明节点模型）；类级增量编译仍为后置项（06-§8.1）。
+
+## [v0.1.0-m14] - 2026-08-11 — async 完整 CPS 状态机协程
+
+### 新增
+- **语言层协程（R3 转正，M14）**：`async fun` / `async { }` 编译为完整 CPS 状态机（自研运行时，不依赖 kotlinx-coroutines）。
+  - 双 ABI：async 上下文内调用为**挂起调用**（直接续延传递，返回声明类型）；同步上下文调用返回 `Task`。
+  - `await` 软关键字（async 上下文内；前缀 `await x` 与调用形 `await(x)` 兼容）：操作数须为 `Task`/`CompletableFuture`/async fun 调用，返回 `Any?`。
+  - 同步门面急切内联执行到首挂起点；异常（含前置）经门面 `Task.completeExceptionally` 交付。
+  - **await 挂起可取消**：被 await 的 future 取消 → 续延以 `CancellationException` 恢复，且该异常不被 `catch` 吞掉（Kotlin 式自动重抛）。
+  - **try/catch/finally 跨挂起点完整支持**（catch 分派状态、finally 按正常/异常/返回三路径展开）。
+  - 循环内可挂起（状态 label 回边）；`async{}` 块编译为合成 async fun，经 `Continuations.launch` 池上驱动，体内可 await；`parallel{}` 保持 ForkJoinPool 且禁止 await。
+- 编译器：`YxAwait` AST + `IrStmt.Await` 挂起点；`AsyncCpsLowering`/`StateMachineGenerator`（状态划分、局部→字段、`invokeSuspend` 分派、resume 迭代驱动）；`Compiler.generate` 接入降级 pass；后端移除 async REMIND。
+- yux-stdlib `yux.async`（T-M14-1）：`Continuation`（resume/resumeWithException）、`Suspendable`（invokeSuspend）、`Continuations`（SUSPENDED 哨兵、tryAwait、FutureCompletion、launch、newFuture/wrap/unwrap）；`Task`/`CompletableFuture` 加入内置简单名。
+- 测试：CPS golden 套件（`GoldenCpsTest`，`cps-samples/`→`golden/cps/`）；`AsyncFunE2eTest` 15 例（门面+await、挂起调用、非阻塞、取消传播、自动重抛、try/catch/finally 跨挂起、深循环 20000 栈安全、递归链 1000、async{} 内 await）；stdlib `ContinuationTest` 9 例。
+
+### 说明
+- 设计偏差（详见 06-§M14）：`async` 是硬关键字，顶层函数命名为 `Tasks.launch`（既有设计偏差保持）；`await` 为非 async 上下文保留标识符语义；`CancellationException` 自动重抛为简化语义（不区分协程是否在取消中）；门面取消仅阻止结果交付（无结构化取消）；状态机类名 `Owner$name$Sm`；局部变量统一提升为字段（含 boxing）。
+- 已知限制：跨续延 resume 链（async 递归）深度受 JVM 栈限制（单续延内迭代驱动栈安全）；`async fun` 覆写/接口默认协程（双 ABI 多态）待后续里程碑；`async{}` 门面返回的 Task 为 fire-and-forget（无结构化 join）。
+
 ## [v0.1.0-m11] - 2026-08-10 — 标准库完善与泛化测试
 
 ### 新增

@@ -2,6 +2,7 @@ package yux.compiler.irgen
 
 import yux.compiler.ast.YxAs
 import yux.compiler.ast.YxAsyncBlock
+import yux.compiler.ast.YxAwait
 import yux.compiler.ast.YxBinary
 import yux.compiler.ast.YxBlock
 import yux.compiler.ast.YxBlockLambda
@@ -126,6 +127,7 @@ class ExprGen(
         is YxIs -> IrExpr.IsType(gen(expr.expr, g, fileScope), irGen.resolveIrType(expr.type, fileScope))
         is YxAs -> IrExpr.Convert(gen(expr.expr, g, fileScope), irGen.resolveIrType(expr.type, fileScope))
         is YxThrow -> error("IRGen: throw 仅支持语句位置（M4）")
+        is YxAwait -> genAwait(expr, g, fileScope)
         is YxRange -> IrExpr.New(
             IrType.RANGE,
             listOf(gen(expr.from, g, fileScope), gen(expr.to, g, fileScope)),
@@ -245,7 +247,10 @@ class ExprGen(
     private fun genCall(call: YxCall, g: MethodGen, fileScope: FileScope): IrExpr {
         val args = call.args.map { genLiteralAdapted(it, g, fileScope) }
         val argTypes = call.args.mapNotNull { irGen.exprTypes[it] }
-        if (call.callee is YxMemberAccess) {
+        // 双 ABI（T-M14）：async fun 在 async 上下文为挂起调用（续延传递）
+        val asyncSym = irGen.asyncCalleeSymbol(call.callee)
+        if (asyncSym != null && asyncSym.isAsync && irGen.isInAsyncContext()) {
+            return genSuspendCall(asyncSym, call.callee, args, g, fileScope)
         }
         return when (val callee = call.callee) {
             is YxIdentifier -> {
@@ -313,11 +318,49 @@ class ExprGen(
     }
 
     /**
+     * async fun 挂起调用（T-M14，双 ABI）：`Await(Invoke(挂起入口), isSuspendCall=true)`。
+     * 挂起入口实参不含 Continuation（CPS 降级补），结果提升为临时局部供后续使用。
+     */
+    private fun genSuspendCall(sym: FunctionSymbol, callee: YxNode, args: List<IrExpr>, g: MethodGen, fileScope: FileScope): IrExpr {
+        val entry = irGen.suspendEntryMethods[sym]
+            ?: error("IRGen: async fun 挂起入口未登记: ${sym.name}")
+        val resultType = TypeBridge.toIr(sym.returnType ?: SemaType.UnitT)
+        val tmp = g.newLocal(awaitLocalName(), resultType)
+        val receiver = when (callee) {
+            is YxMemberAccess -> {
+                val receiverType = SemaType.resolveVar(irGen.exprTypes[callee.receiver] ?: SemaType.ErrorT)
+                castSmartReceiver(gen(callee.receiver, g, fileScope), receiverType)
+            }
+            else -> null
+        }
+        g.emit(IrStmt.Await(tmp, IrExpr.Invoke(IrMethodRef(entry), receiver, args), isSuspendCall = true))
+        return IrExpr.LocalRead(tmp)
+    }
+
+    /** `await <expr>`（S-8.4.2）：async fun 调用 → 挂起调用；Task/CompletableFuture → tryAwait。 */
+    private fun genAwait(expr: YxAwait, g: MethodGen, fileScope: FileScope): IrExpr {
+        if (!irGen.isInAsyncContext()) error("IRGen: await 出现在非 async 上下文（sema 应已拒绝）")
+        val asyncSym = irGen.asyncCalleeSymbol(expr.operand)
+        if (asyncSym != null && asyncSym.isAsync) {
+            if (expr.operand !is YxCall) error("IRGen: await 目标解析异常: ${expr.operand::class.simpleName}")
+            val call = expr.operand as YxCall
+            val args = call.args.map { genLiteralAdapted(it, g, fileScope) }
+            return genSuspendCall(asyncSym, call.callee, args, g, fileScope)
+        }
+        val target = gen(expr.operand, g, fileScope)
+        val tmp = g.newLocal(awaitLocalName(), IrType.ANY)
+        g.emit(IrStmt.Await(tmp, target, isSuspendCall = false))
+        return IrExpr.LocalRead(tmp)
+    }
+
+    /** await 提升临时局部名（CPS 状态机的挂起结果槽）。 */
+    private fun awaitLocalName(): String = "await\$result"
+
+    /**
      * 内置函数（M3 注册的 decl==null 函数）→ 运行时宿主：
      * `print`/`println` → yux.core.CoreLib；`serialize`/`deserialize`（S-8.3）→ yux.serializer.YuxSerializer。
      */
-    private fun builtinCall(sym: FunctionSymbol): IrCallable = IrJvmCall(
-        name = sym.name,
+    private fun builtinCall(sym: FunctionSymbol): IrCallable = IrJvmCall(        name = sym.name,
         owner = BuiltinFunctions.ownerOf(sym.name) ?: "yux.core.CoreLib",
         static = true,
         params = sym.params.map { TypeBridge.toIr(it.type) },

@@ -748,10 +748,13 @@ restored = deserialize(json, PlayerData)
 
 ## 8.4 自动并发（yux.async）
 
-- S-8.4.1 `async fun` / `async { }`：编译为 JVM 协程（基于 `kotlinx.coroutines` 运行时，或自研轻量调度器）。
-- S-8.4.2 `await(x)` 挂起等待协程完成。
-- S-8.4.3 `parallel { }`：块内无数据依赖的调用提交到 ForkJoinPool；块尾隐式 `join`。
-- S-8.4.4 调度器与 Java 虚拟线程（`java.util.concurrent`）可互操作。
+- S-8.4.1 `async fun` / `async { }`：编译为完整 CPS 状态机协程（自研运行时 `yux.async`，T-M14）。
+  双 ABI：async 上下文内调用为**挂起调用**（直接续延传递，返回声明类型）；同步上下文调用返回 `Task`。
+- S-8.4.2 `await <expr>`（软关键字，async 上下文内；`await(x)` 调用形兼容）：挂起等待协程完成。
+  操作数须为 `Task` / `CompletableFuture` / async fun 调用，返回 `Any?`（Task 非泛型）。
+  `await` 挂起可取消：被 await 的 future 取消时以 `CancellationException` 恢复，且该异常不被 `catch` 吞掉（自动重抛）。
+- S-8.4.3 `parallel { }`：块内无数据依赖的调用提交到 ForkJoinPool；块尾隐式 `join`（块内禁止 `await`）。
+- S-8.4.4 调度器与 Java 虚拟线程（`java.util.concurrent`）可互操作（回调式恢复，不换线程）。
 
 ```yux
 async fun loadPlayer(id:Int):Player {
@@ -900,12 +903,16 @@ type JsonValue    // get(key), asInt, asString, asList, asObject ...
 ## 10.6 yux.async
 
 ```yux
-fun async(block:()->Unit):Task
-fun await(task:Task):Any?
-fun parallel(block:()->Unit)
-fun sleep(ms:Long)
 fun launch(block:()->Unit):Task
+fun parallel(block:()->Unit)
+fun parallelAll(blocks:List<Function0<Unit>>)
+fun await(task:Task):Any?
+fun sleep(ms:Long)
 type Task          // await() / cancel() / isDone
+type Continuation  // resume(value) / resumeWithException(t)     （T-M14 协程运行时）
+type Suspendable   // invokeSuspend()                            （async fun 状态机）
+// Continuations：SUSPENDED 哨兵、tryAwait(Task/CompletableFuture, cont)、
+//   launch(sm, completion)、newFuture / wrap / unwrap / FutureCompletion
 ```
 
 ## 10.7 yux.di

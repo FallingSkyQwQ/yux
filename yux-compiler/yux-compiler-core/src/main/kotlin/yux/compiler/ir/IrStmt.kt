@@ -25,6 +25,7 @@ sealed interface IrStmt {
         is Throw -> copy(line = line)
         is Monitor -> copy(line = line)
         is Try -> copy(line = line)
+        is Await -> copy(line = line)
         IrStmt.Nop -> this
     }
 
@@ -115,6 +116,21 @@ sealed interface IrStmt {
         val body: List<IrStmt>,
         val catches: List<IrCatch>,
         val finallyBody: List<IrStmt>?,
+        override val line: Int? = null,
+    ) : IrStmt
+
+    /**
+     * 挂起点（T-M14，async fun CPS 状态机的标记）：await 经 IRGen 提升为语句级——
+     * 表达式位置 `x = a + await t` 被拆为 `Await(tmp, t)` + `x = a + tmp`。
+     *
+     * [isSuspendCall]=true 时 [target] 为 async fun 挂起入口调用（IRGen 生成 Invoke，
+     * CPS 降级补 Continuation 实参与 SUSPENDED 哨兵处理）；false 时 [target] 为
+     * Task/CompletableFuture 表达式，经 [yux.async.Continuations.tryAwait] 挂起。
+     */
+    data class Await(
+        val local: IrLocal,
+        val target: IrExpr,
+        val isSuspendCall: Boolean,
         override val line: Int? = null,
     ) : IrStmt
 

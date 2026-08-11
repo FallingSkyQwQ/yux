@@ -3,42 +3,32 @@ module {
   static synthetic method $clinit(): Unit {
   }
   static method main(): Unit {
-   LocalAssign #0: Int = Const(10)
-   Branch Compare(LE, LocalRead(#0), Const(0)) L0 L2
-   Label L0
-   Call yux.core.CoreLib.print [Const("died")] : Unit
-   Goto L1
    Label L2
-   Branch Compare(LT, LocalRead(#0), Const(10)) L3 L5
-   Label L3
-   Call yux.core.CoreLib.print [Const("low")] : Unit
-   Goto L4
    Label L5
    Call yux.core.CoreLib.print [Const("ok")] : Unit
    Label L4
    Label L1
-   LocalAssign #1: Int = Const(0)
-   LocalAssign #2: Range = New Range [Const(0), Const(10)]
-   LocalAssign #3: Iterator = Invoke yux.core.Range#iterator [LocalRead(#2)]
+   LocalAssign #10: Int = Const(0)
+   LocalAssign #11: Range = New Range [Const(0), Const(10)]
+   LocalAssign #12: Iterator = Invoke yux.core.Range#iterator [LocalRead(#11)]
+   LocalAssign #8: Int = LocalRead(#10)
    Label L6
-   LocalAssign #4: Boolean = Invoke java.util.Iterator#hasNext [LocalRead(#3)]
-   Branch LocalRead(#4) L7 L8
+   LocalAssign #13: Boolean = Invoke java.util.Iterator#hasNext [LocalRead(#12)]
+   Branch LocalRead(#13) L7 L8
    Label L7
-   LocalAssign #5: Int = Invoke java.util.Iterator#next [LocalRead(#3)]
-   LocalAssign #1: Int = Arith(ADD, LocalRead(#1), LocalRead(#5))
+   LocalAssign #14: Int = Invoke java.util.Iterator#next [LocalRead(#12)]
+   LocalAssign #15: Int = Arith(ADD, LocalRead(#8), LocalRead(#14))
+   LocalAssign #8: Int = LocalRead(#15)
    Goto L6
    Label L8
+   LocalAssign #7: Int = LocalRead(#8)
    Label L9
-   Branch Compare(GT, LocalRead(#1), Const(0)) L10 L11
+   Branch Compare(GT, LocalRead(#7), Const(0)) L10 L11
    Label L10
-   LocalAssign #1: Int = Arith(SUB, LocalRead(#1), Const(1))
+   LocalAssign #16: Int = Arith(SUB, LocalRead(#7), Const(1))
+   LocalAssign #7: Int = LocalRead(#16)
    Goto L9
    Label L11
-   LocalAssign #6: Int = LocalRead(#0)
-   Branch Compare(EQ, LocalRead(#6), Const(0)) L13 L14
-   Label L13
-   Call yux.core.CoreLib.print [Const("zero")] : Unit
-   Goto L12
    Label L14
    Label L15
    Call yux.core.CoreLib.print [Const("other")] : Unit

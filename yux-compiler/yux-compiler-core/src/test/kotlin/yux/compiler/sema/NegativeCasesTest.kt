@@ -134,6 +134,10 @@ class NegativeCasesTest {
         c("override 无父类", "A {\n  override fun f() {\n  }\n}", ErrorCodes.OVERRIDE_NO_SUPER)
         c("override 父类无此成员", "A {\n}\nB extends A {\n  override fun nope() {\n  }\n}", ErrorCodes.OVERRIDE_NO_SUPER)
 
+        // ── E0037 async 覆写一致性（T-M14，双 ABI）───────────────────────────
+        c("非 async 覆写 async fun", "A {\n  async fun f() {\n  }\n}\nB extends A {\n  override fun f() {\n  }\n}", ErrorCodes.ASYNC_OVERRIDE_MISMATCH)
+        c("async 覆写非 async fun", "A {\n  fun f() {\n  }\n}\nB extends A {\n  override async fun f() {\n  }\n}", ErrorCodes.ASYNC_OVERRIDE_MISMATCH)
+
         // ── E0020 只读赋值 ──────────────────────────────────────────────────
         c("参数不可赋值", "fun f(x:Int) {\n  x = 5\n}", ErrorCodes.VAL_ASSIGNMENT)
         c("参数重声明赋值", "fun f(x:Int) {\n  x: Int = 5\n}", ErrorCodes.VAL_ASSIGNMENT)

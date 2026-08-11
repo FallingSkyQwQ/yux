@@ -57,6 +57,21 @@ class Parser(
         private set
     private var suppressBlockDepth = 0
 
+    /** async 上下文深度（T-M14）：`async fun` 体 / `async { }` 块体内 `await` 为前缀运算符。 */
+    private var asyncContextDepth = 0
+
+    internal fun isInAsyncContext(): Boolean = asyncContextDepth > 0
+
+    /** 在 async 上下文内执行 [block]（恢复式计数器，嵌套/异常安全）。 */
+    internal fun <T> withAsyncContext(block: () -> T): T {
+        asyncContextDepth++
+        try {
+            return block()
+        } finally {
+            asyncContextDepth--
+        }
+    }
+
     internal fun enterSuppressBlock() {
         suppressBlockDepth++
         suppressBlockCall = true
@@ -446,12 +461,13 @@ class Parser(
         val returnType = if (colonKw != null) parseType() else null
         val body = when {
             at(LBRACE) -> {
-                val b = parseBlock()
+                val b = if (flags.async != null) withAsyncContext { parseBlock() } else parseBlock()
                 CstBlockBody(b, b.span)
             }
             at(ASSIGN) -> {
                 val assignKw = advance()
-                val expr = pratt.parseExpression()
+                // async fun 表达式体（`async fun f() = ...`）：体为 async 上下文
+                val expr = if (flags.async != null) withAsyncContext { pratt.parseExpression() } else pratt.parseExpression()
                 finishStatement()
                 CstExpressionBody(assignKw, expr, spanOf(assignKw, expr))
             }
@@ -654,7 +670,8 @@ class Parser(
             atKeyword("try") -> parseTry()
             atKeyword("async") -> {
                 val kw = advance()
-                val block = parseBlock()
+                // async{} 块体为 async 上下文（体内 await 为挂起点，T-M14）
+                val block = withAsyncContext { parseBlock() }
                 CstAsyncStmt(kw, block, spanOf(kw, block))
             }
             atKeyword("parallel") -> {

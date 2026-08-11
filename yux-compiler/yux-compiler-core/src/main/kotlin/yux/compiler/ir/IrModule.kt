@@ -123,6 +123,8 @@ class IrMethod(
     /** 所属类；Lambda 方法在生成后由 IRGen 回填。 */
     val owner: IrClass? = null,
 ) {
+    /** async{} 块合成 async fun（T-M14）：门面走 Continuations.launch（池上驱动）而非急切内联。 */
+    var isLaunchedAsync: Boolean = false
     /** 参数局部变量（index 0..n-1，与 [body] 中其它局部槽位连续）。 */
     val paramLocals: List<IrLocal> =
         params.mapIndexed { i, p -> IrLocal(p.name, p.type, i) }

@@ -249,7 +249,9 @@ sealed class IrType {
 
 ## 8.2 IR 结构（SSA-less，类字节码风格）
 
-v0.1 IR 为**结构化、带类型的抽象字节码**（轻量、直接映射 JVM），不引入完整 SSA（标注为未来优化项）：
+v0.1 IR 为**结构化、带类型的抽象字节码**（轻量、直接映射 JVM），编译期中间形态不保留 SSA；
+完整的 SSA 优化器（§8.4）以该 IR 为输入做**分析期 SSA**——构造 CFG/φ 并在优化后销毁回此形态，
+后端始终消费无 φ 的线性 IR：
 
 ```kotlin
 sealed class IrStmt {
@@ -287,10 +289,18 @@ sealed class IrExpr {
 
 ## 8.4 优化器（可选管线）
 
-v0.1 提供基础优化，默认开启：
-- 常量折叠、死代码消除、无括号调用内联、空守卫折叠。
-- 逃逸分析标注（供 §01-8.6 `stack` 使用，JVM 上映射为分配提示）。
-- 完整 SSA/优化框架列为未来（§13）。
+v0.1 提供两级优化，默认开启（`Compiler.generate`：CPS 降级 → SSA 优化 → 最小优化）：
+
+- **完整 SSA 优化**（`yux.compiler.optimizer.ssa`，M15）：
+  - 线性 IR → CFG（Label/Goto/Branch 基本块，结构化 Try 为不透明节点）；
+  - Cooper-Harvey-Kennedy 支配树 + 支配边界，Cytron φ 插入 + 先序重命名（版本局部独占槽位）；
+  - **SCCP**（稀疏条件常量传播）：全局常量传播 + 常量分支折叠 + 不可达边移除；
+  - 拷贝传播 + 平凡 φ 消除（被 Try 写入的原局部排除）；
+  - 激进 DCE（SSA 使用链活性传播）；
+  - φ 销毁：落地为前驱拷贝（Branch 前驱边分裂、并行拷贝环两阶段临时），线性化回退。
+  - 保守回退：Try 子列表向闭包外层逃逸（break/continue 跨 try）或含 Await 的方法交回最小优化。
+- **最小优化**（`BasicOpt`，T-M4-5）：常量折叠、死代码消除、无括号调用内联、空守卫折叠。
+- 逃逸分析标注（供 §01-8.6 `stack` 使用，JVM 上映射为分配提示）列为未来。
 
 ---
 
@@ -309,7 +319,7 @@ v0.1 提供基础优化，默认开启：
 | `List String` | 泛型擦除 + `Signature`（S-4.3.4） |
 | 可空类型 | 运行时为 JVM 引用；基本类型拆箱为 `Integer` 等 |
 | Lambda | `invokedynamic`（`LambdaMetafactory`），捕获用 `SerializedLambda` |
-| `async` | 状态机类 + `kotlinx.coroutines` 交互 |
+| `async fun`/`async{}` | 自研状态机类 `Owner$name$Sm`（实现 `yux.async.Continuation`/`Suspendable`）：`AsyncCpsLowering` 在 IRGen 后把方法体划分为状态块，局部提升为字段，`invokeSuspend()` 按 `state` 字段分派；门面返回 `Task` + 挂起入口续延传递（T-M14，自研运行时，不依赖 kotlinx.coroutines） |
 | 注解 | JVM 注解字节码 |
 
 ## 9.2 ASM 用法

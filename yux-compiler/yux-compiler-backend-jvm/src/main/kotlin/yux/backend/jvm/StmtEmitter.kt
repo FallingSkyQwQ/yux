@@ -90,6 +90,9 @@ internal class StmtEmitter(
                 mv.visitInsn(if (stmt.enter) Opcodes.MONITORENTER else Opcodes.MONITOREXIT)
             }
             is IrStmt.Try -> emitTry(stmt)
+            is IrStmt.Await -> error(
+                "后端不应见到 Await 语句（async fun 未经过 CPS 状态机降级）: ${stmt.target}",
+            )
             is IrStmt.Nop -> Unit
         }
     }

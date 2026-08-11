@@ -173,6 +173,8 @@ object Builtins {
         "Text" to "yux.core.Text",
         "Colls" to "yux.collection.Colls",
         "Tasks" to "yux.async.Tasks",
+        "Task" to "yux.async.Task",
+        "CompletableFuture" to "java.util.concurrent.CompletableFuture",
         "TestFramework" to "yux.test.TestFramework",
     )
 

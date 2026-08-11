@@ -497,6 +497,13 @@ class CstUnary(
     override val span: SourceSpan,
 ) : CstExpr
 
+/** `await <expr>`（S-8.4.2，T-M14）：async 上下文内的一元前缀挂起点。 */
+class CstAwait(
+    val awaitKw: Token,
+    val operand: CstExpr,
+    override val span: SourceSpan,
+) : CstExpr
+
 /** 显式 Lambda：`x -> body` / `(a, b) -> body`。 */
 class CstLambda(
     val lparen: Token?,

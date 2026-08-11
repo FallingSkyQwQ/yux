@@ -55,6 +55,7 @@ import yux.compiler.ast.YxStmt
 import yux.compiler.ast.YxStringLiteral
 import yux.compiler.ast.YxStringTemplate
 import yux.compiler.ast.YxStringText
+import yux.compiler.ast.YxAwait
 import yux.compiler.ast.YxSuper
 import yux.compiler.ast.YxThis
 import yux.compiler.ast.YxThrow
@@ -310,6 +311,7 @@ object AstPrinter {
         is YxBlockLambda -> "BlockLambda{${inlineBlock(expr.body)}}"
         is YxParen -> "Paren(${renderExpr(expr.expr)})"
         is YxThrow -> "Throw(${renderExpr(expr.expr)})"
+        is YxAwait -> "Await(${renderExpr(expr.operand)})"
         is YxIs -> "Is(${renderExpr(expr.expr)}, ${renderType(expr.type)})"
         is YxAs -> "As(${renderExpr(expr.expr)}, ${renderType(expr.type)})"
         is YxNullable -> "Nullable(${renderExpr(expr.expr)})"

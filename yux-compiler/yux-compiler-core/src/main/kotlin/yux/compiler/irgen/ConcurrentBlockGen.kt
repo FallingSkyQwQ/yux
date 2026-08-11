@@ -60,27 +60,19 @@ class ConcurrentBlockGen(
     // ── async / parallel 块（S-8.4，T-M11-2 真并发）──────────────────────────
 
     /**
-     * `async { }`：块整体编译为 Function0 lambda，经 [Tasks.launch] 提交到
-     * ForkJoinPool 后立即返回（不阻塞主线程）。外层局部变量按值捕获（快照）。
+     * `async { }`：块体编译为合成 async fun（isLaunchedAsync 门面），经
+     * [yux.async.Continuations.launch] 在 ForkJoinPool 上驱动状态机并立即返回 Task
+     * （不阻塞主线程；S-8.4.1，T-M14）。块体内可 `await`（协程上下文）。
+     * 外层局部变量按值捕获（快照）。
      */
     internal fun genAsyncBlock(block: YxBlock, g: MethodGen, fileScope: FileScope) {
         analysis.checkConcurrentBlock(block)
         val captures = analysis.capturesOf(block)
-        val method = newBlockLambdaMethod(captures, g)
-        val lambdaG = MethodGen(method, g.owner)
-        lambdaG.enterScope()
-        block.statements.forEach { stmtGen.gen(it, lambdaG, fileScope) }
-        lambdaG.emit(IrStmt.Return(IrExpr.Const(null)))
-        lambdaG.exitScope()
-        val lambda = IrExpr.Lambda(IrMethodRef(method), captureReads(captures, g))
-        val launch = IrJvmCall(
-            name = "launch",
-            owner = "yux.async.Tasks",
-            static = true,
-            params = listOf(IrType.Function(emptyList(), IrType.Void)),
-            retType = IrType.ANY,
-        )
-        g.emit(IrStmt.Eval(IrExpr.Invoke(launch, null, listOf(lambda))))
+        val facade = irGen.newAsyncBlockMethod(captures, block, g, fileScope)
+        val args = captures.map { (name, _) ->
+            IrExpr.LocalRead(g.lookupLocal(name) ?: error("IRGen: async{} 捕获变量未登记: $name"))
+        }
+        g.emit(IrStmt.Eval(IrExpr.Invoke(IrMethodRef(facade), null, args)))
     }
 
     /**

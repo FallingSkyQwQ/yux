@@ -33,6 +33,7 @@ import yux.compiler.sema.FileScope
 import yux.compiler.sema.FunctionSymbol
 import yux.compiler.sema.PropertySymbol
 import yux.compiler.sema.SemaType
+import yux.compiler.sema.Symbol
 import yux.compiler.sema.TypeResolver
 import yux.compiler.sema.YxClassSymbol
 
@@ -60,6 +61,45 @@ class IRGen(
 
     /** Yux 函数符号 → 其 IrMethod（调用解析）。 */
     val functionMethods = mutableMapOf<FunctionSymbol, IrMethod>()
+
+    /**
+     * async fun 挂起入口（T-M14，双 ABI）：`(参数..., Continuation) -> Any?`，
+     * async 上下文内调用经此续延传递。函数体由 CPS 降级生成。
+     */
+    val suspendEntryMethods = mutableMapOf<FunctionSymbol, IrMethod>()
+
+    /** async 上下文深度（T-M14）：async fun 体 / async{} 块体内 await 挂起、async fun 调用为挂起调用。 */
+    private var asyncContextDepth = 0
+
+    fun isInAsyncContext(): Boolean = asyncContextDepth > 0
+
+    /** 在 async 上下文内执行 [block]。 */
+    fun <T> withAsyncContext(block: () -> T): T {
+        asyncContextDepth++
+        try {
+            return block()
+        } finally {
+            asyncContextDepth--
+        }
+    }
+
+    /** `yux.async.Task` / `yux.async.Continuation` 的 IR 类型（门面返回 / 挂起入口参数）。 */
+    fun jvmClassType(qualifiedName: String): IrType =
+        resolver.resolveJvmClass(qualifiedName)?.let { IrType.Declared(it, emptyList()) } ?: IrType.ANY
+
+    /**
+     * 调用目标的 async fun 符号（T-M14）：标识符调用查 resolvedRefs；成员调用沿接收者
+     * 类型解析（YxClassSymbol.functionsIncludingSuper）。非 async 或无法解析返回 null。
+     */
+    fun asyncCalleeSymbol(callee: yux.compiler.ast.YxNode): FunctionSymbol? = when (callee) {
+        is yux.compiler.ast.YxIdentifier -> resolvedRefs[callee] as? FunctionSymbol
+        is yux.compiler.ast.YxMemberAccess -> {
+            val rt = SemaType.resolveVar(exprTypes[callee.receiver] ?: SemaType.ErrorT)
+            val sym = (rt as? SemaType.Declared)?.symbol as? YxClassSymbol
+            sym?.functionsIncludingSuper(callee.name)?.firstOrNull()
+        }
+        else -> null
+    }
     /** 扩展函数（M9）：当前函数体 receiver 局部名（非 null 时 `this` 读该局部）。 */
     var extensionReceiverName: String? = null
 
@@ -319,9 +359,45 @@ class IRGen(
 
     private fun registerFunction(fnDecl: YxFunction, sym: FunctionSymbol, irClass: IrClass, fileScope: FileScope) {
         // 扩展函数（M9）：receiver 已并入 sym.params（第 0 参数 `this`），编译为文件类静态方法
+        val paramIrs = sym.params.map { IrParam(it.name, TypeBridge.toIr(it.type)) }
+        if (fnDecl.isAsync) {
+            // 双 ABI（T-M14）：async fun 编译为「同步门面（返回 Task）」+「挂起入口（续延传递）」
+            val facade = IrMethod(
+                name = fnDecl.name,
+                params = paramIrs,
+                returnType = jvmClassType("yux.async.Task"),
+                isStatic = irClass.isFileClass,
+                isConstructor = false,
+                isAsync = true,
+                isOverride = fnDecl.isOverride,
+                isSynthetic = false,
+                visibility = fnDecl.visibility,
+                annotations = fnDecl.annotations.flatMap { toIrAnnotation(it) },
+                owner = irClass,
+            )
+            val suspendEntry = IrMethod(
+                name = "${fnDecl.name}\$suspend",
+                params = paramIrs + IrParam("continuation", jvmClassType("yux.async.Continuation")),
+                returnType = IrType.ANY,
+                isStatic = irClass.isFileClass,
+                isConstructor = false,
+                isAsync = true,
+                isOverride = fnDecl.isOverride,
+                isSynthetic = true,
+                visibility = fnDecl.visibility,
+                owner = irClass,
+            )
+            functionMethods[sym] = facade
+            suspendEntryMethods[sym] = suspendEntry
+            irClass.methods.add(facade)
+            irClass.methods.add(suspendEntry)
+            // 声明体生成进门面方法（含提升后的 Await 语句），由 AsyncCpsLowering 消费为状态机
+            bodyGenerators[facade] = { g -> generateFunctionBody(fnDecl, g, fileScope) }
+            return
+        }
         val method = IrMethod(
             name = fnDecl.name,
-            params = sym.params.map { IrParam(it.name, TypeBridge.toIr(it.type)) },
+            params = paramIrs,
             returnType = TypeBridge.toIr(sym.returnType ?: SemaType.UnitT),
             isStatic = irClass.isFileClass,
             isConstructor = false,
@@ -407,13 +483,28 @@ class IRGen(
         // 扩展函数（M9）：`this` 读 receiver 局部（第 0 参数，MethodGen 已按参数名登记）
         val saved = extensionReceiverName
         extensionReceiverName = if (fnDecl.receiver != null) "this" else null
-        when (val body = fnDecl.body) {
-            is yux.compiler.ast.YxFunctionBody.YxExpressionBody ->
-                g.emit(IrStmt.Return(genExpr(body.expr, g, fileScope)))
-            is yux.compiler.ast.YxFunctionBody.YxBlockBody -> {
-                g.enterScope()
-                body.block.statements.forEach { genStmt(it, g, fileScope) }
-                g.exitScope()
+        if (fnDecl.isAsync) {
+            // async fun 体为 async 上下文（await 提升为挂起点，T-M14）
+            withAsyncContext {
+                when (val body = fnDecl.body) {
+                    is yux.compiler.ast.YxFunctionBody.YxExpressionBody ->
+                        g.emit(IrStmt.Return(genExpr(body.expr, g, fileScope)))
+                    is yux.compiler.ast.YxFunctionBody.YxBlockBody -> {
+                        g.enterScope()
+                        body.block.statements.forEach { genStmt(it, g, fileScope) }
+                        g.exitScope()
+                    }
+                }
+            }
+        } else {
+            when (val body = fnDecl.body) {
+                is yux.compiler.ast.YxFunctionBody.YxExpressionBody ->
+                    g.emit(IrStmt.Return(genExpr(body.expr, g, fileScope)))
+                is yux.compiler.ast.YxFunctionBody.YxBlockBody -> {
+                    g.enterScope()
+                    body.block.statements.forEach { genStmt(it, g, fileScope) }
+                    g.exitScope()
+                }
             }
         }
         extensionReceiverName = saved
@@ -503,6 +594,65 @@ class IRGen(
     }
 
     fun nextLambdaName(): String = "lambda\$${lambdaCounter++}"
+
+    /**
+     * async{} 块合成 async fun（T-M14）：门面（isLaunchedAsync）+ 挂起入口，参数 = 按值捕获。
+     * 块体在 async 上下文内生成（await 提升为挂起点），由 AsyncCpsLowering 降级为状态机。
+     */
+    fun newAsyncBlockMethod(
+        captures: List<Pair<String, Symbol>>,
+        block: yux.compiler.ast.YxBlock,
+        g: MethodGen,
+        fileScope: FileScope,
+    ): IrMethod {
+        val name = "async\$${asyncBlockCounter++}"
+        val paramIrs = captures.map { (name, sym) -> IrParam(name, captureIrType(sym)) }
+        val facade = IrMethod(
+            name = name,
+            params = paramIrs,
+            returnType = jvmClassType("yux.async.Task"),
+            isStatic = g.method.isStatic,
+            isConstructor = false,
+            isAsync = true,
+            isOverride = false,
+            isSynthetic = true,
+            visibility = yux.compiler.ast.YxVisibility.PUBLIC,
+            owner = g.owner,
+        )
+        facade.isLaunchedAsync = true
+        val suspendEntry = IrMethod(
+            name = "$name\$suspend",
+            params = paramIrs + IrParam("continuation", jvmClassType("yux.async.Continuation")),
+            returnType = IrType.ANY,
+            isStatic = g.method.isStatic,
+            isConstructor = false,
+            isAsync = true,
+            isOverride = false,
+            isSynthetic = true,
+            visibility = yux.compiler.ast.YxVisibility.PUBLIC,
+            owner = g.owner,
+        )
+        g.owner.methods.add(facade)
+        g.owner.methods.add(suspendEntry)
+        // 立即生成块体（AsyncCpsLowering 读取 facade.body 降级为状态机；外层方法体生成
+        // 中的快照迭代不会回调延迟 bodyGenerators，故不走延迟注册）
+        val gen = MethodGen(facade, g.owner)
+        withAsyncContext {
+            gen.enterScope()
+            block.statements.forEach { genStmt(it, gen, fileScope) }
+            gen.exitScope()
+        }
+        return facade
+    }
+
+    /** 捕获符号 → IR 类型（async{} 合成函数参数，T-M14）。 */
+    private fun captureIrType(sym: Symbol): IrType = TypeBridge.toIr(when (sym) {
+        is yux.compiler.sema.VariableSymbol -> sym.type ?: SemaType.ErrorT
+        is yux.compiler.sema.ParameterSymbol -> sym.type
+        else -> SemaType.ErrorT
+    })
+
+    private var asyncBlockCounter = 0
 
     /** 进入 StmtGen（单向入口；语句直接发射到当前发射目标）。 */
     fun genStmt(stmt: yux.compiler.ast.YxStmt, g: MethodGen, fileScope: FileScope): Unit =

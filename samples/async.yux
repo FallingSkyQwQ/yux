@@ -1,0 +1,37 @@
+// M14-7 端到端样例：async fun 完整 CPS 状态机协程（await/挂起调用/同步门面/异常/取消）
+async fun doubleAsync(n: Int): Int {
+    t = Tasks.launch { }
+    await t
+    return n * 2
+}
+
+async fun compute(): Int {
+    v = doubleAsync(21)   // async 上下文内挂起调用，直接得声明类型
+    return v + 1
+}
+
+async fun risky(): Int {
+    t = Tasks.launch { throw RuntimeException() }
+    await t
+    return 1
+}
+
+async fun guarded(): Int {
+    try {
+        return risky()
+    } catch e {
+        return 0
+    }
+}
+
+fun main() {
+    print (Tasks.await(compute()) as Int)   // 21*2+1 = 43
+    print (Tasks.await(guarded()) as Int)   // catch 捕获 → 0
+    async {
+        t = Tasks.launch { Tasks.sleep(50) }
+        await t
+        print "block"
+    }
+    Tasks.sleep(200)
+    print "done"
+}

@@ -369,19 +369,22 @@ class AsmBackendTest {
         assertEquals("0len=0", out)
     }
 
-    // ── T-M5-9 async 同步降级 ─────────────────────────────────────────────────
+    // ── T-M5-9 async 降级（T-M14 起为完整 CPS 状态机）──────────────────────────
 
     @Test
-    fun `async fun runs synchronously with remind`() {
-        val diags = yux.compiler.diag.DiagnosticSink()
-        val sf = yux.compiler.source.SourceFile("main.yux", "async fun f() { print \"async\" }\nfun main() { f() }")
-        val program = yux.compiler.parser.Parser(sf, diags).parse()
-        val decls = yux.compiler.parser.CstToAst().convert(program)
-        val analysis = yux.compiler.sema.SemanticAnalyzer().analyze(mapOf("main.yux" to decls), diags)
-        val module = yux.compiler.irgen.IRGen(analysis).generate(mapOf("main.yux" to decls))
-        val artifacts = AsmBackend().generate(module, diags)
-        assertTrue(diags.diagnostics.any { it.severity == yux.compiler.diag.Severity.REMIND }, "async 应产 REMIND 降级提示")
-        val out = BackendTestSupport.run(artifacts.associate { it.className to it.bytes }, "Main")
+    fun `async fun compiles to Task facade and runs via await`() {
+        val out = BackendTestSupport.compileAndRun(
+            """
+            async fun f() {
+                print "async"
+            }
+            fun main() {
+                t = f()
+                Tasks.await(t)
+            }
+            """.trimIndent(),
+        )
+        // 双 ABI（T-M14）：同步门面返回 Task，await 驱动状态机执行函数体
         assertEquals("async", out)
     }
 

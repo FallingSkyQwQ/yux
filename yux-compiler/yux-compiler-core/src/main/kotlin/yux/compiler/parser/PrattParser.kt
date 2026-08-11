@@ -132,7 +132,7 @@ internal class PrattParser(private val p: Parser) {
         else -> false
     }
 
-    /** 前缀：一元 `!`/`-` 或 Primary。后缀链在表达式层应用。 */
+    /** 前缀：一元 `!`/`-`、async 上下文内 `await`，或 Primary。后缀链在表达式层应用。 */
     private fun parsePrefix(): CstExpr {
         val t = p.current
         if (t.kind == NOT || t.kind == MINUS) {
@@ -140,6 +140,14 @@ internal class PrattParser(private val p: Parser) {
             val operand = parsePrefix()
             val operandPostfix = parsePostfixChain(operand)
             return CstUnary(t, operandPostfix, spanOf(t, operandPostfix))
+        }
+        // await 软关键字（T-M14）：仅 async 上下文内作为一元前缀运算符；`await(x)` 调用形
+        // 经 `(` 前缀折叠为 CstAwait(括号)，与规范 §8.4.2 两种写法兼容
+        if (t.kind == IDENTIFIER && t.text == "await" && p.isInAsyncContext()) {
+            p.advance()
+            val operand = parsePrefix()
+            val operandPostfix = parsePostfixChain(operand)
+            return CstAwait(t, operandPostfix, spanOf(t, operandPostfix))
         }
         return p.parsePrimaryExpr()
     }
