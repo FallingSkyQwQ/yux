@@ -2,12 +2,14 @@ package yux.compiler.irgen
 
 import yux.compiler.ast.YxAccessorKind
 import yux.compiler.ast.YxAnnotation
+import yux.compiler.ast.YxAssign
 import yux.compiler.ast.YxClass
 import yux.compiler.ast.YxClassMember
 import yux.compiler.ast.YxDataClass
 import yux.compiler.ast.YxDecl
 import yux.compiler.ast.YxExpr
 import yux.compiler.ast.YxFunction
+import yux.compiler.ast.YxIdentifier
 import yux.compiler.ast.YxInitBlock
 import yux.compiler.ast.YxMemberAccess
 import yux.compiler.ast.YxProperty
@@ -28,6 +30,7 @@ import yux.compiler.ir.IrProperty
 import yux.compiler.ir.IrStmt
 import yux.compiler.ir.IrType
 import yux.compiler.sema.AnalysisResult
+import yux.compiler.sema.AstScan
 import yux.compiler.sema.ClassPathSymbolProvider
 import yux.compiler.sema.FileScope
 import yux.compiler.sema.FunctionSymbol
@@ -91,15 +94,23 @@ class IRGen(
      * 调用目标的 async fun 符号（T-M14）：标识符调用查 resolvedRefs；成员调用沿接收者
      * 类型解析（YxClassSymbol.functionsIncludingSuper）。非 async 或无法解析返回 null。
      */
-    fun asyncCalleeSymbol(callee: yux.compiler.ast.YxNode): FunctionSymbol? = when (callee) {
-        is yux.compiler.ast.YxIdentifier -> resolvedRefs[callee] as? FunctionSymbol
-        is yux.compiler.ast.YxMemberAccess -> {
-            val rt = SemaType.resolveVar(exprTypes[callee.receiver] ?: SemaType.ErrorT)
-            val sym = (rt as? SemaType.Declared)?.symbol as? YxClassSymbol
-            sym?.functionsIncludingSuper(callee.name)?.firstOrNull()
+    fun asyncCalleeSymbol(callee: yux.compiler.ast.YxNode): FunctionSymbol? =
+        when (callee) {
+            is yux.compiler.ast.YxIdentifier -> {
+                resolvedRefs[callee] as? FunctionSymbol
+            }
+
+            is yux.compiler.ast.YxMemberAccess -> {
+                val rt = SemaType.resolveVar(exprTypes[callee.receiver] ?: SemaType.ErrorT)
+                val sym = (rt as? SemaType.Declared)?.symbol as? YxClassSymbol
+                sym?.functionsIncludingSuper(callee.name)?.firstOrNull()
+            }
+
+            else -> {
+                null
+            }
         }
-        else -> null
-    }
+
     /** 扩展函数（M9）：当前函数体 receiver 局部名（非 null 时 `this` 读该局部）。 */
     var extensionReceiverName: String? = null
 
@@ -151,73 +162,102 @@ class IRGen(
     }
 
     /** 文件类 + 文件级声明注册（骨架遍）。 */
-    private fun registerFile(path: String, decls: List<YxDecl>, fileScope: FileScope) {
+    private fun registerFile(
+        path: String,
+        decls: List<YxDecl>,
+        fileScope: FileScope,
+    ) {
         val baseName = fileClassName(path)
         // 顶层类与文件类同名时（如 HomeData.yux 内 `data HomeData`），文件类名加 `_File` 后缀
         // 避免 registerClass 的 data 类被文件类遮蔽（M9：构造解析 `classNamed` 命中非文件类）。
-        val topLevelTypeNames = decls.filterIsInstance<yux.compiler.ast.YxClass>()
-            .map { it.name }
-            .toSet() + decls.filterIsInstance<yux.compiler.ast.YxDataClass>().map { it.name } +
-            decls.filterIsInstance<yux.compiler.ast.YxService>().map { it.name }
+        val topLevelTypeNames =
+            decls
+                .filterIsInstance<yux.compiler.ast.YxClass>()
+                .map { it.name }
+                .toSet() + decls.filterIsInstance<yux.compiler.ast.YxDataClass>().map { it.name } +
+                decls.filterIsInstance<yux.compiler.ast.YxService>().map { it.name }
         val fileName = if (baseName in topLevelTypeNames) baseName + "_File" else baseName
-        val fileClass = IrClass(
-            name = qualify(fileScope.packageName, fileName),
-            isFileClass = true,
-            isData = false,
-            isService = false,
-            superType = null,
-            interfaces = emptyList(),
-        )
+        val fileClass =
+            IrClass(
+                name = qualify(fileScope.packageName, fileName),
+                isFileClass = true,
+                isData = false,
+                isService = false,
+                superType = null,
+                interfaces = emptyList(),
+            )
         module.classes.add(fileClass)
-        val clinit = IrMethod(
-            name = "\$clinit",
-            params = emptyList(),
-            returnType = IrType.Void,
-            isStatic = true,
-            isConstructor = false,
-            isAsync = false,
-            isOverride = false,
-            isSynthetic = true,
-            owner = fileClass,
-        )
+        val clinit =
+            IrMethod(
+                name = "\$clinit",
+                params = emptyList(),
+                returnType = IrType.Void,
+                isStatic = true,
+                isConstructor = false,
+                isAsync = false,
+                isOverride = false,
+                isSynthetic = true,
+                owner = fileClass,
+            )
         fileClass.methods.add(clinit)
         bodyGenerators[clinit] = { g -> generateClinit(decls.filterIsInstance<YxProperty>(), g, fileScope) }
         for (decl in decls) {
             when (decl) {
-                is YxClass -> registerClass(decl, fileScope, fileClass)
-                is YxDataClass -> registerClass(decl, fileScope, fileClass)
-                is YxService -> registerClass(decl, fileScope, fileClass)
+                is YxClass -> {
+                    registerClass(decl, fileScope, fileClass)
+                }
+
+                is YxDataClass -> {
+                    registerClass(decl, fileScope, fileClass)
+                }
+
+                is YxService -> {
+                    registerClass(decl, fileScope, fileClass)
+                }
+
                 is YxFunction -> {
                     val sym = fileScope.topLevelFunctions[decl.name]?.firstOrNull()
                     if (sym != null) registerFunction(decl, sym, fileClass, fileScope)
                 }
-                is YxProperty -> registerTopLevelProperty(decl, fileClass, fileScope)
-                else -> Unit
+
+                is YxProperty -> {
+                    registerTopLevelProperty(decl, fileClass, fileScope)
+                }
+
+                else -> {
+                    Unit
+                }
             }
         }
     }
 
-    private fun registerClass(decl: Any, fileScope: FileScope, fileClass: IrClass) {
+    private fun registerClass(
+        decl: Any,
+        fileScope: FileScope,
+        fileClass: IrClass,
+    ) {
         val shape = classShape(decl) ?: return
         val sym = fileScope.types[shape.name] as? YxClassSymbol ?: return
-        val irClass = IrClass(
-            name = qualify(fileScope.packageName, shape.name),
-            isFileClass = false,
-            isData = sym.isData,
-            isService = sym.isService,
-            isInterface = sym.qualifiedName in interfaceClassNames,
-            typeParams = sym.typeParams,
-            superType = shape.superType?.let { resolveIrType(it, fileScope) },
-            interfaces = shape.interfaces.map { resolveIrType(it, fileScope) },
-            visibility = sym.visibility,
-            annotations = buildList {
-                shape.annotations.forEach { addAll(toIrAnnotation(it)) }
-                // S-5.4.1：service 自动附 @YuxService（源码已标注时去重）
-                if (sym.isService && none { it.name == "yux.di.YuxService" }) {
-                    add(IrAnnotation("yux.di.YuxService"))
-                }
-            },
-        )
+        val irClass =
+            IrClass(
+                name = qualify(fileScope.packageName, shape.name),
+                isFileClass = false,
+                isData = sym.isData,
+                isService = sym.isService,
+                isInterface = sym.qualifiedName in interfaceClassNames,
+                typeParams = sym.typeParams,
+                superType = shape.superType?.let { resolveIrType(it, fileScope) },
+                interfaces = shape.interfaces.map { resolveIrType(it, fileScope) },
+                visibility = sym.visibility,
+                annotations =
+                    buildList {
+                        shape.annotations.forEach { addAll(toIrAnnotation(it)) }
+                        // S-5.4.1：service 自动附 @YuxService（源码已标注时去重）
+                        if (sym.isService && none { it.name == "yux.di.YuxService" }) {
+                            add(IrAnnotation("yux.di.YuxService"))
+                        }
+                    },
+            )
         module.classes.add(irClass)
 
         val props = sym.properties()
@@ -226,17 +266,18 @@ class IRGen(
             val propDecl = propDecls.firstOrNull { it.name == prop.name }
             if (propDecl != null) registerProperty(prop, propDecl, irClass, fileScope)
         }
-        val ctor = IrMethod(
-            name = "<init>",
-            params = props.map { IrParam(it.name, TypeBridge.toIr(it.type ?: SemaType.ErrorT)) },
-            returnType = IrType.Void,
-            isStatic = false,
-            isConstructor = true,
-            isAsync = false,
-            isOverride = false,
-            isSynthetic = true,
-            owner = irClass,
-        )
+        val ctor =
+            IrMethod(
+                name = "<init>",
+                params = props.map { IrParam(it.name, TypeBridge.toIr(it.type ?: SemaType.ErrorT)) },
+                returnType = IrType.Void,
+                isStatic = false,
+                isConstructor = true,
+                isAsync = false,
+                isOverride = false,
+                isSynthetic = true,
+                owner = irClass,
+            )
         irClass.methods.add(ctor)
         val initBlocks = shape.members.filterIsInstance<YxInitBlock>()
         bodyGenerators[ctor] = { g -> generateConstructor(irClass, props, propDecls, initBlocks, g, fileScope) }
@@ -256,12 +297,13 @@ class IRGen(
         val members: List<YxClassMember>,
     )
 
-    private fun classShape(decl: Any): ClassShape? = when (decl) {
-        is YxClass -> ClassShape(decl.name, decl.superType, decl.interfaces, decl.annotations, decl.members)
-        is YxDataClass -> ClassShape(decl.name, decl.superType, decl.interfaces, decl.annotations, decl.members)
-        is YxService -> ClassShape(decl.name, null, emptyList(), decl.annotations, decl.members)
-        else -> null
-    }
+    private fun classShape(decl: Any): ClassShape? =
+        when (decl) {
+            is YxClass -> ClassShape(decl.name, decl.superType, decl.interfaces, decl.annotations, decl.members)
+            is YxDataClass -> ClassShape(decl.name, decl.superType, decl.interfaces, decl.annotations, decl.members)
+            is YxService -> ClassShape(decl.name, null, emptyList(), decl.annotations, decl.members)
+            else -> null
+        }
 
     /** AST 注解 → IR 注解（T-M5-6）：限定名转 JVM 名；仅常量字面量实参保留。 */
     private fun toIrAnnotation(a: YxAnnotation): List<IrAnnotation> {
@@ -269,49 +311,67 @@ class IRGen(
         return listOf(
             IrAnnotation(
                 name = BUILTIN_ANNOTATIONS[name] ?: name,
-                args = a.args.mapNotNull { arg ->
-                    constValue(arg.value)?.let { IrAnnotationArg(arg.name, it) }
-                },
+                args =
+                    a.args.mapNotNull { arg ->
+                        constValue(arg.value)?.let { IrAnnotationArg(arg.name, it) }
+                    },
             ),
         )
     }
 
     /** 注解实参常量求值（非字面量返回 null，IRGen 跳过）。 */
-    private fun constValue(e: YxExpr): Any? = when (e) {
-        is yux.compiler.ast.YxIntLiteral -> Literals.decodeInt(e.text)
-        is yux.compiler.ast.YxFloatLiteral -> Literals.decodeFloat(e.text)
-        is yux.compiler.ast.YxCharLiteral -> Literals.decodeChar(e.text)
-        is yux.compiler.ast.YxBoolLiteral -> e.value
-        is yux.compiler.ast.YxNullLiteral -> null
-        is yux.compiler.ast.YxStringLiteral -> Literals.decodeString(e.text)
-        else -> null
-    }
+    private fun constValue(e: YxExpr): Any? =
+        when (e) {
+            is yux.compiler.ast.YxIntLiteral -> Literals.decodeInt(e.text)
+            is yux.compiler.ast.YxFloatLiteral -> Literals.decodeFloat(e.text)
+            is yux.compiler.ast.YxCharLiteral -> Literals.decodeChar(e.text)
+            is yux.compiler.ast.YxBoolLiteral -> e.value
+            is yux.compiler.ast.YxNullLiteral -> null
+            is yux.compiler.ast.YxStringLiteral -> Literals.decodeString(e.text)
+            else -> null
+        }
 
     /** 内置注解简单名 → JVM 限定名（01-§8.2 内置注解；未知注解原样保留）。 */
-    private val BUILTIN_ANNOTATIONS = mapOf(
-        "Override" to "java.lang.Override",
-        "Deprecated" to "java.lang.Deprecated",
-        "Serializable" to "yux.serializer.Serializable",
-        "YuxService" to "yux.di.YuxService",
-        "Test" to "yux.test.Test",
-    )
+    private val BUILTIN_ANNOTATIONS =
+        mapOf(
+            "Override" to "java.lang.Override",
+            "Deprecated" to "java.lang.Deprecated",
+            "Serializable" to "yux.serializer.Serializable",
+            "YuxService" to "yux.di.YuxService",
+            "Test" to "yux.test.Test",
+        )
 
     /** 属性 → backing 字段 + getter/setter 骨架（T-M4-1：属性 → 2 方法映射）。 */
-    private fun registerProperty(prop: PropertySymbol, propDecl: YxProperty, irClass: IrClass, fileScope: FileScope): IrProperty {
+    private fun registerProperty(
+        prop: PropertySymbol,
+        propDecl: YxProperty,
+        irClass: IrClass,
+        fileScope: FileScope,
+    ): IrProperty {
         val type = TypeBridge.toIr(prop.type ?: SemaType.ErrorT)
         // isFinal 与 setter 注册同规则（均以 isVal 为准）；val 声明 set 访问器为 sema 拒绝的程序
-        val backingField = IrField(
-            name = propDecl.name,
-            type = type,
-            isStatic = false,
-            isFinal = prop.isVal,
-            owner = irClass.name,
-            visibility = prop.visibility,
-        )
+        val backingField =
+            IrField(
+                name = propDecl.name,
+                type = type,
+                isStatic = false,
+                isFinal = prop.isVal,
+                owner = irClass.name,
+                visibility = prop.visibility,
+            )
         propertyFields[prop] = backingField
         val getter = registerAccessor(propDecl, prop, irClass, type, YxAccessorKind.GET, backingField, fileScope)
         val setter = if (prop.isVal) null else registerAccessor(propDecl, prop, irClass, type, YxAccessorKind.SET, backingField, fileScope)
-        val irProp = IrProperty(propDecl.name, type, isVal = prop.isVal, isStatic = false, backingField = backingField, getter = getter, setter = setter)
+        val irProp =
+            IrProperty(
+                propDecl.name,
+                type,
+                isVal = prop.isVal,
+                isStatic = false,
+                backingField = backingField,
+                getter = getter,
+                setter = setter,
+            )
         irClass.fields.add(backingField)
         irClass.properties.add(irProp)
         propertyAccessors[prop] = irProp
@@ -327,18 +387,21 @@ class IRGen(
         backingField: IrField,
         fileScope: FileScope,
     ): IrMethod {
-        val method = IrMethod(
-            name = if (kind == YxAccessorKind.GET) getterName(propDecl.name, type) else setterName(propDecl.name),
-            params = if (kind == YxAccessorKind.SET) listOf(IrParam("value", type)) else emptyList(),
-            returnType = if (kind == YxAccessorKind.GET) type else IrType.Void,
-            isStatic = false,
-            isConstructor = false,
-            isAsync = false,
-            isOverride = false,
-            isSynthetic = true,
-            visibility = prop.visibility,
-            owner = irClass,
-        )
+        val method =
+            IrMethod(
+                name = if (kind == YxAccessorKind.GET) getterName(propDecl.name, type) else setterName(propDecl.name),
+                // S-5.2.3：setter 参数（root scope 以参数名登记）；体内 `set` 别名指向它，
+                // `value` 另行物化自 backing field（仅在体内引用时物化）
+                params = if (kind == YxAccessorKind.SET) listOf(IrParam("value", type)) else emptyList(),
+                returnType = if (kind == YxAccessorKind.GET) type else IrType.Void,
+                isStatic = false,
+                isConstructor = false,
+                isAsync = false,
+                isOverride = false,
+                isSynthetic = true,
+                visibility = prop.visibility,
+                owner = irClass,
+            )
         irClass.methods.add(method)
         val custom = propDecl.accessors.firstOrNull { it.kind == kind }
         bodyGenerators[method] = { g ->
@@ -349,44 +412,74 @@ class IRGen(
                     g.emit(IrStmt.FieldAccess(IrExpr.This, backingField, write = true, value = IrExpr.LocalRead(g.lookupLocal("value")!!)))
                 }
             } else {
+                // S-5.2.3 访问器绑定：`value` = backing field（getter 只读 / setter 可写），
+                // `set`（setter）= 传入新值（别名指向参数局部）。仅当体内引用 value 时物化；
+                // setter 内对 value 赋值需在结束前写回字段。
                 g.enterScope()
+                val bodyExprs = AstScan.collectExprs(custom.body)
+                val usesValue = bodyExprs.any { it is YxIdentifier && it.name == "value" }
+                if (kind == YxAccessorKind.SET) {
+                    g.paramLocals.firstOrNull()?.let { g.declareLocal("set", it) }
+                }
+                val valueLocal =
+                    if (usesValue) {
+                        val v = g.newLocal("value", type)
+                        g.declareLocal("value", v)
+                        g.emit(IrStmt.LocalAssign(v, IrExpr.FieldRead(IrExpr.This, backingField)))
+                        v
+                    } else {
+                        null
+                    }
                 custom.body.statements.forEach { genStmt(it, g, fileScope) }
+                if (kind == YxAccessorKind.SET && usesValue) {
+                    val writesValue = bodyExprs.any { it is YxAssign && (it.target as? YxIdentifier)?.name == "value" }
+                    if (writesValue) {
+                        g.emit(IrStmt.FieldAccess(IrExpr.This, backingField, write = true, value = IrExpr.LocalRead(valueLocal!!)))
+                    }
+                }
                 g.exitScope()
             }
         }
         return method
     }
 
-    private fun registerFunction(fnDecl: YxFunction, sym: FunctionSymbol, irClass: IrClass, fileScope: FileScope) {
+    private fun registerFunction(
+        fnDecl: YxFunction,
+        sym: FunctionSymbol,
+        irClass: IrClass,
+        fileScope: FileScope,
+    ) {
         // 扩展函数（M9）：receiver 已并入 sym.params（第 0 参数 `this`），编译为文件类静态方法
         val paramIrs = sym.params.map { IrParam(it.name, TypeBridge.toIr(it.type)) }
         if (fnDecl.isAsync) {
             // 双 ABI（T-M14）：async fun 编译为「同步门面（返回 Task）」+「挂起入口（续延传递）」
-            val facade = IrMethod(
-                name = fnDecl.name,
-                params = paramIrs,
-                returnType = jvmClassType("yux.async.Task"),
-                isStatic = irClass.isFileClass,
-                isConstructor = false,
-                isAsync = true,
-                isOverride = fnDecl.isOverride,
-                isSynthetic = false,
-                visibility = fnDecl.visibility,
-                annotations = fnDecl.annotations.flatMap { toIrAnnotation(it) },
-                owner = irClass,
-            )
-            val suspendEntry = IrMethod(
-                name = "${fnDecl.name}\$suspend",
-                params = paramIrs + IrParam("continuation", jvmClassType("yux.async.Continuation")),
-                returnType = IrType.ANY,
-                isStatic = irClass.isFileClass,
-                isConstructor = false,
-                isAsync = true,
-                isOverride = fnDecl.isOverride,
-                isSynthetic = true,
-                visibility = fnDecl.visibility,
-                owner = irClass,
-            )
+            val facade =
+                IrMethod(
+                    name = fnDecl.name,
+                    params = paramIrs,
+                    returnType = jvmClassType("yux.async.Task"),
+                    isStatic = irClass.isFileClass,
+                    isConstructor = false,
+                    isAsync = true,
+                    isOverride = fnDecl.isOverride,
+                    isSynthetic = false,
+                    visibility = fnDecl.visibility,
+                    annotations = fnDecl.annotations.flatMap { toIrAnnotation(it) },
+                    owner = irClass,
+                )
+            val suspendEntry =
+                IrMethod(
+                    name = "${fnDecl.name}\$suspend",
+                    params = paramIrs + IrParam("continuation", jvmClassType("yux.async.Continuation")),
+                    returnType = IrType.ANY,
+                    isStatic = irClass.isFileClass,
+                    isConstructor = false,
+                    isAsync = true,
+                    isOverride = fnDecl.isOverride,
+                    isSynthetic = true,
+                    visibility = fnDecl.visibility,
+                    owner = irClass,
+                )
             functionMethods[sym] = facade
             suspendEntryMethods[sym] = suspendEntry
             irClass.methods.add(facade)
@@ -395,48 +488,39 @@ class IRGen(
             bodyGenerators[facade] = { g -> generateFunctionBody(fnDecl, g, fileScope) }
             return
         }
-        val method = IrMethod(
-            name = fnDecl.name,
-            params = paramIrs,
-            returnType = TypeBridge.toIr(sym.returnType ?: SemaType.UnitT),
-            isStatic = irClass.isFileClass,
-            isConstructor = false,
-            isAsync = fnDecl.isAsync,
-            isOverride = fnDecl.isOverride,
-            isSynthetic = false,
-            visibility = fnDecl.visibility,
-            annotations = fnDecl.annotations.flatMap { toIrAnnotation(it) },
-            owner = irClass,
-        )
+        val method =
+            IrMethod(
+                name = fnDecl.name,
+                params = paramIrs,
+                returnType = TypeBridge.toIr(sym.returnType ?: SemaType.UnitT),
+                isStatic = irClass.isFileClass,
+                isConstructor = false,
+                isAsync = fnDecl.isAsync,
+                isOverride = fnDecl.isOverride,
+                isSynthetic = false,
+                visibility = fnDecl.visibility,
+                annotations = fnDecl.annotations.flatMap { toIrAnnotation(it) },
+                owner = irClass,
+            )
         functionMethods[sym] = method
         irClass.methods.add(method)
         bodyGenerators[method] = { g -> generateFunctionBody(fnDecl, g, fileScope) }
     }
 
-    private fun registerTopLevelProperty(propDecl: YxProperty, fileClass: IrClass, fileScope: FileScope) {
+    private fun registerTopLevelProperty(
+        propDecl: YxProperty,
+        fileClass: IrClass,
+        fileScope: FileScope,
+    ) {
         val sym = fileScope.topLevelProperties[propDecl.name] ?: return
         val type = TypeBridge.toIr(sym.type ?: SemaType.ErrorT)
         val field = IrField(propDecl.name, type, isStatic = true, isFinal = sym.isVal, owner = fileClass.name, visibility = sym.visibility)
         propertyFields[sym] = field
-        val getter = IrMethod(
-            name = getterName(propDecl.name, type),
-            params = emptyList(),
-            returnType = type,
-            isStatic = true,
-            isConstructor = false,
-            isAsync = false,
-            isOverride = false,
-            isSynthetic = true,
-            visibility = sym.visibility,
-            owner = fileClass,
-        )
-        val setter = if (sym.isVal) {
-            null
-        } else {
+        val getter =
             IrMethod(
-                name = setterName(propDecl.name),
-                params = listOf(IrParam("value", type)),
-                returnType = IrType.Void,
+                name = getterName(propDecl.name, type),
+                params = emptyList(),
+                returnType = type,
                 isStatic = true,
                 isConstructor = false,
                 isAsync = false,
@@ -445,9 +529,26 @@ class IRGen(
                 visibility = sym.visibility,
                 owner = fileClass,
             )
-        }
+        val setter =
+            if (sym.isVal) {
+                null
+            } else {
+                IrMethod(
+                    name = setterName(propDecl.name),
+                    params = listOf(IrParam("value", type)),
+                    returnType = IrType.Void,
+                    isStatic = true,
+                    isConstructor = false,
+                    isAsync = false,
+                    isOverride = false,
+                    isSynthetic = true,
+                    visibility = sym.visibility,
+                    owner = fileClass,
+                )
+            }
         fileClass.fields.add(field)
-        val irProp = IrProperty(propDecl.name, type, isVal = sym.isVal, isStatic = true, backingField = field, getter = getter, setter = setter)
+        val irProp =
+            IrProperty(propDecl.name, type, isVal = sym.isVal, isStatic = true, backingField = field, getter = getter, setter = setter)
         fileClass.properties.add(irProp)
         propertyAccessors[sym] = irProp
         fileClass.methods.add(getter)
@@ -458,7 +559,13 @@ class IRGen(
             if (customGetter == null) {
                 g.emit(IrStmt.Return(IrExpr.FieldRead(null, field)))
             } else {
+                // S-5.2.3：value = backing field（静态字段，只读）；仅当体内引用时物化
                 g.enterScope()
+                if (AstScan.collectExprs(customGetter.body).any { it is YxIdentifier && it.name == "value" }) {
+                    val valueLocal = g.newLocal("value", type)
+                    g.declareLocal("value", valueLocal)
+                    g.emit(IrStmt.LocalAssign(valueLocal, IrExpr.FieldRead(null, field)))
+                }
                 customGetter.body.statements.forEach { genStmt(it, g, fileScope) }
                 g.exitScope()
             }
@@ -469,8 +576,25 @@ class IRGen(
                 if (customSetter == null) {
                     g.emit(IrStmt.FieldAccess(null, field, write = true, value = IrExpr.LocalRead(g.lookupLocal("value")!!)))
                 } else {
+                    // S-5.2.3：value = backing field（静态字段，可写），set = 新值（别名→参数）；
+                    // 仅当体内引用/赋值 value 时物化并写回
                     g.enterScope()
+                    val bodyExprs = AstScan.collectExprs(customSetter.body)
+                    val usesValue = bodyExprs.any { it is YxIdentifier && it.name == "value" }
+                    g.paramLocals.firstOrNull()?.let { g.declareLocal("set", it) }
+                    val valueLocal =
+                        if (usesValue) {
+                            val v = g.newLocal("value", type)
+                            g.declareLocal("value", v)
+                            g.emit(IrStmt.LocalAssign(v, IrExpr.FieldRead(null, field)))
+                            v
+                        } else {
+                            null
+                        }
                     customSetter.body.statements.forEach { genStmt(it, g, fileScope) }
+                    if (usesValue && bodyExprs.any { it is YxAssign && (it.target as? YxIdentifier)?.name == "value" }) {
+                        g.emit(IrStmt.FieldAccess(null, field, write = true, value = IrExpr.LocalRead(valueLocal!!)))
+                    }
                     g.exitScope()
                 }
             }
@@ -479,7 +603,11 @@ class IRGen(
 
     // ── 主体遍 ────────────────────────────────────────────────────────────────
 
-    private fun generateFunctionBody(fnDecl: YxFunction, g: MethodGen, fileScope: FileScope) {
+    private fun generateFunctionBody(
+        fnDecl: YxFunction,
+        g: MethodGen,
+        fileScope: FileScope,
+    ) {
         // 扩展函数（M9）：`this` 读 receiver 局部（第 0 参数，MethodGen 已按参数名登记）
         val saved = extensionReceiverName
         extensionReceiverName = if (fnDecl.receiver != null) "this" else null
@@ -487,8 +615,10 @@ class IRGen(
             // async fun 体为 async 上下文（await 提升为挂起点，T-M14）
             withAsyncContext {
                 when (val body = fnDecl.body) {
-                    is yux.compiler.ast.YxFunctionBody.YxExpressionBody ->
+                    is yux.compiler.ast.YxFunctionBody.YxExpressionBody -> {
                         g.emit(IrStmt.Return(genExpr(body.expr, g, fileScope)))
+                    }
+
                     is yux.compiler.ast.YxFunctionBody.YxBlockBody -> {
                         g.enterScope()
                         body.block.statements.forEach { genStmt(it, g, fileScope) }
@@ -498,8 +628,10 @@ class IRGen(
             }
         } else {
             when (val body = fnDecl.body) {
-                is yux.compiler.ast.YxFunctionBody.YxExpressionBody ->
+                is yux.compiler.ast.YxFunctionBody.YxExpressionBody -> {
                     g.emit(IrStmt.Return(genExpr(body.expr, g, fileScope)))
+                }
+
                 is yux.compiler.ast.YxFunctionBody.YxBlockBody -> {
                     g.enterScope()
                     body.block.statements.forEach { genStmt(it, g, fileScope) }
@@ -535,7 +667,11 @@ class IRGen(
         g.exitScope()
     }
 
-    private fun generateClinit(props: List<YxProperty>, g: MethodGen, fileScope: FileScope) {
+    private fun generateClinit(
+        props: List<YxProperty>,
+        g: MethodGen,
+        fileScope: FileScope,
+    ) {
         g.enterScope()
         for (propDecl in props) {
             val init = propDecl.initializer ?: continue
@@ -555,10 +691,15 @@ class IRGen(
     }
 
     /** 包前缀限定名：`com.example` + `Main` → `com.example.Main`；默认包原样返回。 */
-    private fun qualify(pkg: String, simpleName: String): String =
-        if (pkg.isEmpty()) simpleName else "$pkg.$simpleName"
+    private fun qualify(
+        pkg: String,
+        simpleName: String,
+    ): String = if (pkg.isEmpty()) simpleName else "$pkg.$simpleName"
 
-    private fun getterName(propName: String, type: IrType): String {
+    private fun getterName(
+        propName: String,
+        type: IrType,
+    ): String {
         val cap = propName.replaceFirstChar { it.uppercaseChar() }
         val bool = type is IrType.Basic && type.name == "Boolean"
         return if (bool) "is$cap" else "get$cap"
@@ -567,8 +708,10 @@ class IRGen(
     private fun setterName(propName: String): String = "set${propName.replaceFirstChar { it.uppercaseChar() }}"
 
     /** AST 类型 → IrType（经 TypeResolver；仅供 YxIs/YxAs/catch 使用）。 */
-    fun resolveIrType(type: YxType, fileScope: FileScope): IrType =
-        TypeBridge.toIr(typeResolver.resolve(type, fileScope) ?: SemaType.ErrorT)
+    fun resolveIrType(
+        type: YxType,
+        fileScope: FileScope,
+    ): IrType = TypeBridge.toIr(typeResolver.resolve(type, fileScope) ?: SemaType.ErrorT)
 
     /** 生成 Lambda 合成方法并返回其引用（ExprGen 回调）。 */
     fun newLambdaMethod(
@@ -578,17 +721,18 @@ class IRGen(
         isStatic: Boolean,
         owner: IrClass,
     ): IrMethod {
-        val method = IrMethod(
-            name = name,
-            params = params,
-            returnType = returnType,
-            isStatic = isStatic,
-            isConstructor = false,
-            isAsync = false,
-            isOverride = false,
-            isSynthetic = true,
-            owner = owner,
-        )
+        val method =
+            IrMethod(
+                name = name,
+                params = params,
+                returnType = returnType,
+                isStatic = isStatic,
+                isConstructor = false,
+                isAsync = false,
+                isOverride = false,
+                isSynthetic = true,
+                owner = owner,
+            )
         owner.methods.add(method)
         return method
     }
@@ -607,31 +751,33 @@ class IRGen(
     ): IrMethod {
         val name = "async\$${asyncBlockCounter++}"
         val paramIrs = captures.map { (name, sym) -> IrParam(name, captureIrType(sym)) }
-        val facade = IrMethod(
-            name = name,
-            params = paramIrs,
-            returnType = jvmClassType("yux.async.Task"),
-            isStatic = g.method.isStatic,
-            isConstructor = false,
-            isAsync = true,
-            isOverride = false,
-            isSynthetic = true,
-            visibility = yux.compiler.ast.YxVisibility.PUBLIC,
-            owner = g.owner,
-        )
+        val facade =
+            IrMethod(
+                name = name,
+                params = paramIrs,
+                returnType = jvmClassType("yux.async.Task"),
+                isStatic = g.method.isStatic,
+                isConstructor = false,
+                isAsync = true,
+                isOverride = false,
+                isSynthetic = true,
+                visibility = yux.compiler.ast.YxVisibility.PUBLIC,
+                owner = g.owner,
+            )
         facade.isLaunchedAsync = true
-        val suspendEntry = IrMethod(
-            name = "$name\$suspend",
-            params = paramIrs + IrParam("continuation", jvmClassType("yux.async.Continuation")),
-            returnType = IrType.ANY,
-            isStatic = g.method.isStatic,
-            isConstructor = false,
-            isAsync = true,
-            isOverride = false,
-            isSynthetic = true,
-            visibility = yux.compiler.ast.YxVisibility.PUBLIC,
-            owner = g.owner,
-        )
+        val suspendEntry =
+            IrMethod(
+                name = "$name\$suspend",
+                params = paramIrs + IrParam("continuation", jvmClassType("yux.async.Continuation")),
+                returnType = IrType.ANY,
+                isStatic = g.method.isStatic,
+                isConstructor = false,
+                isAsync = true,
+                isOverride = false,
+                isSynthetic = true,
+                visibility = yux.compiler.ast.YxVisibility.PUBLIC,
+                owner = g.owner,
+            )
         g.owner.methods.add(facade)
         g.owner.methods.add(suspendEntry)
         // 立即生成块体（AsyncCpsLowering 读取 facade.body 降级为状态机；外层方法体生成
@@ -646,20 +792,29 @@ class IRGen(
     }
 
     /** 捕获符号 → IR 类型（async{} 合成函数参数，T-M14）。 */
-    private fun captureIrType(sym: Symbol): IrType = TypeBridge.toIr(when (sym) {
-        is yux.compiler.sema.VariableSymbol -> sym.type ?: SemaType.ErrorT
-        is yux.compiler.sema.ParameterSymbol -> sym.type
-        else -> SemaType.ErrorT
-    })
+    private fun captureIrType(sym: Symbol): IrType =
+        TypeBridge.toIr(
+            when (sym) {
+                is yux.compiler.sema.VariableSymbol -> sym.type ?: SemaType.ErrorT
+                is yux.compiler.sema.ParameterSymbol -> sym.type
+                else -> SemaType.ErrorT
+            },
+        )
 
     private var asyncBlockCounter = 0
 
     /** 进入 StmtGen（单向入口；语句直接发射到当前发射目标）。 */
-    fun genStmt(stmt: yux.compiler.ast.YxStmt, g: MethodGen, fileScope: FileScope): Unit =
-        StmtGen(this).gen(stmt, g, fileScope)
+    fun genStmt(
+        stmt: yux.compiler.ast.YxStmt,
+        g: MethodGen,
+        fileScope: FileScope,
+    ): Unit = StmtGen(this).gen(stmt, g, fileScope)
 
-    fun genExpr(expr: yux.compiler.ast.YxExpr, g: MethodGen, fileScope: FileScope): IrExpr =
-        ExprGen(this, resolver).gen(expr, g, fileScope)
+    fun genExpr(
+        expr: yux.compiler.ast.YxExpr,
+        g: MethodGen,
+        fileScope: FileScope,
+    ): IrExpr = ExprGen(this, resolver).gen(expr, g, fileScope)
 }
 
 /**
@@ -689,7 +844,10 @@ class MethodGen(
 
     fun newLabel(): IrLabel = IrLabel("L${labelCounter++}")
 
-    fun newLocal(name: String, type: IrType): IrLocal = IrLocal(name, type, localIndex++)
+    fun newLocal(
+        name: String,
+        type: IrType,
+    ): IrLocal = IrLocal(name, type, localIndex++)
 
     fun enterScope() {
         scopes.addLast(mutableMapOf())
@@ -699,7 +857,10 @@ class MethodGen(
         scopes.removeLast()
     }
 
-    fun declareLocal(name: String, local: IrLocal) {
+    fun declareLocal(
+        name: String,
+        local: IrLocal,
+    ) {
         scopes.last()[name] = local
     }
 
@@ -710,7 +871,10 @@ class MethodGen(
         return null
     }
 
-    fun pushLoop(continueLabel: IrLabel, breakLabel: IrLabel) {
+    fun pushLoop(
+        continueLabel: IrLabel,
+        breakLabel: IrLabel,
+    ) {
         loops.addLast(continueLabel to breakLabel)
     }
 
@@ -730,7 +894,10 @@ class MethodGen(
     var currentLine: Int? = null
 
     /** 临时切换发射目标（Try/catch/finally 子块），块结束后恢复。 */
-    fun <T> withTarget(target: MutableList<IrStmt>, block: () -> T): T {
+    fun <T> withTarget(
+        target: MutableList<IrStmt>,
+        block: () -> T,
+    ): T {
         val prev = emitTarget
         emitTarget = target
         try {

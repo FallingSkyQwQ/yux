@@ -223,4 +223,139 @@ class StmtEmitterBugfixTest {
         """.trimIndent())
         assertEquals("10", out)
     }
+
+    // ── 缺陷修复：when 语句 + is 分支内 return（密封 subject，无 else）────────────
+
+    @Test
+    fun `when statement with return in is branches falls off end safely`() {
+        // 全分支 return 的 when 语句：尾部 Label 曾是悬空 goto 目标（goto 指向代码末尾
+        // → VerifyError "StackMapTable error: bad offset"）；现补发类型匹配的兜底返回。
+        val out = BackendTestSupport.compileAndRun("""
+            sealed Shape {
+            }
+            Circle extends Shape {
+                r:Int
+            }
+            Square extends Shape {
+                side:Int
+            }
+            fun describe(s:Shape):String {
+                when s {
+                    is Circle -> return "circle " + s.r
+                    is Square -> return "square " + s.side
+                }
+            }
+            fun main() {
+                print describe(Circle(2))
+                print describe(Square(3))
+            }
+        """.trimIndent())
+        assertEquals("circle 2square 3", out)
+    }
+
+    // ── 缺陷修复：super 调用经优化器后保持 INVOKESPECIAL（S-8.7.1）──────────────
+
+    @Test
+    fun `super call dispatches to parent after optimizer`() {
+        // BasicOpt.foldExpr 重建 Invoke 时曾丢失 isSuper → invokevirtual 派发到子类
+        // 覆盖方法（同签名）→ 无限递归 StackOverflow。基类方法先被调用同样触发。
+        val out = BackendTestSupport.compileAndRun("""
+            Animal {
+                fun speak():String = "generic"
+            }
+            Dog extends Animal {
+                fun speak():String = super.speak() + " dog"
+            }
+            fun main() {
+                a = Animal()
+                d = Dog()
+                print a.speak()
+                print d.speak()
+            }
+        """.trimIndent())
+        assertEquals("genericgeneric dog", out)
+    }
+
+    @Test
+    fun `super call works when parent return type differs from child`() {
+        // 父类推断 String、子类显式 String 时同签名也必须非虚拟调用父实现
+        val out = BackendTestSupport.compileAndRun("""
+            Animal {
+                fun name():String = "animal"
+            }
+            Dog extends Animal {
+                fun name():String = super.name() + "!"
+            }
+            fun main() {
+                d = Dog()
+                print d.name()
+            }
+        """.trimIndent())
+        assertEquals("animal!", out)
+    }
+
+    // ── 缺陷修复：访问器 value/set 绑定（S-5.2.3）────────────────────────────────
+
+    @Test
+    fun `accessor value and set bindings work`() {
+        // getter 内 value = backing field；setter 内 value 可写、set = 传入新值
+        val out = BackendTestSupport.compileAndRun("""
+            Thermostat {
+                temperature:Int = 20
+                display:Int {
+                    get { return value }
+                    set { value = set }
+                }
+                limit:Int {
+                    get { return value }
+                    set { value = 26 }
+                }
+            }
+            fun main() {
+                t = Thermostat(20, 0, 0)
+                t.display = 99
+                print t.display
+                t.limit = 99
+                print t.limit
+                print t.temperature
+            }
+        """.trimIndent())
+        assertEquals("992620", out)
+    }
+
+    @Test
+    fun `top level accessor value binding works`() {
+        // 顶层属性（无初始化器，字段默认 0）：getter 读 value、setter 写 value 且用 set
+        val out = BackendTestSupport.compileAndRun("""
+            counter:Int {
+                get { return value }
+                set { value = set * 2 }
+            }
+            fun main() {
+                counter = 21
+                print counter
+            }
+        """.trimIndent())
+        assertEquals("42", out)
+    }
+
+    // ── 缺陷修复：基础类型（String/Int）用户扩展函数 ────────────────────────────
+
+    @Test
+    fun `extension functions on basic types resolve`() {
+        // checkInstanceCall 的 Basic 分支此前从不查 lookupExtensionCall
+        val out = BackendTestSupport.compileAndRun("""
+            fun String.shout(suffix:String = "!"):String {
+                return this + suffix
+            }
+            fun Int.squared():Int {
+                return this * this
+            }
+            fun main() {
+                print "hi".shout()
+                print 7.squared()
+            }
+        """.trimIndent())
+        assertEquals("hi!49", out)
+    }
 }

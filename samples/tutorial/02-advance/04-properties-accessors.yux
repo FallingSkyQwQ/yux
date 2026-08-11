@@ -1,14 +1,20 @@
-// 02-进阶 · 第 4 章：属性访问器（自定义 get/set）
+// 02-进阶 · 第 4 章：属性访问器（value = backing field，set = 新值）
 Thermostat {
     temperature:Int = 20
     display:Int {
-        get { return this.temperature }
-        set { this.temperature = 26 }
+        get { return value }
+        set { value = set }
+    }
+    limit:Int {
+        get { return value }
+        set { value = 26 }
     }
 }
 fun main() {
-    t = Thermostat(20, 0)
-    println t.temperature
+    t = Thermostat(20, 0, 0)
     t.display = 99
+    println t.display
+    t.limit = 99
+    println t.limit
     println t.temperature
 }

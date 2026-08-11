@@ -95,6 +95,22 @@ class PrattParserTest {
     }
 
     @Test
+    fun `block lambda arg then chained member call applies to call result`() {
+        // `xs.map { }.first()`：尾随 `.first()` 应作用于 map 的结果，而非块 lambda 本身
+        val ast = dump(inFun("n = xs.map { it * 2 }.first()"))
+        assertTrue(ast.contains("Call(Get(CallNP(Get(Id(xs), map), [BlockLambda"), ast)
+        assertTrue(!ast.contains("BlockLambda{.*}\\.first"), "`.first()` 不应挂到块 lambda 上: $ast")
+    }
+
+    @Test
+    fun `block lambda arg then chained block lambda call`() {
+        // `xs.map { }.map { }`：连续块 lambda 实参
+        val ast = dump(inFun("ys = xs.map { it * 2 }.map { it + 1 }"))
+        assertTrue(ast.contains("CallNP(Get(CallNP(Get(Id(xs), map), [BlockLambda"), ast)
+        assertTrue(ast.contains("CallNP(Get(CallNP(Get(Id(xs), map), [BlockLambda{Binary(*, Id(it), Int(2))}]), map), [BlockLambda"), ast)
+    }
+
+    @Test
     fun `range expression in for loop`() {
         val ast = dump(inFun("for i in 0..10 { print i }"))
         assertTrue(ast.contains("Range(Int(0), Int(10))"), ast)

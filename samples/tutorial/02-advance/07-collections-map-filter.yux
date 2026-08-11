@@ -1,4 +1,4 @@
-// 02-进阶 · 第 7 章：集合变换（map/filter）
+// 02-进阶 · 第 7 章：集合变换（map/filter + 链式调用）
 fun main() {
     xs = List Int()
     xs.add(1); xs.add(2); xs.add(3)
@@ -6,4 +6,6 @@ fun main() {
     println doubled.sum()
     evens = xs.filter { (it as Int) % 2 == 0 }
     println evens.size
+    first = xs.map { (it as Int) + 1 }.first() as Int
+    println first
 }

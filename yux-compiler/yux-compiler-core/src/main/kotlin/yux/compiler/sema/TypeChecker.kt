@@ -1,5 +1,6 @@
 package yux.compiler.sema
 
+import yux.compiler.ast.SourceSpan
 import yux.compiler.ast.YxAccessor
 import yux.compiler.ast.YxAccessorKind
 import yux.compiler.ast.YxAs
@@ -35,8 +36,8 @@ import yux.compiler.ast.YxMemberAccess
 import yux.compiler.ast.YxNode
 import yux.compiler.ast.YxNullLiteral
 import yux.compiler.ast.YxNullable
-import yux.compiler.ast.YxParen
 import yux.compiler.ast.YxParallelBlock
+import yux.compiler.ast.YxParen
 import yux.compiler.ast.YxProperty
 import yux.compiler.ast.YxRange
 import yux.compiler.ast.YxRawStringLiteral
@@ -60,7 +61,6 @@ import yux.compiler.ast.YxWhenCondition
 import yux.compiler.ast.YxWhenExpr
 import yux.compiler.ast.YxWhenExprBranch
 import yux.compiler.ast.YxWhile
-import yux.compiler.ast.SourceSpan
 import yux.compiler.diag.DiagnosticSink
 import yux.compiler.diag.ErrorCodes
 import yux.compiler.lexer.SourcePosition
@@ -141,7 +141,10 @@ class TypeChecker(
 
     // ── 声明 ────────────────────────────────────────────────────────────────
 
-    private fun checkClass(file: FileScope, sym: YxClassSymbol) {
+    private fun checkClass(
+        file: FileScope,
+        sym: YxClassSymbol,
+    ) {
         val saved = currentClass
         currentClass = sym
         for (prop in sym.properties()) {
@@ -157,9 +160,13 @@ class TypeChecker(
     }
 
     /** 类初始化块（S-5.2.5：构造时先执行属性初始化，再执行初始化块）。 */
-    private fun classInitBlocks(file: FileScope, sym: YxClassSymbol): List<YxBlock> {
+    private fun classInitBlocks(
+        file: FileScope,
+        sym: YxClassSymbol,
+    ): List<YxBlock> {
         val decls = file.decls
         val initBlocks = mutableListOf<YxBlock>()
+
         fun collect(members: List<Any>) {
             for (m in members) {
                 if (m is YxInitBlock) initBlocks += m.body
@@ -175,7 +182,12 @@ class TypeChecker(
         return initBlocks
     }
 
-    private fun checkProperty(file: FileScope, owner: YxClassSymbol, prop: PropertySymbol, decl: YxProperty) {
+    private fun checkProperty(
+        file: FileScope,
+        owner: YxClassSymbol,
+        prop: PropertySymbol,
+        decl: YxProperty,
+    ) {
         val declared = prop.type
         val initType = decl.initializer?.let { typeOf(it, expected = declared) }
         if (declared != null && initType != null && !initType.isError) {
@@ -198,7 +210,11 @@ class TypeChecker(
         declTypes[decl] = prop.type ?: SemaType.ErrorT
     }
 
-    private fun checkAccessor(file: FileScope, propertyType: SemaType, accessor: YxAccessor) {
+    private fun checkAccessor(
+        file: FileScope,
+        propertyType: SemaType,
+        accessor: YxAccessor,
+    ) {
         enterFunctionScope()
         val savedReturn = currentReturnType
         when (accessor.kind) {
@@ -209,15 +225,17 @@ class TypeChecker(
                 checkStatements(accessor.body)
                 val last = accessor.body.statements.lastOrNull()
                 val lastValue = (last as? YxReturn)?.value
-                val ret: SemaType = when {
-                    last is YxExprStmt -> typeOf(last.expr)
-                    lastValue != null -> typeOf(lastValue)
-                    else -> SemaType.UnitT
-                }
+                val ret: SemaType =
+                    when {
+                        last is YxExprStmt -> typeOf(last.expr)
+                        lastValue != null -> typeOf(lastValue)
+                        else -> SemaType.UnitT
+                    }
                 if (!ret.isError) {
                     inference.expectReturn(ret, propertyType, accessor.span.start, "getter 返回")
                 }
             }
+
             YxAccessorKind.SET -> {
                 // S-5.2.3：`value` 指代 backing field（可写）；`set` 指代新值（只读）
                 varStack.last()["value"] = VariableSymbol("value", propertyType, isVal = false, null).also { it.definitelyAssigned = true }
@@ -230,7 +248,11 @@ class TypeChecker(
         leaveFunctionScope()
     }
 
-    private fun checkTopLevelProperty(file: FileScope, prop: PropertySymbol, decl: YxProperty) {
+    private fun checkTopLevelProperty(
+        file: FileScope,
+        prop: PropertySymbol,
+        decl: YxProperty,
+    ) {
         val declared = prop.type
         val initType = decl.initializer?.let { typeOf(it, expected = declared) }
         if (declared != null && initType != null && !initType.isError) {
@@ -252,7 +274,11 @@ class TypeChecker(
         declTypes[decl] = prop.type ?: SemaType.ErrorT
     }
 
-    private fun checkFunction(file: FileScope, fn: FunctionSymbol, decl: YxFunction) {
+    private fun checkFunction(
+        file: FileScope,
+        fn: FunctionSymbol,
+        decl: YxFunction,
+    ) {
         // 预扫赋值目标：决定智能转型是否允许（02-§7.3）
         val reassigned = AstScan.assignmentTargetNames(decl.body)
         enterFunctionScope(reassigned)
@@ -279,29 +305,41 @@ class TypeChecker(
         // 扩展函数（M9）：receiver 作为隐式 this（体内 `this.xxx` 访问）
         val savedReceiver = currentReceiver
         currentReceiver = fn.receiverType
-        val bodyType: SemaType? = when (val body = decl.body) {
-            is YxFunctionBody.YxExpressionBody -> {
-                // async fun 表达式体（`async fun f() = await x`）为 async 上下文（T-M14）
-                val t = if (fn.isAsync) withAsyncContext { typeOf(body.expr, expected = declaredReturn) } else typeOf(body.expr, expected = declaredReturn)
-                inference.expectReturn(t, declaredReturn, body.span.start, "函数 '${fn.name}'")
-            }
-            is YxFunctionBody.YxBlockBody -> {
-                // async fun 块体为 async 上下文（await 合法、async fun 调用为挂起调用）
-                if (fn.isAsync) withAsyncContext { checkStatements(body.block) } else checkStatements(body.block)
-                // S-5.5.2：声明非 Unit 返回的块体必须包含 return
-                if (declaredReturn !is SemaType.InferenceVar &&
-                    !TypeAssignability.sameBase(declaredReturn, SemaType.UnitT) &&
-                    !blockHasReturn(body.block)
-                ) {
-                    diagnostics.error(
-                        "函数 '${fn.name}' 声明返回 ${declaredReturn.render()} 但缺少 return 语句",
-                        decl.span.start,
-                        ErrorCodes.RETURN_TYPE_MISMATCH,
-                    )
+        val bodyType: SemaType? =
+            when (val body = decl.body) {
+                is YxFunctionBody.YxExpressionBody -> {
+                    // async fun 表达式体（`async fun f() = await x`）为 async 上下文（T-M14）
+                    val t =
+                        if (fn.isAsync) {
+                            withAsyncContext {
+                                typeOf(
+                                    body.expr,
+                                    expected = declaredReturn,
+                                )
+                            }
+                        } else {
+                            typeOf(body.expr, expected = declaredReturn)
+                        }
+                    inference.expectReturn(t, declaredReturn, body.span.start, "函数 '${fn.name}'")
                 }
-                null
+
+                is YxFunctionBody.YxBlockBody -> {
+                    // async fun 块体为 async 上下文（await 合法、async fun 调用为挂起调用）
+                    if (fn.isAsync) withAsyncContext { checkStatements(body.block) } else checkStatements(body.block)
+                    // S-5.5.2：声明非 Unit 返回的块体必须包含 return
+                    if (declaredReturn !is SemaType.InferenceVar &&
+                        !TypeAssignability.sameBase(declaredReturn, SemaType.UnitT) &&
+                        !blockHasReturn(body.block)
+                    ) {
+                        diagnostics.error(
+                            "函数 '${fn.name}' 声明返回 ${declaredReturn.render()} 但缺少 return 语句",
+                            decl.span.start,
+                            ErrorCodes.RETURN_TYPE_MISMATCH,
+                        )
+                    }
+                    null
+                }
             }
-        }
         // 返回类型求解：表达式体取表达式类型；块体未显式返回 → Unit（S-5.5.2）
         if (declaredReturn is SemaType.InferenceVar && declaredReturn.solution == null) {
             declaredReturn.solution = bodyType ?: SemaType.UnitT
@@ -344,30 +382,66 @@ class TypeChecker(
                 varStack.removeLast()
                 smartCast.exitBlock()
             }
-            is YxVarDecl -> checkVarDecl(stmt)
-            is YxAssign -> checkAssign(stmt)
+
+            is YxVarDecl -> {
+                checkVarDecl(stmt)
+            }
+
+            is YxAssign -> {
+                checkAssign(stmt)
+            }
+
             is YxExprStmt -> {
                 typeOf(stmt.expr)
             }
-            is YxIf -> checkIf(stmt)
-            is YxWhen -> checkWhen(stmt)
-            is YxFor -> checkFor(stmt)
-            is YxWhile -> checkWhile(stmt)
-            is YxReturn -> checkReturn(stmt)
+
+            is YxIf -> {
+                checkIf(stmt)
+            }
+
+            is YxWhen -> {
+                checkWhen(stmt)
+            }
+
+            is YxFor -> {
+                checkFor(stmt)
+            }
+
+            is YxWhile -> {
+                checkWhile(stmt)
+            }
+
+            is YxReturn -> {
+                checkReturn(stmt)
+            }
+
             is YxBreak -> {
                 if (loopDepth == 0) {
                     diagnostics.error("break 在循环外（S-6.4.3）", stmt.span.start, ErrorCodes.BREAK_OUTSIDE_LOOP)
                 }
             }
+
             is YxContinue -> {
                 if (loopDepth == 0) {
                     diagnostics.error("continue 在循环外（S-6.4.3）", stmt.span.start, ErrorCodes.BREAK_OUTSIDE_LOOP)
                 }
             }
-            is YxTry -> checkTry(stmt)
-            is YxAsyncBlock -> withAsyncContext { checkStatements(stmt.body) }
-            is YxParallelBlock -> checkStatements(stmt.body)
-            is YxUnsafeBlock -> checkStatements(stmt.body)
+
+            is YxTry -> {
+                checkTry(stmt)
+            }
+
+            is YxAsyncBlock -> {
+                withAsyncContext { checkStatements(stmt.body) }
+            }
+
+            is YxParallelBlock -> {
+                checkStatements(stmt.body)
+            }
+
+            is YxUnsafeBlock -> {
+                checkStatements(stmt.body)
+            }
         }
     }
 
@@ -427,12 +501,13 @@ class TypeChecker(
         // （数字提升 / String 拼接，S-7.5.1/S-7.6.1），结果类型须可赋值回目标。
         // `s += 1`（String 拼接）合法；`x += true`（Int+Boolean）报 INVALID_OPERATOR_OPERAND。
         val targetType = expectedAssignTargetType(stmt.target)
-        val valueType = if (stmt.op != "=" && targetType != null) {
-            val narrowed = typeOf(stmt.value, expected = targetType)
-            binaryOpResult(stmt.op.dropLast(1), targetType, narrowed, stmt.span)
-        } else {
-            typeOf(stmt.value, expected = targetType)
-        }
+        val valueType =
+            if (stmt.op != "=" && targetType != null) {
+                val narrowed = typeOf(stmt.value, expected = targetType)
+                binaryOpResult(stmt.op.dropLast(1), targetType, narrowed, stmt.span)
+            } else {
+                typeOf(stmt.value, expected = targetType)
+            }
         when (val target = stmt.target) {
             is YxIdentifier -> {
                 val local = lookupVariable(target.name)
@@ -462,6 +537,7 @@ class TypeChecker(
                 }
                 resolvedRefs[target] = prop
             }
+
             is YxMemberAccess -> {
                 val receiverType = typeOf(target.receiver)
                 if (receiverType.isError) return
@@ -492,6 +568,7 @@ class TypeChecker(
                     inference.expectAssignable(valueType, writable as SemaType, stmt.span.start, "赋值 '${target.name}'")
                 }
             }
+
             is YxIndexExpr -> {
                 val elemType = typeOfIndexExpr(target)
                 typeOf(target.index)
@@ -499,46 +576,73 @@ class TypeChecker(
                     inference.expectAssignable(valueType, elemType, stmt.span.start, "索引赋值 '${target.base}'")
                 }
             }
-            else -> diagnostics.error("赋值目标不合法（S-6.1.1）", stmt.span.start, ErrorCodes.ILLEGAL_ASSIGN_TARGET)
+
+            else -> {
+                diagnostics.error("赋值目标不合法（S-6.1.1）", stmt.span.start, ErrorCodes.ILLEGAL_ASSIGN_TARGET)
+            }
         }
     }
 
     /** 赋值目标的期望类型（供字面量/null 收窄，S-7.5.4/S-8.1）。 */
-    private fun expectedAssignTargetType(target: YxExpr): SemaType? = when (target) {
-        is YxIdentifier -> lookupVariable(target.name)?.type
-        is YxMemberAccess -> memberLookup(typeOf(target.receiver), target.name)?.let { (t, _, _) -> t }
-        is YxIndexExpr -> typeOfIndexExpr(target)
-        else -> null
-    }
+    private fun expectedAssignTargetType(target: YxExpr): SemaType? =
+        when (target) {
+            is YxIdentifier -> lookupVariable(target.name)?.type
+            is YxMemberAccess -> memberLookup(typeOf(target.receiver), target.name)?.let { (t, _, _) -> t }
+            is YxIndexExpr -> typeOfIndexExpr(target)
+            else -> null
+        }
 
     /** 成员可写性：null=不存在；false=只读；SemaType=可写且目标类型。 */
-    private fun memberWritability(receiver: SemaType, name: String): Any? = when (receiver) {
-        is SemaType.Declared -> {
-            val sym = receiver.symbol
-            when (sym) {
-                is YxClassSymbol -> {
-                    val p = sym.propertyIncludingSuper(name) ?: return null
-                    if (p.isVal) false else p.type ?: SemaType.ErrorT
+    private fun memberWritability(
+        receiver: SemaType,
+        name: String,
+    ): Any? =
+        when (receiver) {
+            is SemaType.Declared -> {
+                val sym = receiver.symbol
+                when (sym) {
+                    is YxClassSymbol -> {
+                        val p = sym.propertyIncludingSuper(name) ?: return null
+                        if (p.isVal) false else p.type ?: SemaType.ErrorT
+                    }
+
+                    is JvmClassSymbol -> {
+                        if (sym.propertyType(name) == null) {
+                            null
+                        } else if (!sym.propertySettable(name)) {
+                            false
+                        } else {
+                            sym.propertyType(name)
+                        }
+                    }
+
+                    else -> {
+                        null
+                    }
                 }
-                is JvmClassSymbol -> {
-                    if (sym.propertyType(name) == null) null
-                    else if (!sym.propertySettable(name)) false
-                    else sym.propertyType(name)
+            }
+
+            is SemaType.Basic -> {
+                if (jvmForBasic(receiver.name) == null) {
+                    null
+                } else {
+                    memberWritability(jvmForBasic(receiver.name)!!.let { SemaType.Declared(it, emptyList(), receiver.nullable) }, name)
                 }
-                else -> null
+            }
+
+            else -> {
+                null
             }
         }
-        is SemaType.Basic -> {
-            if (jvmForBasic(receiver.name) == null) null
-            else memberWritability(jvmForBasic(receiver.name)!!.let { SemaType.Declared(it, emptyList(), receiver.nullable) }, name)
-        }
-        else -> null
-    }
 
     private fun checkIf(stmt: YxIf) {
         val condType = typeOf(stmt.condition)
         if (!condType.isError && !TypeAssignability.sameBase(condType, SemaType.BOOLEAN)) {
-            diagnostics.error("if 条件必须是 Boolean（S-6.2.1），实际 ${condType.render()}", stmt.condition.span.start, ErrorCodes.CONDITION_NOT_BOOLEAN)
+            diagnostics.error(
+                "if 条件必须是 Boolean（S-6.2.1），实际 ${condType.render()}",
+                stmt.condition.span.start,
+                ErrorCodes.CONDITION_NOT_BOOLEAN,
+            )
         }
         val base = smartCast.snapshot()
         val assignedBefore = definiteAssignmentSnapshot()
@@ -578,7 +682,12 @@ class TypeChecker(
     }
 
     /** 分支合并：两分支均赋值 → 已赋值；无 else 分支时按「未保证」处理。 */
-    private fun mergeDefiniteAssignment(before: Map<String, Boolean>, thenS: Map<String, Boolean>, elseS: Map<String, Boolean>, hasElse: Boolean) {
+    private fun mergeDefiniteAssignment(
+        before: Map<String, Boolean>,
+        thenS: Map<String, Boolean>,
+        elseS: Map<String, Boolean>,
+        hasElse: Boolean,
+    ) {
         for (i in varStack.indices.reversed()) {
             for ((name, sym) in varStack[i]) {
                 val b = before[name] ?: false
@@ -589,9 +698,15 @@ class TypeChecker(
         }
     }
 
-    private fun applyConditionCasts(condition: YxExpr, thenBranch: Boolean) {
+    private fun applyConditionCasts(
+        condition: YxExpr,
+        thenBranch: Boolean,
+    ) {
         when (condition) {
-            is YxParen -> applyConditionCasts(condition.expr, thenBranch)
+            is YxParen -> {
+                applyConditionCasts(condition.expr, thenBranch)
+            }
+
             is YxIs -> {
                 val name = (condition.expr as? YxIdentifier)?.name ?: return
                 val declared = lookupVariable(name)?.type ?: return
@@ -616,24 +731,41 @@ class TypeChecker(
                     )
                 }
             }
-            is YxBinary -> when (condition.op) {
-                // `&&` 链：then 分支左右均为真 → 先应用左侧转型，右侧在左侧转型生效下检查
-                "&&" -> if (thenBranch) {
-                    applyConditionCasts(condition.left, true)
-                    applyConditionCasts(condition.right, true)
+
+            is YxBinary -> {
+                when (condition.op) {
+                    // `&&` 链：then 分支左右均为真 → 先应用左侧转型，右侧在左侧转型生效下检查
+                    "&&" -> {
+                        if (thenBranch) {
+                            applyConditionCasts(condition.left, true)
+                            applyConditionCasts(condition.right, true)
+                        }
+                    }
+
+                    // `||` 链：else 分支左右均为假 → 先应用左侧反向转型，再应用右侧反向转型
+                    "||" -> {
+                        if (!thenBranch) {
+                            applyConditionCasts(condition.left, false)
+                            applyConditionCasts(condition.right, false)
+                        }
+                    }
+
+                    else -> {
+                        applyNullConditionCast(condition, thenBranch)
+                    }
                 }
-                // `||` 链：else 分支左右均为假 → 先应用左侧反向转型，再应用右侧反向转型
-                "||" -> if (!thenBranch) {
-                    applyConditionCasts(condition.left, false)
-                    applyConditionCasts(condition.right, false)
-                }
-                else -> applyNullConditionCast(condition, thenBranch)
             }
-            else -> applyNullConditionCast(condition, thenBranch)
+
+            else -> {
+                applyNullConditionCast(condition, thenBranch)
+            }
         }
     }
 
-    private fun applyNullConditionCast(condition: YxExpr, thenBranch: Boolean) {
+    private fun applyNullConditionCast(
+        condition: YxExpr,
+        thenBranch: Boolean,
+    ) {
         smartCast.applyNullCondition(
             condition,
             thenBranch,
@@ -670,6 +802,7 @@ class TypeChecker(
                         }
                     }
                 }
+
                 is YxExprCondition -> {
                     // when 分支条件与 subject 匹配（S-6.3），null 字面量以 subject 为期望
                     val condType = typeOf(cond.expr, expected = subjectType)
@@ -681,6 +814,7 @@ class TypeChecker(
                         )
                     }
                 }
+
                 is YxElseCondition -> {
                     // else 分支：subject == null 时 subject 为非空
                     if (subjectType.nullable) {
@@ -699,7 +833,10 @@ class TypeChecker(
     // ── when 表达式（T-M12）────────────────────────────────────────────────
 
     /** when 表达式：subject 检查 + 分支智能转型 + 分支体公共类型（镜像 typeOfIfExpr）。 */
-    private fun typeOfWhenExpr(expr: YxWhenExpr, expected: SemaType?): SemaType {
+    private fun typeOfWhenExpr(
+        expr: YxWhenExpr,
+        expected: SemaType?,
+    ): SemaType {
         val subjectType = typeOf(expr.subject)
         val branchTypes = mutableListOf<SemaType>()
         for (branch in expr.branches) {
@@ -721,6 +858,7 @@ class TypeChecker(
                         }
                     }
                 }
+
                 is YxExprCondition -> {
                     val condType = typeOf(cond.expr, expected = subjectType)
                     if (!condType.isError && !subjectType.isError && !TypeAssignability.sameBase(condType, subjectType)) {
@@ -731,6 +869,7 @@ class TypeChecker(
                         )
                     }
                 }
+
                 is YxElseCondition -> {
                     if (subjectType.nullable) {
                         val name = subjectAsVariable(expr.subject)
@@ -746,7 +885,10 @@ class TypeChecker(
     }
 
     /** 多分支公共类型（镜像 typeOfIfExpr 的合并规则：Nothing/Error 传播 + 期望优先）。 */
-    private fun commonTypeOf(types: List<SemaType>, expected: SemaType?): SemaType {
+    private fun commonTypeOf(
+        types: List<SemaType>,
+        expected: SemaType?,
+    ): SemaType {
         if (expected != null) return expected
         val resolved = types.map { SemaType.resolveVar(it) }
         var acc: SemaType? = null
@@ -772,7 +914,12 @@ class TypeChecker(
      * - 可空密封 subject 无 else → E0034（null 只能由 else 覆盖）；
      * - 非密封 subject 的 when **表达式**无 else → E0034（when 语句允许直落，S-6.3.2）。
      */
-    private fun checkWhenExhaustiveness(start: SourcePosition, conditions: List<YxWhenCondition>, subjectType: SemaType, isExpression: Boolean) {
+    private fun checkWhenExhaustiveness(
+        start: SourcePosition,
+        conditions: List<YxWhenCondition>,
+        subjectType: SemaType,
+        isExpression: Boolean,
+    ) {
         val resolved = SemaType.resolveVar(subjectType)
         if (resolved.isError) return
         val hasElse = conditions.any { it is YxElseCondition }
@@ -803,7 +950,11 @@ class TypeChecker(
     }
 
     /** 密封基类未被 `is 子类` 分支覆盖的直接子类；命中基类自身（is 基类）视为穷尽。 */
-    private fun missingSealedSubtypes(conditions: List<YxWhenCondition>, subjectType: SemaType, sealedSym: YxClassSymbol): List<YxClassSymbol> {
+    private fun missingSealedSubtypes(
+        conditions: List<YxWhenCondition>,
+        subjectType: SemaType,
+        sealedSym: YxClassSymbol,
+    ): List<YxClassSymbol> {
         val covered = mutableSetOf<YxClassSymbol>()
         for (c in conditions) {
             val isc = c as? YxIsCondition ?: continue
@@ -816,7 +967,8 @@ class TypeChecker(
 
     /** 密封类的直接子类（superType 直接解析到该符号的 Yux 类，跨文件收集）。 */
     private fun directSubtypesOf(sealedSym: YxClassSymbol): List<YxClassSymbol> =
-        symbolTable.files.flatMap { it.types.values }
+        symbolTable.files
+            .flatMap { it.types.values }
             .filterIsInstance<YxClassSymbol>()
             .filter { (it.superType as? SemaType.Declared)?.symbol === sealedSym }
 
@@ -848,7 +1000,11 @@ class TypeChecker(
     private fun checkWhile(stmt: YxWhile) {
         val condType = typeOf(stmt.condition)
         if (!condType.isError && !TypeAssignability.sameBase(condType, SemaType.BOOLEAN)) {
-            diagnostics.error("while 条件必须是 Boolean（S-6.2.1），实际 ${condType.render()}", stmt.condition.span.start, ErrorCodes.CONDITION_NOT_BOOLEAN)
+            diagnostics.error(
+                "while 条件必须是 Boolean（S-6.2.1），实际 ${condType.render()}",
+                stmt.condition.span.start,
+                ErrorCodes.CONDITION_NOT_BOOLEAN,
+            )
         }
         loopDepth++
         val assignedBefore = definiteAssignmentSnapshot()
@@ -868,14 +1024,15 @@ class TypeChecker(
 
     /** 块体内是否出现 `return` 语句（S-5.5.2 缺少返回检查）。 */
     private fun blockHasReturn(block: YxBlock): Boolean {
-        fun scan(stmt: YxStmt): Boolean = when (stmt) {
-            is YxReturn -> true
-            is YxBlock -> stmt.statements.any { scan(it) }
-            is YxIf -> scan(stmt.thenBranch) || (stmt.elseBranch?.let { scan(it) } ?: false)
-            is YxWhen -> stmt.branches.any { scan(it.body) }
-            is YxTry -> scan(stmt.body) || stmt.catches.any { scan(it.body) } || (stmt.finallyBody?.let { scan(it) } ?: false)
-            else -> false
-        }
+        fun scan(stmt: YxStmt): Boolean =
+            when (stmt) {
+                is YxReturn -> true
+                is YxBlock -> stmt.statements.any { scan(it) }
+                is YxIf -> scan(stmt.thenBranch) || (stmt.elseBranch?.let { scan(it) } ?: false)
+                is YxWhen -> stmt.branches.any { scan(it.body) }
+                is YxTry -> scan(stmt.body) || stmt.catches.any { scan(it.body) } || (stmt.finallyBody?.let { scan(it) } ?: false)
+                else -> false
+            }
         return block.statements.any { scan(it) }
     }
 
@@ -915,12 +1072,13 @@ class TypeChecker(
             smartCast.exitBlock()
         }
         // S-6.1.2：try 体赋值仅在「体赋值 && 全部 catch 赋值」时保证（无 catch 时体赋值即保证）
-        val allCatches = if (catchStates.isEmpty()) {
-            emptyMap()
-        } else {
-            val names = catchStates.flatMap { it.keys }.toSet()
-            names.associateWith { n -> catchStates.all { it[n] ?: false } }
-        }
+        val allCatches =
+            if (catchStates.isEmpty()) {
+                emptyMap()
+            } else {
+                val names = catchStates.flatMap { it.keys }.toSet()
+                names.associateWith { n -> catchStates.all { it[n] ?: false } }
+            }
         for (i in varStack.indices.reversed()) {
             for ((name, sym) in varStack[i]) {
                 val beforeV = before[name] ?: false
@@ -934,108 +1092,192 @@ class TypeChecker(
 
     // ── 表达式 ──────────────────────────────────────────────────────────────
 
-    private fun typeOf(expr: YxExpr, expected: SemaType? = null): SemaType {
+    private fun typeOf(
+        expr: YxExpr,
+        expected: SemaType? = null,
+    ): SemaType {
         val t = computeType(expr, expected)
         exprTypes[expr] = t
         return t
     }
 
-    private fun computeType(expr: YxExpr, expected: SemaType?): SemaType = when (expr) {
-        is YxIntLiteral -> literalIntType(expr.text, expected, expr.span.start)
-        is YxFloatLiteral -> literalFloatType(expr.text, expected)
-        is YxCharLiteral -> SemaType.CHAR
-        is YxBoolLiteral -> SemaType.BOOLEAN
-        is YxNullLiteral -> {
-            val expectedResolved = expected?.let { SemaType.resolveVar(it) }
-            when {
-                // 无期望类型：无法推断（S-4.5.4）
-                expected == null -> {
-                    diagnostics.error("null 字面量无法推断类型（S-4.5.4）", expr.span.start, ErrorCodes.INFERENCE_FAILURE)
-                    SemaType.ErrorT
+    private fun computeType(
+        expr: YxExpr,
+        expected: SemaType?,
+    ): SemaType =
+        when (expr) {
+            is YxIntLiteral -> {
+                literalIntType(expr.text, expected, expr.span.start)
+            }
+
+            is YxFloatLiteral -> {
+                literalFloatType(expr.text, expected)
+            }
+
+            is YxCharLiteral -> {
+                SemaType.CHAR
+            }
+
+            is YxBoolLiteral -> {
+                SemaType.BOOLEAN
+            }
+
+            is YxNullLiteral -> {
+                val expectedResolved = expected?.let { SemaType.resolveVar(it) }
+                when {
+                    // 无期望类型：无法推断（S-4.5.4）
+                    expected == null -> {
+                        diagnostics.error("null 字面量无法推断类型（S-4.5.4）", expr.span.start, ErrorCodes.INFERENCE_FAILURE)
+                        SemaType.ErrorT
+                    }
+
+                    // 期望为未求解推断变量：null 无法提供类型信息
+                    expectedResolved is SemaType.InferenceVar -> {
+                        diagnostics.error("null 字面量无法推断类型（S-4.5.4）", expr.span.start, ErrorCodes.INFERENCE_FAILURE)
+                        SemaType.ErrorT
+                    }
+
+                    // Nothing 不可接收 null（S-4.1.1）
+                    expectedResolved is SemaType.NothingT -> {
+                        diagnostics.error("Nothing 不可赋值 null", expr.span.start, ErrorCodes.TYPE_MISMATCH)
+                        SemaType.ErrorT
+                    }
+
+                    else -> {
+                        expected.asNullable()
+                    }
                 }
-                // 期望为未求解推断变量：null 无法提供类型信息
-                expectedResolved is SemaType.InferenceVar -> {
-                    diagnostics.error("null 字面量无法推断类型（S-4.5.4）", expr.span.start, ErrorCodes.INFERENCE_FAILURE)
-                    SemaType.ErrorT
+            }
+
+            is YxStringLiteral -> {
+                SemaType.STRING
+            }
+
+            is YxRawStringLiteral -> {
+                SemaType.STRING
+            }
+
+            is YxStringText -> {
+                SemaType.STRING
+            }
+
+            is YxStringTemplate -> {
+                expr.parts.forEach { typeOf(it, expected = SemaType.STRING) }
+                SemaType.STRING
+            }
+
+            is YxIdentifier -> {
+                typeOfIdentifier(expr)
+            }
+
+            is YxMemberAccess -> {
+                typeOfMemberAccess(expr)
+            }
+
+            is YxCall -> {
+                typeOfCall(expr)
+            }
+
+            is YxTypeCall -> {
+                typeOfTypeCall(expr)
+            }
+
+            is YxIfExpr -> {
+                typeOfIfExpr(expr, expected)
+            }
+
+            is YxWhenExpr -> {
+                typeOfWhenExpr(expr, expected)
+            }
+
+            is YxIndexExpr -> {
+                typeOfIndexExpr(expr)
+            }
+
+            is YxTypeReference -> {
+                val resolved = typeResolver.resolve(expr.type, currentFile!!)
+                if (resolved.isError) SemaType.ErrorT else resolved
+            }
+
+            is YxBinary -> {
+                typeOfBinary(expr, expected)
+            }
+
+            is YxUnary -> {
+                typeOfUnary(expr, expected)
+            }
+
+            is YxLambda -> {
+                typeOfLambda(expr, expected)
+            }
+
+            is YxBlockLambda -> {
+                typeOfBlockLambda(expr, expected)
+            }
+
+            is YxParen -> {
+                typeOf(expr.expr, expected)
+            }
+
+            is YxThrow -> {
+                typeOf(expr.expr)
+                SemaType.NothingT
+            }
+
+            is YxAwait -> {
+                typeOfAwait(expr)
+            }
+
+            is YxIs -> {
+                typeOf(expr.expr)
+                SemaType.BOOLEAN
+            }
+
+            is YxAs -> {
+                typeOf(expr.expr)
+                typeResolver.resolve(expr.type, currentFile!!)
+            }
+
+            is YxNullable -> {
+                typeOf(expr.expr).asNullable()
+            }
+
+            is YxRange -> {
+                val from = typeOf(expr.from)
+                val to = typeOf(expr.to)
+                if (!SemaType.isNumeric(from) || !SemaType.isNumeric(to)) {
+                    diagnostics.error("区间两端需要数字操作数（S-6.4.2）", expr.span.start, ErrorCodes.INVALID_OPERATOR_OPERAND)
                 }
-                // Nothing 不可接收 null（S-4.1.1）
-                expectedResolved is SemaType.NothingT -> {
-                    diagnostics.error("Nothing 不可赋值 null", expr.span.start, ErrorCodes.TYPE_MISMATCH)
+                SemaType.RANGE
+            }
+
+            is YxAssign -> {
+                checkAssign(expr)
+                typeOf(expr.value)
+            }
+
+            is YxThis -> {
+                // 扩展函数体内 `this` 为 receiver（M9），否则必须处于类上下文
+                if (currentReceiver != null) {
+                    currentReceiver!!
+                } else if (currentClass == null) {
+                    diagnostics.error("this 在类外使用", expr.span.start, ErrorCodes.THIS_OUTSIDE_CLASS)
                     SemaType.ErrorT
+                } else {
+                    SemaType.Declared(currentClass!!, emptyList(), nullable = false)
                 }
-                else -> expected.asNullable()
+            }
+
+            is YxSuper -> {
+                val superType = currentClass?.superType
+                if (currentClass == null) {
+                    diagnostics.error("super 在类外使用", expr.span.start, ErrorCodes.SUPER_OUTSIDE_CLASS)
+                    SemaType.ErrorT
+                } else {
+                    superType ?: SemaType.ANY
+                }
             }
         }
-        is YxStringLiteral -> SemaType.STRING
-        is YxRawStringLiteral -> SemaType.STRING
-        is YxStringText -> SemaType.STRING
-        is YxStringTemplate -> {
-            expr.parts.forEach { typeOf(it, expected = SemaType.STRING) }
-            SemaType.STRING
-        }
-        is YxIdentifier -> typeOfIdentifier(expr)
-        is YxMemberAccess -> typeOfMemberAccess(expr)
-        is YxCall -> typeOfCall(expr)
-        is YxTypeCall -> typeOfTypeCall(expr)
-        is YxIfExpr -> typeOfIfExpr(expr, expected)
-        is YxWhenExpr -> typeOfWhenExpr(expr, expected)
-        is YxIndexExpr -> typeOfIndexExpr(expr)
-        is YxTypeReference -> {
-            val resolved = typeResolver.resolve(expr.type, currentFile!!)
-            if (resolved.isError) SemaType.ErrorT else resolved
-        }
-        is YxBinary -> typeOfBinary(expr, expected)
-        is YxUnary -> typeOfUnary(expr, expected)
-        is YxLambda -> typeOfLambda(expr, expected)
-        is YxBlockLambda -> typeOfBlockLambda(expr, expected)
-        is YxParen -> typeOf(expr.expr, expected)
-        is YxThrow -> {
-            typeOf(expr.expr)
-            SemaType.NothingT
-        }
-        is YxAwait -> typeOfAwait(expr)
-        is YxIs -> {
-            typeOf(expr.expr)
-            SemaType.BOOLEAN
-        }
-        is YxAs -> {
-            typeOf(expr.expr)
-            typeResolver.resolve(expr.type, currentFile!!)
-        }
-        is YxNullable -> typeOf(expr.expr).asNullable()
-        is YxRange -> {
-            val from = typeOf(expr.from)
-            val to = typeOf(expr.to)
-            if (!SemaType.isNumeric(from) || !SemaType.isNumeric(to)) {
-                diagnostics.error("区间两端需要数字操作数（S-6.4.2）", expr.span.start, ErrorCodes.INVALID_OPERATOR_OPERAND)
-            }
-            SemaType.RANGE
-        }
-        is YxAssign -> {
-            checkAssign(expr)
-            typeOf(expr.value)
-        }
-        is YxThis -> {
-            // 扩展函数体内 `this` 为 receiver（M9），否则必须处于类上下文
-            if (currentReceiver != null) {
-                currentReceiver!!
-            } else if (currentClass == null) {
-                diagnostics.error("this 在类外使用", expr.span.start, ErrorCodes.THIS_OUTSIDE_CLASS)
-                SemaType.ErrorT
-            } else {
-                SemaType.Declared(currentClass!!, emptyList(), nullable = false)
-            }
-        }
-        is YxSuper -> {
-            val superType = currentClass?.superType
-            if (currentClass == null) {
-                diagnostics.error("super 在类外使用", expr.span.start, ErrorCodes.SUPER_OUTSIDE_CLASS)
-                SemaType.ErrorT
-            } else {
-                superType ?: SemaType.ANY
-            }
-        }
-    }
 
     private fun typeOfIdentifier(expr: YxIdentifier): SemaType {
         val sym = lookupVariable(expr.name)
@@ -1098,59 +1340,88 @@ class TypeChecker(
         return type
     }
 
-    private fun staticMemberType(receiverType: SemaType, name: String, node: YxMemberAccess): SemaType {
+    private fun staticMemberType(
+        receiverType: SemaType,
+        name: String,
+        node: YxMemberAccess,
+    ): SemaType {
         val sym = (receiverType as? SemaType.Declared)?.symbol ?: (receiverType as? SemaType.Basic)?.let { jvmForBasic(it.name) }
         if (sym is JvmClassSymbol) {
             sym.fields.firstOrNull { it.name == name && it.isStatic }?.let { return it.type }
             sym.propertyType(name)?.let { return it }
             sym.staticMethods.firstOrNull { it.name == name }?.let { return functionType(it) }
         }
-        diagnostics.error("静态成员 '${name}' 不存在", node.span.start, ErrorCodes.UNRESOLVED_MEMBER)
+        diagnostics.error("静态成员 '$name' 不存在", node.span.start, ErrorCodes.UNRESOLVED_MEMBER)
         return SemaType.ErrorT
     }
 
     /** 成员查找：返回 (类型, 是否属性读取, 引用符号)。沿父类链解析（S-8.7.1，缺陷 9）。 */
-    private fun memberLookup(receiver: SemaType, name: String): Triple<SemaType, Boolean, Symbol?>? = when (receiver) {
-        is SemaType.Declared -> {
-            val sym = receiver.symbol
-            when (sym) {
-                is YxClassSymbol -> {
-                    sym.propertyIncludingSuper(name)?.let { return Triple(it.type ?: SemaType.ErrorT, true, it) }
-                    sym.functionsIncludingSuper(name).firstOrNull()?.let { return Triple(functionType(it), false, it) }
-                    // 继承 Object 成员（S-8.7.1）：data 类生成 toString/equals/hashCode（S-5.3.1），
-                    // 普通类继承自 Object——成员查找统一回退到 java.lang.Object（M5-11 data 验收依赖）
-                    objectMember(name)?.let { return Triple(functionType(it), false, null) }
-                    null
+    private fun memberLookup(
+        receiver: SemaType,
+        name: String,
+    ): Triple<SemaType, Boolean, Symbol?>? =
+        when (receiver) {
+            is SemaType.Declared -> {
+                val sym = receiver.symbol
+                when (sym) {
+                    is YxClassSymbol -> {
+                        sym.propertyIncludingSuper(name)?.let { return Triple(it.type ?: SemaType.ErrorT, true, it) }
+                        sym.functionsIncludingSuper(name).firstOrNull()?.let { return Triple(functionType(it), false, it) }
+                        // 继承 Object 成员（S-8.7.1）：data 类生成 toString/equals/hashCode（S-5.3.1），
+                        // 普通类继承自 Object——成员查找统一回退到 java.lang.Object（M5-11 data 验收依赖）
+                        objectMember(name)?.let { return Triple(functionType(it), false, null) }
+                        null
+                    }
+
+                    is JvmClassSymbol -> {
+                        sym.propertyType(name)?.let { return Triple(it, true, null) }
+                        sym.methodNamed(name)?.let { return Triple(functionType(it), false, null) }
+                        null
+                    }
+
+                    else -> {
+                        null
+                    }
                 }
-                is JvmClassSymbol -> {
-                    sym.propertyType(name)?.let { return Triple(it, true, null) }
-                    sym.methodNamed(name)?.let { return Triple(functionType(it), false, null) }
-                    null
+            }
+
+            is SemaType.Basic -> {
+                if (receiver.name == "String" && name == "length") return Triple(SemaType.INT, true, null)
+                jvmForBasic(receiver.name)?.let { jc ->
+                    jc.propertyType(name)?.let { return Triple(it, true, null) }
+                    // 方法调用（S-8.5）：`s.replace(a, b)` → String#replace（M9，memberLookup 补方法查找）
+                    jc.methodNamed(name)?.let { return Triple(functionType(it), false, null) }
                 }
-                else -> null
+                null
+            }
+
+            is SemaType.TypeParam -> {
+                null
+            }
+
+            is SemaType.Function -> {
+                null
+            }
+
+            is SemaType.InferenceVar -> {
+                receiver.solution?.let { memberLookup(it, name) }
+            }
+
+            else -> {
+                null
             }
         }
-        is SemaType.Basic -> {
-            if (receiver.name == "String" && name == "length") return Triple(SemaType.INT, true, null)
-            jvmForBasic(receiver.name)?.let { jc ->
-                jc.propertyType(name)?.let { return Triple(it, true, null) }
-                // 方法调用（S-8.5）：`s.replace(a, b)` → String#replace（M9，memberLookup 补方法查找）
-                jc.methodNamed(name)?.let { return Triple(functionType(it), false, null) }
-            }
-            null
-        }
-        is SemaType.TypeParam -> null
-        is SemaType.Function -> null
-        is SemaType.InferenceVar -> receiver.solution?.let { memberLookup(it, name) }
-        else -> null
-    }
 
     /** java.lang.Object 成员回退（用户类继承 Object，S-8.7.1）。 */
-    private fun objectMember(name: String): JvmMethodSymbol? =
-        classPath.resolve("java.lang.Object")?.methodNamed(name)
+    private fun objectMember(name: String): JvmMethodSymbol? = classPath.resolve("java.lang.Object")?.methodNamed(name)
 
     /** 成员访问控制检查（S-5.1.4，缺陷 10）：private 仅限声明类内；protected 仅限子类内。 */
-    private fun checkMemberAccess(owner: YxClassSymbol, visibility: YxVisibility, span: SourceSpan?, what: String) {
+    private fun checkMemberAccess(
+        owner: YxClassSymbol,
+        visibility: YxVisibility,
+        span: SourceSpan?,
+        what: String,
+    ) {
         if (visibility == YxVisibility.PUBLIC) return
         val current = currentClass
         if (current == null) {
@@ -1172,91 +1443,118 @@ class TypeChecker(
     }
 
     /** 符号的 (声明类, 可见性)；非类成员返回 null。 */
-    private fun memberAccessInfo(sym: Symbol): Pair<YxClassSymbol, YxVisibility>? = when (sym) {
-        is PropertySymbol -> sym.owner?.let { it to sym.visibility }
-        is FunctionSymbol -> sym.owner?.let { it to sym.visibility }
-        else -> null
-    }
+    private fun memberAccessInfo(sym: Symbol): Pair<YxClassSymbol, YxVisibility>? =
+        when (sym) {
+            is PropertySymbol -> sym.owner?.let { it to sym.visibility }
+            is FunctionSymbol -> sym.owner?.let { it to sym.visibility }
+            else -> null
+        }
 
-    private fun jvmForBasic(name: String): JvmClassSymbol? = when (name) {
-        "String" -> classPath.resolve("java.lang.String")
-        "Int" -> classPath.resolve("java.lang.Integer")
-        "Long" -> classPath.resolve("java.lang.Long")
-        "Float" -> classPath.resolve("java.lang.Float")
-        "Double" -> classPath.resolve("java.lang.Double")
-        "Boolean" -> classPath.resolve("java.lang.Boolean")
-        "Char" -> classPath.resolve("java.lang.Character")
-        "Byte" -> classPath.resolve("java.lang.Byte")
-        "Any" -> classPath.resolve("java.lang.Object")
-        "Iterable" -> classPath.resolve("java.lang.Iterable")
-        // 与 SymbolTable.Builtins / SemaType.RANGE 对齐（缺陷修复）：Range 成员映射到
-        // yux.core.Range（此前误映射 java.lang.Integer，使区间值错误解析 Integer 的方法；
-        // for 迭代不依赖此映射——StmtGen 经 iteratorOwner 直接定位 yux.core.Range）
-        "Range" -> classPath.resolve("yux.core.Range")
-        else -> null
-    }
+    private fun jvmForBasic(name: String): JvmClassSymbol? =
+        when (name) {
+            "String" -> classPath.resolve("java.lang.String")
+
+            "Int" -> classPath.resolve("java.lang.Integer")
+
+            "Long" -> classPath.resolve("java.lang.Long")
+
+            "Float" -> classPath.resolve("java.lang.Float")
+
+            "Double" -> classPath.resolve("java.lang.Double")
+
+            "Boolean" -> classPath.resolve("java.lang.Boolean")
+
+            "Char" -> classPath.resolve("java.lang.Character")
+
+            "Byte" -> classPath.resolve("java.lang.Byte")
+
+            "Any" -> classPath.resolve("java.lang.Object")
+
+            "Iterable" -> classPath.resolve("java.lang.Iterable")
+
+            // 与 SymbolTable.Builtins / SemaType.RANGE 对齐（缺陷修复）：Range 成员映射到
+            // yux.core.Range（此前误映射 java.lang.Integer，使区间值错误解析 Integer 的方法；
+            // for 迭代不依赖此映射——StmtGen 经 iteratorOwner 直接定位 yux.core.Range）
+            "Range" -> classPath.resolve("yux.core.Range")
+
+            else -> null
+        }
 
     // ── 调用 ────────────────────────────────────────────────────────────────
 
-    private fun typeOfCall(call: YxCall): SemaType = when (val callee = call.callee) {
-        is YxIdentifier -> {
-            val fns = resolveFunctions(callee.name)
-            if (fns.isEmpty()) {
-                val varSym = lookupVariable(callee.name)
-                if (varSym != null) {
-                    val t = varSym.type ?: SemaType.ErrorT
-                    if (t is SemaType.Function) {
-                        // B3：函数类型局部/参数调用——登记解析符号，供 IRGen 捕获分析
-                        // （自由变量识别）与 FnInvoke 生成使用（与 typeOfIdentifier 一致）
-                        resolvedRefs[callee] = varSym
-                        checkFunctionCallArgs(t.params, t.ret, call)
+    private fun typeOfCall(call: YxCall): SemaType =
+        when (val callee = call.callee) {
+            is YxIdentifier -> {
+                val fns = resolveFunctions(callee.name)
+                if (fns.isEmpty()) {
+                    val varSym = lookupVariable(callee.name)
+                    if (varSym != null) {
+                        val t = varSym.type ?: SemaType.ErrorT
+                        if (t is SemaType.Function) {
+                            // B3：函数类型局部/参数调用——登记解析符号，供 IRGen 捕获分析
+                            // （自由变量识别）与 FnInvoke 生成使用（与 typeOfIdentifier 一致）
+                            resolvedRefs[callee] = varSym
+                            checkFunctionCallArgs(t.params, t.ret, call)
+                        } else {
+                            diagnostics.error("'${callee.name}' 不是可调用函数", call.span.start, ErrorCodes.UNRESOLVED_REFERENCE)
+                            SemaType.ErrorT
+                        }
                     } else {
-                        diagnostics.error("'${callee.name}' 不是可调用函数", call.span.start, ErrorCodes.UNRESOLVED_REFERENCE)
+                        diagnostics.error("未解析的调用 '${callee.name}'", call.span.start, ErrorCodes.UNRESOLVED_REFERENCE)
                         SemaType.ErrorT
                     }
                 } else {
-                    diagnostics.error("未解析的调用 '${callee.name}'", call.span.start, ErrorCodes.UNRESOLVED_REFERENCE)
+                    resolvedRefs[callee] = fns.first()
+                    val ret = checkCallable(fns, call, "函数 '${callee.name}'")
+                    // 双 ABI（T-M14）：async fun 在同步上下文调用返回 Task；async 上下文为挂起调用返回声明类型
+                    if (fns.first().isAsync && !isInAsyncContext()) taskType else ret
+                }
+            }
+
+            is YxMemberAccess -> {
+                val receiverType = typeOf(callee.receiver)
+                if (receiverType.isError) return SemaType.ErrorT
+                val result =
+                    if (callee.receiver is YxTypeReference) {
+                        checkStaticCall(receiverType, callee.name, call)
+                    } else {
+                        val ret = checkInstanceCall(receiverType, callee.name, call)
+                        // 取值调用守卫（02-§7.4）：非 Unit 返回 + 可空接收者
+                        nullGuard.checkMethodCall(callee, receiverType, ret)
+                        ret
+                    }
+                result
+            }
+
+            is YxTypeReference -> {
+                // `Type(args)` 形式已被 YxTypeCall 处理；此处兜底（静态调用）
+                val t = typeOf(callee)
+                if (t is SemaType.Declared) {
+                    checkStaticCall(t, t.symbol.name, call)
+                } else {
+                    diagnostics.error("类型不可调用", call.span.start, ErrorCodes.UNRESOLVED_REFERENCE)
                     SemaType.ErrorT
                 }
-            } else {
-                resolvedRefs[callee] = fns.first()
-                val ret = checkCallable(fns, call, "函数 '${callee.name}'")
-                // 双 ABI（T-M14）：async fun 在同步上下文调用返回 Task；async 上下文为挂起调用返回声明类型
-                if (fns.first().isAsync && !isInAsyncContext()) taskType else ret
             }
-        }
-        is YxMemberAccess -> {
-            val receiverType = typeOf(callee.receiver)
-            if (receiverType.isError) return SemaType.ErrorT
-            val result = if (callee.receiver is YxTypeReference) {
-                checkStaticCall(receiverType, callee.name, call)
-            } else {
-                val ret = checkInstanceCall(receiverType, callee.name, call)
-                // 取值调用守卫（02-§7.4）：非 Unit 返回 + 可空接收者
-                nullGuard.checkMethodCall(callee, receiverType, ret)
-                ret
+
+            is YxParen -> {
+                applyFunctionType(typeOf(callee), call)
             }
-            result
-        }
-        is YxTypeReference -> {
-            // `Type(args)` 形式已被 YxTypeCall 处理；此处兜底（静态调用）
-            val t = typeOf(callee)
-            if (t is SemaType.Declared) {
-                checkStaticCall(t, t.symbol.name, call)
-            } else {
-                diagnostics.error("类型不可调用", call.span.start, ErrorCodes.UNRESOLVED_REFERENCE)
+
+            is YxLambda -> {
+                diagnostics.error("Lambda 不可直接调用", call.span.start, ErrorCodes.UNRESOLVED_REFERENCE)
                 SemaType.ErrorT
             }
-        }
-        is YxParen -> applyFunctionType(typeOf(callee), call)
-        is YxLambda -> {
-            diagnostics.error("Lambda 不可直接调用", call.span.start, ErrorCodes.UNRESOLVED_REFERENCE)
-            SemaType.ErrorT
-        }
-        else -> applyFunctionType(typeOf(callee), call)
-    }
 
-    private fun applyFunctionType(type: SemaType, call: YxCall): SemaType {
+            else -> {
+                applyFunctionType(typeOf(callee), call)
+            }
+        }
+
+    private fun applyFunctionType(
+        type: SemaType,
+        call: YxCall,
+    ): SemaType {
         val fn = type as? SemaType.Function
         if (fn == null) {
             diagnostics.error("'${type.render()}' 不可调用", call.span.start, ErrorCodes.UNRESOLVED_REFERENCE)
@@ -1282,9 +1580,12 @@ class TypeChecker(
         val operandType = typeOf(expr.operand)
         if (isAsyncFunCall(expr.operand)) return operandType
         val base = SemaType.resolveVar(operandType)
-        val awaitable = base is SemaType.Declared && base.symbol is JvmClassSymbol &&
-            (base.symbol.qualifiedName == "yux.async.Task" ||
-                base.symbol.qualifiedName == "java.util.concurrent.CompletableFuture")
+        val awaitable =
+            base is SemaType.Declared && base.symbol is JvmClassSymbol &&
+                (
+                    base.symbol.qualifiedName == "yux.async.Task" ||
+                        base.symbol.qualifiedName == "java.util.concurrent.CompletableFuture"
+                )
         if (!operandType.isError && !awaitable) {
             diagnostics.error(
                 "`await` 操作数必须是 Task / CompletableFuture 或 async fun 调用（T-M14），实际 '${operandType.render()}'",
@@ -1296,15 +1597,26 @@ class TypeChecker(
     }
 
     /** 操作数是否为 async fun 调用（双 ABI 挂起调用）。 */
-    private fun isAsyncFunCall(expr: YxExpr): Boolean = when (expr) {
-        is YxCall -> {
-            val sym = resolvedRefs[expr.callee]
-            sym is FunctionSymbol && sym.isAsync
-        }
-        else -> false
-    }
+    private fun isAsyncFunCall(expr: YxExpr): Boolean =
+        when (expr) {
+            is YxCall -> {
+                val sym = resolvedRefs[expr.callee]
+                sym is FunctionSymbol && sym.isAsync
+            }
 
-    private fun checkFunctionCallArgs(params: List<SemaType>, ret: SemaType, call: YxCall): SemaType {        if (call.args.size != params.size) {
+            else -> {
+                false
+            }
+        }
+
+    private fun checkFunctionCallArgs(
+        params: List<SemaType>,
+        ret: SemaType,
+        call: YxCall,
+    ): SemaType {
+        if (call.args.size !=
+            params.size
+        ) {
             diagnostics.error(
                 "实参数目不匹配: 期望 ${params.size} 个，实际 ${call.args.size} 个",
                 call.span.start,
@@ -1319,7 +1631,11 @@ class TypeChecker(
         return ret
     }
 
-    private fun checkInstanceCall(receiverType: SemaType, name: String, call: YxCall): SemaType {
+    private fun checkInstanceCall(
+        receiverType: SemaType,
+        name: String,
+        call: YxCall,
+    ): SemaType {
         val receiver = receiverType
         if (receiver is SemaType.Declared && receiver.symbol is YxClassSymbol) {
             val sym = receiver.symbol
@@ -1329,18 +1645,18 @@ class TypeChecker(
                 val prop = sym.propertyIncludingSuper(name)
                 if (prop != null) {
                     // 访问控制（S-5.1.4，缺陷 10）
-                    prop.owner?.let { checkMemberAccess(it, prop.visibility, call.span, "成员 '${name}'") }
+                    prop.owner?.let { checkMemberAccess(it, prop.visibility, call.span, "成员 '$name'") }
                     return applyFunctionType(prop.type ?: SemaType.ErrorT, call)
                 }
                 // Object 方法回退（S-8.7.1，与 memberLookup 一致）
                 objectMember(name)?.let { return checkJvmCall(listOf(it), call) }
                 lookupExtensionCall(receiverType, name, call)?.let { return it }
-                diagnostics.error("方法 '${name}' 不存在于 '${receiverType.render()}'", call.span.start, ErrorCodes.UNRESOLVED_MEMBER)
+                diagnostics.error("方法 '$name' 不存在于 '${receiverType.render()}'", call.span.start, ErrorCodes.UNRESOLVED_MEMBER)
                 return SemaType.ErrorT
             }
             // 访问控制（S-5.1.4，缺陷 10）：取最派生候选的声明类
-            fns.first().owner?.let { checkMemberAccess(it, fns.first().visibility, call.span, "方法 '${name}'") }
-            val ret = checkCallable(fns, call, "方法 '${name}'")
+            fns.first().owner?.let { checkMemberAccess(it, fns.first().visibility, call.span, "方法 '$name'") }
+            val ret = checkCallable(fns, call, "方法 '$name'")
             // 双 ABI（T-M14）：async 成员在同步上下文调用返回 Task
             return if (fns.first().isAsync && !isInAsyncContext()) taskType else ret
         }
@@ -1356,7 +1672,7 @@ class TypeChecker(
                 sym.propertyType(name)?.let { return applyFunctionType(it, call) }
                 lookupExtensionCall(receiverType, name, call)?.let { return it }
                 checkJvmExtension(receiverType, name, call)?.let { return it }
-                diagnostics.error("方法 '${name}' 不存在于 '${receiverType.render()}'", call.span.start, ErrorCodes.UNRESOLVED_MEMBER)
+                diagnostics.error("方法 '$name' 不存在于 '${receiverType.render()}'", call.span.start, ErrorCodes.UNRESOLVED_MEMBER)
                 return SemaType.ErrorT
             }
             return checkJvmCall(methods, call)
@@ -1370,17 +1686,23 @@ class TypeChecker(
                 }
                 val methods = jc.methods.filter { it.name == name }
                 if (methods.isNotEmpty()) return checkJvmCall(methods, call)
+                // 基础类型用户扩展函数（`fun String.shout()`）：注册表/JVM 成员未命中后查找
+                lookupExtensionCall(receiverType, name, call)?.let { return it }
                 checkJvmExtension(receiverType, name, call)?.let { return it }
             }
         }
         if (receiver is SemaType.Function) {
             return applyFunctionType(receiver, call)
         }
-        diagnostics.error("方法 '${name}' 不存在于 '${receiverType.render()}'", call.span.start, ErrorCodes.UNRESOLVED_MEMBER)
+        diagnostics.error("方法 '$name' 不存在于 '${receiverType.render()}'", call.span.start, ErrorCodes.UNRESOLVED_MEMBER)
         return SemaType.ErrorT
     }
 
-    private fun checkStaticCall(receiverType: SemaType, name: String, call: YxCall): SemaType {
+    private fun checkStaticCall(
+        receiverType: SemaType,
+        name: String,
+        call: YxCall,
+    ): SemaType {
         val sym = (receiverType as? SemaType.Declared)?.symbol ?: (receiverType as? SemaType.Basic)?.let { jvmForBasic(it.name) }
         if (sym is JvmClassSymbol) {
             val methods = sym.staticMethods.filter { it.name == name }
@@ -1388,15 +1710,19 @@ class TypeChecker(
             sym.fields.firstOrNull { it.name == name && it.isStatic }?.let { return applyFunctionType(it.type, call) }
             // JavaBean getter 属性调用（M9）：`Bukkit.onlinePlayers()` → `getOnlinePlayers()`（Paper API）
             val cap = name.replaceFirstChar { it.uppercaseChar() }
-            val getter = sym.staticMethods.firstOrNull { it.name == "get$cap" && it.params.isEmpty() } ?:
-                sym.staticMethods.firstOrNull { it.name == "is$cap" && it.params.isEmpty() }
+            val getter =
+                sym.staticMethods.firstOrNull { it.name == "get$cap" && it.params.isEmpty() }
+                    ?: sym.staticMethods.firstOrNull { it.name == "is$cap" && it.params.isEmpty() }
             if (getter != null) return checkJvmCall(listOf(getter), call)
         }
-        diagnostics.error("静态方法 '${name}' 不存在", call.span.start, ErrorCodes.UNRESOLVED_MEMBER)
+        diagnostics.error("静态方法 '$name' 不存在", call.span.start, ErrorCodes.UNRESOLVED_MEMBER)
         return SemaType.ErrorT
     }
 
-    private fun checkJvmCall(methods: List<JvmMethodSymbol>, call: YxCall): SemaType {
+    private fun checkJvmCall(
+        methods: List<JvmMethodSymbol>,
+        call: YxCall,
+    ): SemaType {
         val byArity = methods.filter { it.params.size == call.args.size }
         if (byArity.isEmpty()) {
             // 无匹配元数的重载：明确诊断并列出签名，不静默选第一个候选
@@ -1411,14 +1737,16 @@ class TypeChecker(
         // 重载选择：先用无期望实参类型精确匹配（Math.max(int,int) 不得落到 long/double 重载；
         // expected 收窄会污染字面量类型，M9），失败后再按期望类型匹配（playSound float 参数）
         val argTypes = call.args.map { typeOf(it) }
-        val exact = byArity.firstOrNull { m ->
-            m.params.indices.all { i -> TypeAssignability.sameBase(argTypes[i], m.params[i]) }
-        }
-        val matched = exact ?: byArity.firstOrNull { m ->
-            m.params.indices.all { i -> TypeAssignability.isAssignable(argTypes[i], m.params[i]) }
-        } ?: byArity.firstOrNull { m ->
-            m.params.indices.all { i -> TypeAssignability.isAssignable(typeOf(call.args[i], expected = m.params[i]), m.params[i]) }
-        }
+        val exact =
+            byArity.firstOrNull { m ->
+                m.params.indices.all { i -> TypeAssignability.sameBase(argTypes[i], m.params[i]) }
+            }
+        val matched =
+            exact ?: byArity.firstOrNull { m ->
+                m.params.indices.all { i -> TypeAssignability.isAssignable(argTypes[i], m.params[i]) }
+            } ?: byArity.firstOrNull { m ->
+                m.params.indices.all { i -> TypeAssignability.isAssignable(typeOf(call.args[i], expected = m.params[i]), m.params[i]) }
+            }
         if (matched == null) {
             // 元数匹配但类型不匹配：明确诊断并列出签名，不静默选第一个候选
             diagnostics.error(
@@ -1437,7 +1765,11 @@ class TypeChecker(
             "(${m.params.joinToString(", ") { it.render() }}) -> ${m.returnType.render()}"
         }
 
-    private fun checkCallable(candidates: List<FunctionSymbol>, call: YxCall, kind: String): SemaType {
+    private fun checkCallable(
+        candidates: List<FunctionSymbol>,
+        call: YxCall,
+        kind: String,
+    ): SemaType {
         val byArity = candidates.filter { canCallWith(it, call.args.size) }
         val fn = byArity.firstOrNull() ?: candidates.firstOrNull()
         if (fn == null) {
@@ -1463,7 +1795,10 @@ class TypeChecker(
         return fn.returnType ?: SemaType.ErrorT
     }
 
-    private fun canCallWith(fn: FunctionSymbol, argCount: Int): Boolean {
+    private fun canCallWith(
+        fn: FunctionSymbol,
+        argCount: Int,
+    ): Boolean {
         val required = fn.params.count { !it.hasDefault }
         return argCount >= required && argCount <= fn.params.size
     }
@@ -1490,14 +1825,21 @@ class TypeChecker(
                 ErrorCodes.SEALED_INSTANTIATION,
             )
         }
-        val constructorParams: List<SemaType> = when (sym) {
-            is JvmClassSymbol -> {
-                val ctor = sym.constructors.firstOrNull { it.params.size == call.args.size } ?: sym.constructors.firstOrNull()
-                ctor?.params ?: emptyList()
+        val constructorParams: List<SemaType> =
+            when (sym) {
+                is JvmClassSymbol -> {
+                    val ctor = sym.constructors.firstOrNull { it.params.size == call.args.size } ?: sym.constructors.firstOrNull()
+                    ctor?.params ?: emptyList()
+                }
+
+                is YxClassSymbol -> {
+                    sym.properties().map { it.type ?: SemaType.ErrorT }
+                }
+
+                else -> {
+                    emptyList()
+                }
             }
-            is YxClassSymbol -> sym.properties().map { it.type ?: SemaType.ErrorT }
-            else -> emptyList()
-        }
         if (call.args.size != constructorParams.size) {
             diagnostics.error(
                 "构造实参数目不匹配: '${sym.name}' 需要 ${constructorParams.size} 个，实际 ${call.args.size} 个",
@@ -1516,22 +1858,28 @@ class TypeChecker(
     /** 集合接口 → 具体实现类型：`java.util.Map`→`HashMap`、`List`→`ArrayList`、`Set`→`HashSet`（M9）。 */
     private fun concreteCollectionType(resolved: SemaType.Declared): SemaType.Declared? {
         val sym = resolved.symbol as? JvmClassSymbol ?: return null
-        val impl = when (sym.qualifiedName) {
-            "java.util.Map", "java.util.SortedMap" -> "java.util.HashMap"
-            "java.util.List" -> "java.util.ArrayList"
-            "java.util.Set", "java.util.SortedSet" -> "java.util.HashSet"
-            else -> return null
-        }
+        val impl =
+            when (sym.qualifiedName) {
+                "java.util.Map", "java.util.SortedMap" -> "java.util.HashMap"
+                "java.util.List" -> "java.util.ArrayList"
+                "java.util.Set", "java.util.SortedSet" -> "java.util.HashSet"
+                else -> return null
+            }
         val implSym = classPath.resolve(impl) ?: return null
         return SemaType.Declared(implSym, resolved.args, resolved.nullable)
     }
 
-        /** 扩展函数调用（M9）：`receiver.name(args)` → 匹配 `fun Receiver.name(receiver, args)`。 */
-    private fun lookupExtensionCall(receiverType: SemaType, name: String, call: YxCall): SemaType? {
+    /** 扩展函数调用（M9）：`receiver.name(args)` → 匹配 `fun Receiver.name(receiver, args)`。 */
+    private fun lookupExtensionCall(
+        receiverType: SemaType,
+        name: String,
+        call: YxCall,
+    ): SemaType? {
         val candidates = mutableListOf<FunctionSymbol>()
         // 跨文件扩展函数（M9）：同包顶层扩展（S-5.5.3），如 HomeCommand 用 HomeData.yux 的 toData/toLocation
         for (file in symbolTable.files) {
-            file.extensionFunctions.values.flatten()
+            file.extensionFunctions.values
+                .flatten()
                 .filter { it.name == name && it.receiverType != null }
                 .let { candidates += it }
         }
@@ -1555,7 +1903,14 @@ class TypeChecker(
         val max = minOf(rest.size, call.args.size)
         for (i in 0 until max) {
             val argType = typeOf(call.args[i], expected = rest[i].type)
-            if (!argType.isError) inference.expectAssignable(argType, rest[i].type ?: SemaType.ANY, call.args[i].span.start, "扩展函数实参 ${i + 1}")
+            if (!argType.isError) {
+                inference.expectAssignable(
+                    argType,
+                    rest[i].type ?: SemaType.ANY,
+                    call.args[i].span.start,
+                    "扩展函数实参 ${i + 1}",
+                )
+            }
         }
         return fn.returnType ?: SemaType.UnitT
     }
@@ -1565,7 +1920,11 @@ class TypeChecker(
      * 注册表降级为 yux-stdlib 静态方法调用（receiver 前置为实参 0）。
      * 未命中注册表 / 宿主类 / 静态方法时返回 null（维持 UNRESOLVED_MEMBER 路径）。
      */
-    private fun checkJvmExtension(receiverType: SemaType, name: String, call: YxCall): SemaType? {
+    private fun checkJvmExtension(
+        receiverType: SemaType,
+        name: String,
+        call: YxCall,
+    ): SemaType? {
         val jc = jvmClassOf(receiverType) ?: return null
         val entry = JvmExtensions.find(jc.qualifiedName, name) ?: return null
         val host = classPath.resolve(entry.first) as? JvmClassSymbol ?: return null
@@ -1573,7 +1932,7 @@ class TypeChecker(
         // 实参数校验：静态方法参数 = receiver(param 0) + 实参
         if (call.args.size != method.params.size - 1) {
             diagnostics.error(
-                "扩展函数 '${name}' 实参数目不匹配: 需要 ${method.params.size - 1} 个，实际 ${call.args.size} 个",
+                "扩展函数 '$name' 实参数目不匹配: 需要 ${method.params.size - 1} 个，实际 ${call.args.size} 个",
                 call.span.start,
                 ErrorCodes.ARGUMENT_COUNT_MISMATCH,
             )
@@ -1583,11 +1942,14 @@ class TypeChecker(
         call.args.forEachIndexed { i, arg ->
             val param = method.params[i + 1]
             // FunctionN 形参：用接收者元素类型替换函数参数类型（`map { it * 10 }` 的 it 为元素类型）
-            val expected = (param as? SemaType.Declared)?.let { functionTypeOfJvm(it) }?.let { fn ->
-                if (elem != null && fn.params.isNotEmpty()) {
-                    SemaType.Function(List(fn.params.size) { elem }, fn.ret, nullable = false)
-                } else fn
-            } ?: param
+            val expected =
+                (param as? SemaType.Declared)?.let { functionTypeOfJvm(it) }?.let { fn ->
+                    if (elem != null && fn.params.isNotEmpty()) {
+                        SemaType.Function(List(fn.params.size) { elem }, fn.ret, nullable = false)
+                    } else {
+                        fn
+                    }
+                } ?: param
             val argType = typeOf(arg, expected = expected)
             if (!argType.isError) inference.expectAssignable(argType, expected, arg.span.start, "实参 ${i + 1}")
         }
@@ -1595,48 +1957,75 @@ class TypeChecker(
     }
 
     /** 语义类型 → JVM 类符号（镜像 JvmCallResolver.jvmClassOf）。 */
-    private fun jvmClassOf(receiverType: SemaType): JvmClassSymbol? = when (val t = SemaType.resolveVar(receiverType)) {
-        is SemaType.Declared -> t.symbol as? JvmClassSymbol
-        is SemaType.Basic -> jvmForBasic(t.name)
-        else -> null
-    }
+    private fun jvmClassOf(receiverType: SemaType): JvmClassSymbol? =
+        when (val t = SemaType.resolveVar(receiverType)) {
+            is SemaType.Declared -> t.symbol as? JvmClassSymbol
+            is SemaType.Basic -> jvmForBasic(t.name)
+            else -> null
+        }
 
     private fun typeOfIndexExpr(expr: YxIndexExpr): SemaType {
         val base = SemaType.resolveVar(typeOf(expr.base))
         val idx = typeOf(expr.index)
-        val result: SemaType = when (base) {
-            is SemaType.Declared -> {
-                val sym = base.symbol
-                if (sym is JvmClassSymbol) {
-                    when {
-                        // JVM 数组：元素类型本身带可空性（原语数组非空，引用数组可空），不再统一加 ?（S-6.4.1）
-                        sym.qualifiedName.startsWith("[") -> elementType(base) ?: SemaType.ANY
-                        sym.qualifiedName == "java.util.Map" || sym.qualifiedName == "java.util.HashMap" ||
-                            sym.qualifiedName == "java.util.LinkedHashMap" -> (base.args.getOrNull(1) ?: SemaType.ANY).asNullable()
-                        elementType(base) != null -> (elementType(base)!!).asNullable()
-                        else -> SemaType.ANY
+        val result: SemaType =
+            when (base) {
+                is SemaType.Declared -> {
+                    val sym = base.symbol
+                    if (sym is JvmClassSymbol) {
+                        when {
+                            // JVM 数组：元素类型本身带可空性（原语数组非空，引用数组可空），不再统一加 ?（S-6.4.1）
+                            sym.qualifiedName.startsWith("[") -> elementType(base) ?: SemaType.ANY
+
+                            sym.qualifiedName == "java.util.Map" || sym.qualifiedName == "java.util.HashMap" ||
+                                sym.qualifiedName == "java.util.LinkedHashMap" -> (base.args.getOrNull(1) ?: SemaType.ANY).asNullable()
+
+                            elementType(base) != null -> (elementType(base)!!).asNullable()
+
+                            else -> SemaType.ANY
+                        }
+                    } else {
+                        SemaType.ANY
                     }
-                } else {
+                }
+
+                is SemaType.Basic -> {
+                    when (base.name) {
+                        "String" -> {
+                            if (!idx.isError) {
+                                diagnostics.error(
+                                    "String 索引访问不支持（v0.1，用 get 方法）",
+                                    expr.index.span.start,
+                                    ErrorCodes.UNRESOLVED_MEMBER,
+                                )
+                            }
+                            SemaType.CHAR
+                        }
+
+                        else -> {
+                            SemaType.ANY
+                        }
+                    }
+                }
+
+                else -> {
                     SemaType.ANY
                 }
             }
-            is SemaType.Basic -> when (base.name) {
-                "String" -> {
-                    if (!idx.isError) diagnostics.error("String 索引访问不支持（v0.1，用 get 方法）", expr.index.span.start, ErrorCodes.UNRESOLVED_MEMBER)
-                    SemaType.CHAR
-                }
-                else -> SemaType.ANY
-            }
-            else -> SemaType.ANY
-        }
         return result
     }
 
     /** if 表达式（M9）：条件须 Boolean，结果类型为两分支的公共类型（期望优先）。 */
-    private fun typeOfIfExpr(expr: YxIfExpr, expected: SemaType?): SemaType {
+    private fun typeOfIfExpr(
+        expr: YxIfExpr,
+        expected: SemaType?,
+    ): SemaType {
         val condType = typeOf(expr.condition)
         if (!condType.isError && !TypeAssignability.sameBase(condType, SemaType.BOOLEAN)) {
-            diagnostics.error("if 条件必须是 Boolean（S-6.2.1），实际 ${condType.render()}", expr.condition.span.start, ErrorCodes.CONDITION_NOT_BOOLEAN)
+            diagnostics.error(
+                "if 条件必须是 Boolean（S-6.2.1），实际 ${condType.render()}",
+                expr.condition.span.start,
+                ErrorCodes.CONDITION_NOT_BOOLEAN,
+            )
         }
         val thenType = typeOf(expr.thenExpr, expected)
         val elseType = typeOf(expr.elseExpr, expected)
@@ -1647,13 +2036,19 @@ class TypeChecker(
         if (expected != null) return expected
         if (thenResolved.isError) return elseResolved
         if (elseResolved.isError) return thenResolved
-        return if (TypeAssignability.isAssignable(thenResolved, elseResolved)) elseResolved
-        else thenResolved
+        return if (TypeAssignability.isAssignable(thenResolved, elseResolved)) {
+            elseResolved
+        } else {
+            thenResolved
+        }
     }
 
     // ── 运算符 / Lambda ─────────────────────────────────────────────────────
 
-    private fun typeOfBinary(expr: YxBinary, expected: SemaType?): SemaType {        // `x == null` / `null == x`：null 字面量以对侧类型为期望（S-8.1）
+    private fun typeOfBinary(
+        expr: YxBinary,
+        expected: SemaType?,
+    ): SemaType { // `x == null` / `null == x`：null 字面量以对侧类型为期望（S-8.1）
         if (expr.op == "==" || expr.op == "!=") {
             if (expr.right is YxNullLiteral) {
                 val left = typeOf(expr.left)
@@ -1672,46 +2067,73 @@ class TypeChecker(
     }
 
     /** 二元运算结果类型与操作数校验（S-7.5/S-7.6）：复合赋值 `x op= e` 展开复用同一套规则。 */
-    private fun binaryOpResult(op: String, left: SemaType, right: SemaType, span: SourceSpan): SemaType = when (op) {
-        "+" -> {
-            if (left is SemaType.Basic && left.name == "String" || right is SemaType.Basic && right.name == "String") {
-                // 字符串拼接：另一侧须为 String 或数字（S-7.6.1），防 `print "a" + "b"` 落到 Unit
-                val otherOk = left.isError || right.isError ||
-                    (left is SemaType.Basic && left.name == "String") ||
-                    (right is SemaType.Basic && right.name == "String") ||
-                    SemaType.isNumeric(left) && SemaType.isNumeric(right)
-                if (!otherOk) {
-                    diagnostics.error("字符串拼接需要 String 或数字操作数（S-7.6.1），实际 ${left.render()} 与 ${right.render()}", span.start, ErrorCodes.INVALID_OPERATOR_OPERAND)
+    private fun binaryOpResult(
+        op: String,
+        left: SemaType,
+        right: SemaType,
+        span: SourceSpan,
+    ): SemaType =
+        when (op) {
+            "+" -> {
+                if (left is SemaType.Basic && left.name == "String" || right is SemaType.Basic && right.name == "String") {
+                    // 字符串拼接：另一侧须为 String 或数字（S-7.6.1），防 `print "a" + "b"` 落到 Unit
+                    val otherOk =
+                        left.isError || right.isError ||
+                            (left is SemaType.Basic && left.name == "String") ||
+                            (right is SemaType.Basic && right.name == "String") ||
+                            SemaType.isNumeric(left) && SemaType.isNumeric(right)
+                    if (!otherOk) {
+                        diagnostics.error(
+                            "字符串拼接需要 String 或数字操作数（S-7.6.1），实际 ${left.render()} 与 ${right.render()}",
+                            span.start,
+                            ErrorCodes.INVALID_OPERATOR_OPERAND,
+                        )
+                    }
+                    return SemaType.STRING
                 }
-                return SemaType.STRING
+                arithmeticResult(span, left, right, "加法")
             }
-            arithmeticResult(span, left, right, "加法")
-        }
-        "-", "*", "/", "%" -> arithmeticResult(span, left, right, "算术")
-        "<", ">", "<=", ">=" -> {
-            if (!(SemaType.isNumeric(left) && SemaType.isNumeric(right))) {
-                diagnostics.error("比较运算需要数字操作数（S-7.5.1）", span.start, ErrorCodes.INVALID_OPERATOR_OPERAND)
-            }
-            SemaType.BOOLEAN
-        }
-        "==", "!=" -> equalityResult(span, left, right)
-        "&&", "||" -> {
-            if (!left.isError && !TypeAssignability.sameBase(left, SemaType.BOOLEAN)) {
-                diagnostics.error("'&&'/'||' 需要 Boolean 操作数", span.start, ErrorCodes.INVALID_OPERATOR_OPERAND)
-            }
-            if (!right.isError && !TypeAssignability.sameBase(right, SemaType.BOOLEAN)) {
-                diagnostics.error("'&&'/'||' 需要 Boolean 操作数", span.start, ErrorCodes.INVALID_OPERATOR_OPERAND)
-            }
-            SemaType.BOOLEAN
-        }
-        ".." -> SemaType.RANGE
-        else -> {
-            diagnostics.error("未知运算符 '$op'", span.start, ErrorCodes.INVALID_OPERATOR_OPERAND)
-            SemaType.ErrorT
-        }
-    }
 
-    private fun equalityResult(span: SourceSpan, left: SemaType, right: SemaType): SemaType {
+            "-", "*", "/", "%" -> {
+                arithmeticResult(span, left, right, "算术")
+            }
+
+            "<", ">", "<=", ">=" -> {
+                if (!(SemaType.isNumeric(left) && SemaType.isNumeric(right))) {
+                    diagnostics.error("比较运算需要数字操作数（S-7.5.1）", span.start, ErrorCodes.INVALID_OPERATOR_OPERAND)
+                }
+                SemaType.BOOLEAN
+            }
+
+            "==", "!=" -> {
+                equalityResult(span, left, right)
+            }
+
+            "&&", "||" -> {
+                if (!left.isError && !TypeAssignability.sameBase(left, SemaType.BOOLEAN)) {
+                    diagnostics.error("'&&'/'||' 需要 Boolean 操作数", span.start, ErrorCodes.INVALID_OPERATOR_OPERAND)
+                }
+                if (!right.isError && !TypeAssignability.sameBase(right, SemaType.BOOLEAN)) {
+                    diagnostics.error("'&&'/'||' 需要 Boolean 操作数", span.start, ErrorCodes.INVALID_OPERATOR_OPERAND)
+                }
+                SemaType.BOOLEAN
+            }
+
+            ".." -> {
+                SemaType.RANGE
+            }
+
+            else -> {
+                diagnostics.error("未知运算符 '$op'", span.start, ErrorCodes.INVALID_OPERATOR_OPERAND)
+                SemaType.ErrorT
+            }
+        }
+
+    private fun equalityResult(
+        span: SourceSpan,
+        left: SemaType,
+        right: SemaType,
+    ): SemaType {
         if (!left.isError && !right.isError && !TypeAssignability.sameBase(left, right) && !comparableNull(left, right)) {
             diagnostics.error(
                 "'${left.render()}' 与 '${right.render()}' 不可比较（S-7.5.2）",
@@ -1722,7 +2144,12 @@ class TypeChecker(
         return SemaType.BOOLEAN
     }
 
-    private fun arithmeticResult(span: SourceSpan, left0: SemaType, right0: SemaType, what: String): SemaType {
+    private fun arithmeticResult(
+        span: SourceSpan,
+        left0: SemaType,
+        right0: SemaType,
+        what: String,
+    ): SemaType {
         val left = SemaType.resolveVar(left0)
         val right = SemaType.resolveVar(right0)
         if (left.isError || right.isError) return SemaType.ErrorT
@@ -1736,14 +2163,23 @@ class TypeChecker(
                 else -> SemaType.INT
             }
         }
-        diagnostics.error("${what}需要数字操作数（S-7.5.1），实际 ${left.render()} 与 ${right.render()}", span.start, ErrorCodes.INVALID_OPERATOR_OPERAND)
+        diagnostics.error(
+            "${what}需要数字操作数（S-7.5.1），实际 ${left.render()} 与 ${right.render()}",
+            span.start,
+            ErrorCodes.INVALID_OPERATOR_OPERAND,
+        )
         return SemaType.ErrorT
     }
 
-    private fun comparableNull(left: SemaType, right: SemaType): Boolean =
-        left is SemaType.NothingT || right is SemaType.NothingT
+    private fun comparableNull(
+        left: SemaType,
+        right: SemaType,
+    ): Boolean = left is SemaType.NothingT || right is SemaType.NothingT
 
-    private fun typeOfUnary(expr: YxUnary, expected: SemaType?): SemaType {
+    private fun typeOfUnary(
+        expr: YxUnary,
+        expected: SemaType?,
+    ): SemaType {
         val operand = typeOf(expr.operand)
         if (operand.isError) return SemaType.ErrorT
         return when (expr.op) {
@@ -1753,6 +2189,7 @@ class TypeChecker(
                 }
                 SemaType.BOOLEAN
             }
+
             "-" -> {
                 if (!SemaType.isNumeric(operand)) {
                     diagnostics.error("一元 '-' 需要数字操作数", expr.span.start, ErrorCodes.INVALID_OPERATOR_OPERAND)
@@ -1761,6 +2198,7 @@ class TypeChecker(
                 // S-7.5.4：Byte 目标 + `-Int 字面量` 按取负后的有效值收窄（-128 合法、-129 非法）
                 negatedByteNarrowing(expr, expected) ?: operand
             }
+
             else -> {
                 diagnostics.error("未知一元运算符 '${expr.op}'", expr.span.start, ErrorCodes.INVALID_OPERATOR_OPERAND)
                 SemaType.ErrorT
@@ -1769,7 +2207,10 @@ class TypeChecker(
     }
 
     /** `-Int 字面量` 赋给 Byte：按取负后的值校验范围，避免幅值误判（S-2.5.1/S-7.5.4）。 */
-    private fun negatedByteNarrowing(expr: YxUnary, expected: SemaType?): SemaType? {
+    private fun negatedByteNarrowing(
+        expr: YxUnary,
+        expected: SemaType?,
+    ): SemaType? {
         val expectedNum = expected as? SemaType.Basic ?: return null
         if (expectedNum.nullable || expectedNum.name != "Byte") return null
         val lit = expr.operand as? YxIntLiteral ?: return null
@@ -1787,10 +2228,14 @@ class TypeChecker(
         return expectedNum
     }
 
-    private fun typeOfLambda(expr: YxLambda, expected: SemaType?): SemaType {
+    private fun typeOfLambda(
+        expr: YxLambda,
+        expected: SemaType?,
+    ): SemaType {
         // T-M11-3：期望类型除 SemaType.Function 外，接受 FunctionN Declared（lambda 实参传 FunctionN 参数）
-        val expectedFn = expected as? SemaType.Function
-            ?: (expected as? SemaType.Declared)?.let { functionTypeOfJvm(it) }
+        val expectedFn =
+            expected as? SemaType.Function
+                ?: (expected as? SemaType.Declared)?.let { functionTypeOfJvm(it) }
         if (expectedFn == null) {
             diagnostics.error("Lambda 参数类型必须由上下文提供（S-4.5.3）", expr.span.start, ErrorCodes.INFERENCE_FAILURE)
             expr.body.let { typeOf(it) }
@@ -1823,10 +2268,14 @@ class TypeChecker(
         return expectedFn
     }
 
-    private fun typeOfBlockLambda(expr: YxBlockLambda, expected: SemaType?): SemaType {
+    private fun typeOfBlockLambda(
+        expr: YxBlockLambda,
+        expected: SemaType?,
+    ): SemaType {
         // T-M11-3：期望类型除 SemaType.Function 外，接受 FunctionN Declared（块 Lambda 传 FunctionN 参数）
-        val expectedFn = expected as? SemaType.Function
-            ?: (expected as? SemaType.Declared)?.let { functionTypeOfJvm(it) }
+        val expectedFn =
+            expected as? SemaType.Function
+                ?: (expected as? SemaType.Declared)?.let { functionTypeOfJvm(it) }
         val ret: SemaType = expectedFn?.ret ?: SemaType.UnitT
         smartCast.enterBlock()
         smartCast.shadow("it")
@@ -1853,11 +2302,14 @@ class TypeChecker(
                         inference.expectAssignable(tailType, ret, last.expr.span.start, "Lambda 返回")
                     }
                 }
-                else -> diagnostics.error(
-                    "块 Lambda 返回类型非 Unit 时末条语句必须是表达式（S-7.4.3）",
-                    expr.span.start,
-                    ErrorCodes.RETURN_TYPE_MISMATCH,
-                )
+
+                else -> {
+                    diagnostics.error(
+                        "块 Lambda 返回类型非 Unit 时末条语句必须是表达式（S-7.4.3）",
+                        expr.span.start,
+                        ErrorCodes.RETURN_TYPE_MISMATCH,
+                    )
+                }
             }
         }
         varStack.removeLast()
@@ -1867,7 +2319,11 @@ class TypeChecker(
 
     // ── 字面量 / 辅助 ───────────────────────────────────────────────────────
 
-    private fun literalIntType(text: String, expected: SemaType?, position: SourcePosition?): SemaType {
+    private fun literalIntType(
+        text: String,
+        expected: SemaType?,
+        position: SourcePosition?,
+    ): SemaType {
         val clean = text.replace("_", "")
         val isLong = clean.endsWith("L") || clean.endsWith("l")
         val digits = clean.removeSuffix("L").removeSuffix("l")
@@ -1882,8 +2338,9 @@ class TypeChecker(
             )
             return SemaType.ErrorT
         }
-        val isDecimal = !digits.startsWith("0x") && !digits.startsWith("0X") &&
-            !digits.startsWith("0b") && !digits.startsWith("0B")
+        val isDecimal =
+            !digits.startsWith("0x") && !digits.startsWith("0X") &&
+                !digits.startsWith("0b") && !digits.startsWith("0B")
         // S-2.5.1：十进制超出 Int 范围自动提升 Long；hex/binary 不提升，超出即报错
         if (!isLong && (value > Int.MAX_VALUE || value < Int.MIN_VALUE)) {
             if (isDecimal) return SemaType.LONG
@@ -1923,7 +2380,10 @@ class TypeChecker(
         }
     }
 
-    private fun literalFloatType(text: String, expected: SemaType?): SemaType {
+    private fun literalFloatType(
+        text: String,
+        expected: SemaType?,
+    ): SemaType {
         val clean = text.replace("_", "")
         val isFloat = clean.endsWith("F") || clean.endsWith("f")
         val natural = if (isFloat) SemaType.FLOAT else SemaType.DOUBLE
@@ -1934,29 +2394,39 @@ class TypeChecker(
         return natural
     }
 
-    private fun elementType(iterable: SemaType): SemaType? = when (iterable) {
-        is SemaType.Basic -> when (iterable.name) {
-            "Range" -> SemaType.INT
-            "Iterable" -> SemaType.ANY
-            "String" -> SemaType.CHAR
-            "Array" -> SemaType.ANY
-            else -> null
-        }
-        is SemaType.Declared -> {
-            val sym = iterable.symbol
-            when {
-                sym is JvmClassSymbol && sym.qualifiedName.startsWith("[") -> classPath.arrayElementType(sym.qualifiedName)
-                sym is JvmClassSymbol && sym.qualifiedName == "java.lang.Iterable" -> iterable.args.getOrNull(0) ?: SemaType.ANY
-                sym is JvmClassSymbol && sym.qualifiedName == "java.util.List" -> iterable.args.getOrNull(0) ?: SemaType.ANY
-                sym is JvmClassSymbol && sym.qualifiedName == "java.util.Set" -> iterable.args.getOrNull(0) ?: SemaType.ANY
-                sym is JvmClassSymbol && sym.isIterable() -> iterable.args.getOrNull(0) ?: SemaType.ANY
-                sym is YxClassSymbol && iterable.args.isNotEmpty() -> iterable.args[0]
-                else -> null
+    private fun elementType(iterable: SemaType): SemaType? =
+        when (iterable) {
+            is SemaType.Basic -> {
+                when (iterable.name) {
+                    "Range" -> SemaType.INT
+                    "Iterable" -> SemaType.ANY
+                    "String" -> SemaType.CHAR
+                    "Array" -> SemaType.ANY
+                    else -> null
+                }
+            }
+
+            is SemaType.Declared -> {
+                val sym = iterable.symbol
+                when {
+                    sym is JvmClassSymbol && sym.qualifiedName.startsWith("[") -> classPath.arrayElementType(sym.qualifiedName)
+                    sym is JvmClassSymbol && sym.qualifiedName == "java.lang.Iterable" -> iterable.args.getOrNull(0) ?: SemaType.ANY
+                    sym is JvmClassSymbol && sym.qualifiedName == "java.util.List" -> iterable.args.getOrNull(0) ?: SemaType.ANY
+                    sym is JvmClassSymbol && sym.qualifiedName == "java.util.Set" -> iterable.args.getOrNull(0) ?: SemaType.ANY
+                    sym is JvmClassSymbol && sym.isIterable() -> iterable.args.getOrNull(0) ?: SemaType.ANY
+                    sym is YxClassSymbol && iterable.args.isNotEmpty() -> iterable.args[0]
+                    else -> null
+                }
+            }
+
+            is SemaType.InferenceVar -> {
+                iterable.solution?.let { elementType(it) }
+            }
+
+            else -> {
+                null
             }
         }
-        is SemaType.InferenceVar -> iterable.solution?.let { elementType(it) }
-        else -> null
-    }
 
     /**
      * JVM FunctionN 声明类型 → Yux 函数类型（T-M11-3）：按后缀数字取 arity，
@@ -1965,13 +2435,14 @@ class TypeChecker(
     private fun functionTypeOfJvm(declared: SemaType.Declared): SemaType.Function? {
         val sym = declared.symbol as? JvmClassSymbol ?: return null
         val qn = sym.qualifiedName
-        val arity = when {
-            qn == "yux.core.function.Function0" -> 0
-            qn == "yux.core.function.Function1" -> 1
-            qn == "yux.core.function.Function2" -> 2
-            qn == "yux.core.function.Function3" -> 3
-            else -> return null
-        }
+        val arity =
+            when {
+                qn == "yux.core.function.Function0" -> 0
+                qn == "yux.core.function.Function1" -> 1
+                qn == "yux.core.function.Function2" -> 2
+                qn == "yux.core.function.Function3" -> 3
+                else -> return null
+            }
         val params = (0 until arity).map { declared.args.getOrNull(it) ?: SemaType.ANY }
         val ret = declared.args.getOrNull(arity) ?: SemaType.ANY
         return SemaType.Function(params, ret, nullable = false)
@@ -1980,8 +2451,7 @@ class TypeChecker(
     private fun functionType(fn: FunctionSymbol): SemaType =
         SemaType.Function(fn.params.map { it.type }, fn.returnType ?: SemaType.UnitT, nullable = false)
 
-    private fun functionType(m: JvmMethodSymbol): SemaType =
-        SemaType.Function(m.params, m.returnType, nullable = false)
+    private fun functionType(m: JvmMethodSymbol): SemaType = SemaType.Function(m.params, m.returnType, nullable = false)
 
     // ── 作用域查找 ──────────────────────────────────────────────────────────
 
@@ -2012,8 +2482,7 @@ class TypeChecker(
         return result
     }
 
-    private fun superClassOf(cls: YxClassSymbol): YxClassSymbol? =
-        (cls.superType as? SemaType.Declared)?.symbol as? YxClassSymbol
+    private fun superClassOf(cls: YxClassSymbol): YxClassSymbol? = (cls.superType as? SemaType.Declared)?.symbol as? YxClassSymbol
 }
 
 /**
@@ -2027,19 +2496,72 @@ object BuiltinFunctions {
     private val STRING = SemaType.STRING
     private val UNIT = SemaType.UnitT
 
-    private val functions = mapOf(
-        "print" to FunctionSymbol("print", listOf(ParameterSymbol("x", ANY, hasDefault = false, null)), UNIT, false, false, null, null, YxVisibility.PUBLIC, null, null),
-        "println" to FunctionSymbol("println", listOf(ParameterSymbol("x", ANY, hasDefault = false, null)), UNIT, false, false, null, null, YxVisibility.PUBLIC, null, null),
-        "serialize" to FunctionSymbol("serialize", listOf(ParameterSymbol("x", ANY, hasDefault = false, null)), STRING, false, false, null, null, YxVisibility.PUBLIC, null, null),
-        "deserialize" to FunctionSymbol("deserialize", listOf(ParameterSymbol("text", STRING, hasDefault = false, null), ParameterSymbol("type", ANY, hasDefault = false, null)), ANY, false, false, null, null, YxVisibility.PUBLIC, null, null),
-    )
+    private val functions =
+        mapOf(
+            "print" to
+                FunctionSymbol(
+                    "print",
+                    listOf(ParameterSymbol("x", ANY, hasDefault = false, null)),
+                    UNIT,
+                    false,
+                    false,
+                    null,
+                    null,
+                    YxVisibility.PUBLIC,
+                    null,
+                    null,
+                ),
+            "println" to
+                FunctionSymbol(
+                    "println",
+                    listOf(ParameterSymbol("x", ANY, hasDefault = false, null)),
+                    UNIT,
+                    false,
+                    false,
+                    null,
+                    null,
+                    YxVisibility.PUBLIC,
+                    null,
+                    null,
+                ),
+            "serialize" to
+                FunctionSymbol(
+                    "serialize",
+                    listOf(ParameterSymbol("x", ANY, hasDefault = false, null)),
+                    STRING,
+                    false,
+                    false,
+                    null,
+                    null,
+                    YxVisibility.PUBLIC,
+                    null,
+                    null,
+                ),
+            "deserialize" to
+                FunctionSymbol(
+                    "deserialize",
+                    listOf(
+                        ParameterSymbol("text", STRING, hasDefault = false, null),
+                        ParameterSymbol("type", ANY, hasDefault = false, null),
+                    ),
+                    ANY,
+                    false,
+                    false,
+                    null,
+                    null,
+                    YxVisibility.PUBLIC,
+                    null,
+                    null,
+                ),
+        )
 
     fun find(name: String): FunctionSymbol? = functions[name]
 
     /** 内置函数 → 运行时宿主（与 IRGen builtinCall 的路由一致）。 */
-    fun ownerOf(name: String): String? = when (name) {
-        "print", "println" -> "yux.core.CoreLib"
-        "serialize", "deserialize" -> "yux.serializer.YuxSerializer"
-        else -> null
-    }
+    fun ownerOf(name: String): String? =
+        when (name) {
+            "print", "println" -> "yux.core.CoreLib"
+            "serialize", "deserialize" -> "yux.serializer.YuxSerializer"
+            else -> null
+        }
 }

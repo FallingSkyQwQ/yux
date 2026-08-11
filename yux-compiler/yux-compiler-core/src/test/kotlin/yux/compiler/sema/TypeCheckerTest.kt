@@ -593,4 +593,46 @@ class TypeCheckerTest {
             )
         assertFalse(r.hasErrors, r.errors.toString())
     }
+
+    // ── 扩展函数（M9 缺陷修复：基础类型接收者）────────────────────────────────
+
+    @Test
+    fun `extension function on basic type resolves`() {
+        // checkInstanceCall 的 Basic 分支此前不查扩展函数 → `"hi".shout()` 报 E0016
+        val r =
+            SemaTestSupport.analyze(
+                """
+                fun String.shout(suffix:String = "!"):String {
+                    return this + suffix
+                }
+                fun Int.squared():Int {
+                    return this * this
+                }
+                fun main() {
+                    print "hi".shout()
+                    print 7.squared()
+                }
+                """.trimIndent(),
+            )
+        assertFalse(r.hasErrors, r.errors.toString())
+    }
+
+    @Test
+    fun `nullable basic receiver extension resolves after null check`() {
+        val r =
+            SemaTestSupport.analyze(
+                """
+                fun String.repeat2(sep:String = "|"):String {
+                    return this + sep + this
+                }
+                fun main() {
+                    s:String? = "xy"
+                    if s != null {
+                        print s.repeat2("+")
+                    }
+                }
+                """.trimIndent(),
+            )
+        assertFalse(r.hasErrors, r.errors.toString())
+    }
 }

@@ -8,6 +8,12 @@
 
 - **参数默认值（S-5.5.5）**：默认值表达式此前从未被语义分析（类型不匹配被静默接受），且 IRGen 从不合成缺失实参（运行期 VerifyError）。现在：sema 在函数作用域内类型检查 `= 表达式`（类型不匹配报 E0004）；IRGen 在调用点 `padDefaultArgs` 补齐缺失实参——已提供实参物化为以形参名命名的局部，默认值可引用更早形参（`fun f(a:Int, b:Int = a * 2)`）；接入普通调用/成员调用（含扩展函数 receiver 前置）/async 挂起调用/语句位置调用。
 - **MainTest samples e2e 真空 bug**：原先 `Path.of("samples")` 相对测试 CWD 解析，目录不存在而静默 `return`，CI 从未真正验证样例；改为向上定位仓库根并断言样例数 > 0。
+- **教程五缺陷修复**（随 golden 示例同步验证，均有回归测试）：
+  - when 语句 + is 分支内 `return`（密封 subject、无 else）的 JVM VerifyError（`goto` 指向代码末尾悬空 Label）——后端按返回类型补发兜底返回；
+  - 访问器 `value`/`set` 绑定（S-5.2.3）IRGen 报"局部变量未登记"——访问器体物化 `value`（backing field）、`set` 别名 setter 参数；仅引用时物化、setter 赋值时写回；
+  - 块 lambda 后直接链式调用（`xs.map { }.first()`）的 `it` 解析失败——块 lambda 实参是完整单元，尾随 `.`/`(` 归调用结果（PrattParser）；
+  - 基类方法先调用后子类 `super` 调用 StackOverflow——`BasicOpt.foldExpr` 重建 Invoke 时丢失 `isSuper`，super 调用退回 invokevirtual 派发到子类覆盖方法；现保留 `isSuper` 恒发 INVOKESPECIAL；
+  - 基本类型（`String`/`Int`）用户扩展函数解析不到——`checkInstanceCall` Basic 分支补查 `lookupExtensionCall`。
 
 ### 新增
 

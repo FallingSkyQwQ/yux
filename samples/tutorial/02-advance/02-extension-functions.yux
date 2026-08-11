@@ -1,4 +1,4 @@
-// 02-进阶 · 第 2 章：扩展函数（Receiver.name + 默认值）
+// 02-进阶 · 第 2 章：扩展函数（用户类 + 基础类型 + 默认值）
 Vec2 {
     x:Int
     y:Int
@@ -9,9 +9,18 @@ fun Vec2.lengthSq():Int {
 fun Vec2.sum(base:Int = 10):Int {
     return this.x + this.y + base
 }
+fun String.shout(suffix:String = "!"):String {
+    return this + suffix
+}
+fun Int.squared():Int {
+    return this * this
+}
 fun main() {
     p = Vec2(3, 4)
     println p.lengthSq()
     println p.sum()
     println p.sum(100)
+    println "hi".shout()
+    println "hi".shout("?")
+    println 7.squared()
 }
