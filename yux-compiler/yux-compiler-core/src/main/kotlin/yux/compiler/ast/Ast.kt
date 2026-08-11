@@ -489,6 +489,16 @@ class YxThrow(
     override val span: SourceSpan,
 ) : YxExpr
 
+/**
+ * `await <expr>`（S-8.4.2，T-M14）：async 上下文内的挂起点。
+ * 软关键字：仅 async fun / `async { }` 体内作为一元前缀运算符（`await(x)` 调用形兼容）；
+ * 其他位置 `await` 保持普通标识符语义。
+ */
+class YxAwait(
+    val operand: YxExpr,
+    override val span: SourceSpan,
+) : YxExpr
+
 /** `is T` 类型检查（01-§7.5.3）。 */
 class YxIs(
     val expr: YxExpr,

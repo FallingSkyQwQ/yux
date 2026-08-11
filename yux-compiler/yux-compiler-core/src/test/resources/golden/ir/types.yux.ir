@@ -6,11 +6,11 @@ module {
    Return Arith(ADD, LocalRead(#0), LocalRead(#1))
   }
   static method main(): Unit {
-   LocalAssign #0: User = New User [Const(1), Const("Steve")]
-   LocalAssign #1: Result = New Result [Const(true), Const(42)]
-   LocalAssign #2: Player = New Player [Const("Alex"), Const(20)]
-   LocalAssign #3: Int = Invoke Types.add [Const(1), Const(2)]
-   LocalAssign #4: String = Invoke Player.greet [LocalRead(#2)]
+   LocalAssign #5: User = New User [Const(1), Const("Steve")]
+   LocalAssign #6: Result = New Result [Const(true), Const(42)]
+   LocalAssign #7: Player = New Player [Const("Alex"), Const(20)]
+   LocalAssign #8: Int = Invoke Types.add [Const(1), Const(2)]
+   LocalAssign #9: String = Invoke Player.greet [LocalRead(#7)]
   }
  }
  class User (data) {

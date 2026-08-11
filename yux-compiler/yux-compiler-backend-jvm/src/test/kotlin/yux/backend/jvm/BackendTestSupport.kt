@@ -1,8 +1,10 @@
 package yux.backend.jvm
 
 import yux.compiler.diag.DiagnosticSink
+import yux.compiler.irgen.AsyncCpsLowering
 import yux.compiler.irgen.IRGen
 import yux.compiler.optimizer.BasicOpt
+import yux.compiler.optimizer.SsaOpt
 import yux.compiler.parser.CstToAst
 import yux.compiler.parser.Parser
 import yux.compiler.sema.SemanticAnalyzer
@@ -18,7 +20,7 @@ import java.nio.charset.StandardCharsets
  */
 object BackendTestSupport {
 
-    /** 完整管线：lex → parse → sema → IRGen → 优化 → JVM 后端。 */
+    /** 完整管线：lex → parse → sema → IRGen → async CPS 降级 → SSA 优化 → 最小优化 → JVM 后端。 */
     fun compile(source: String, path: String = "main.yux"): Map<String, ByteArray> {
         val diags = DiagnosticSink()
         val sf = SourceFile(path, source)
@@ -28,6 +30,8 @@ object BackendTestSupport {
         val analysis = SemanticAnalyzer().analyze(mapOf(path to decls), diags)
         require(!diags.hasErrors) { "语义错误: ${diags.diagnostics}" }
         val module = IRGen(analysis).generate(mapOf(path to decls))
+        AsyncCpsLowering(module).transform()
+        SsaOpt.optimize(module)
         BasicOpt.optimize(module)
         val artifacts = AsmBackend().generate(module)
         return artifacts.associate { it.className to it.bytes }
@@ -45,6 +49,8 @@ object BackendTestSupport {
         val analysis = SemanticAnalyzer().analyze(declsByFile, diags)
         require(!diags.hasErrors) { "语义错误: ${diags.diagnostics}" }
         val module = IRGen(analysis).generate(declsByFile)
+        AsyncCpsLowering(module).transform()
+        SsaOpt.optimize(module)
         BasicOpt.optimize(module)
         val artifacts = AsmBackend().generate(module)
         return artifacts.associate { it.className to it.bytes }

@@ -49,6 +49,7 @@
 | E0034 | `WHEN_NOT_EXHAUSTIVE` | T-M12 | when 表达式缺 else（非密封 subject）或密封 subject 未穷尽覆盖 |
 | E0035 | `SEALED_INSTANTIATION` | T-M12 | 直接实例化密封类 |
 | E0036 | `SEALED_SUBCLASS_DIFFERENT_FILE` | T-M12 | 密封类的直接子类声明在其它文件 |
+| E0037 | `ASYNC_OVERRIDE_MISMATCH` | T-M14 | 覆写 async fun 必须声明为 async fun（反之亦然，双 ABI 一致性） |
 
 ## W 系列：警告
 

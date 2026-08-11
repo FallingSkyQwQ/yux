@@ -5,6 +5,7 @@ import yux.compiler.ast.YxAccessorKind
 import yux.compiler.ast.YxAs
 import yux.compiler.ast.YxAssign
 import yux.compiler.ast.YxAsyncBlock
+import yux.compiler.ast.YxAwait
 import yux.compiler.ast.YxBinary
 import yux.compiler.ast.YxBlock
 import yux.compiler.ast.YxBlockLambda
@@ -89,6 +90,31 @@ class TypeChecker(
     private var currentReturnType: SemaType? = null
     private var currentReceiver: SemaType? = null
     private var loopDepth = 0
+
+    /**
+     * async 上下文深度（T-M14）：`async fun` 体 / `async { }` 块体内为真——
+     * 该上下文内 `await` 合法、async fun 调用为挂起调用（返回声明类型）；
+     * 普通 lambda 体暂存并清零（lambda 不能挂起）。
+     */
+    private var asyncContextDepth = 0
+
+    private fun isInAsyncContext(): Boolean = asyncContextDepth > 0
+
+    /** 在 async 上下文内执行 [block]。 */
+    private fun <T> withAsyncContext(block: () -> T): T {
+        asyncContextDepth++
+        try {
+            return block()
+        } finally {
+            asyncContextDepth--
+        }
+    }
+
+    /** `yux.async.Task` 类型（同步上下文 async fun 调用的返回类型，S-8.4）。 */
+    private val taskType: SemaType by lazy {
+        classPath.resolve("yux.async.Task")?.let { SemaType.Declared(it, emptyList(), nullable = false) }
+            ?: SemaType.ErrorT
+    }
 
     /** 表达式/声明结果的读取接口（供 [SemanticAnalyzer] 收集）。 */
     val exprTypesView: Map<YxExpr, SemaType> get() = exprTypes
@@ -241,11 +267,13 @@ class TypeChecker(
         currentReceiver = fn.receiverType
         val bodyType: SemaType? = when (val body = decl.body) {
             is YxFunctionBody.YxExpressionBody -> {
-                val t = typeOf(body.expr, expected = declaredReturn)
+                // async fun 表达式体（`async fun f() = await x`）为 async 上下文（T-M14）
+                val t = if (fn.isAsync) withAsyncContext { typeOf(body.expr, expected = declaredReturn) } else typeOf(body.expr, expected = declaredReturn)
                 inference.expectReturn(t, declaredReturn, body.span.start, "函数 '${fn.name}'")
             }
             is YxFunctionBody.YxBlockBody -> {
-                checkStatements(body.block)
+                // async fun 块体为 async 上下文（await 合法、async fun 调用为挂起调用）
+                if (fn.isAsync) withAsyncContext { checkStatements(body.block) } else checkStatements(body.block)
                 // S-5.5.2：声明非 Unit 返回的块体必须包含 return
                 if (declaredReturn !is SemaType.InferenceVar &&
                     !TypeAssignability.sameBase(declaredReturn, SemaType.UnitT) &&
@@ -323,7 +351,7 @@ class TypeChecker(
                 }
             }
             is YxTry -> checkTry(stmt)
-            is YxAsyncBlock -> checkStatements(stmt.body)
+            is YxAsyncBlock -> withAsyncContext { checkStatements(stmt.body) }
             is YxParallelBlock -> checkStatements(stmt.body)
             is YxUnsafeBlock -> checkStatements(stmt.body)
         }
@@ -951,6 +979,7 @@ class TypeChecker(
             typeOf(expr.expr)
             SemaType.NothingT
         }
+        is YxAwait -> typeOfAwait(expr)
         is YxIs -> {
             typeOf(expr.expr)
             SemaType.BOOLEAN
@@ -1177,7 +1206,9 @@ class TypeChecker(
                 }
             } else {
                 resolvedRefs[callee] = fns.first()
-                checkCallable(fns, call, "函数 '${callee.name}'")
+                val ret = checkCallable(fns, call, "函数 '${callee.name}'")
+                // 双 ABI（T-M14）：async fun 在同步上下文调用返回 Task；async 上下文为挂起调用返回声明类型
+                if (fns.first().isAsync && !isInAsyncContext()) taskType else ret
             }
         }
         is YxMemberAccess -> {
@@ -1220,8 +1251,46 @@ class TypeChecker(
         return checkFunctionCallArgs(fn.params, fn.ret, call)
     }
 
-    private fun checkFunctionCallArgs(params: List<SemaType>, ret: SemaType, call: YxCall): SemaType {
-        if (call.args.size != params.size) {
+    /**
+     * `await <expr>`（S-8.4.2，T-M14）：
+     * - 仅 async 上下文合法（普通 lambda 体已清零 async 上下文 → 此处报错）；
+     * - 操作数为 async fun 调用（async 上下文内已是挂起调用，类型=声明返回类型）；
+     * - 操作数为 Task / CompletableFuture → 返回 `Any?`（Task 非泛型，S-8.4）。
+     */
+    private fun typeOfAwait(expr: YxAwait): SemaType {
+        if (!isInAsyncContext()) {
+            diagnostics.error(
+                "`await` 只能在 async fun / async { } 内使用（T-M14）",
+                expr.span.start,
+                ErrorCodes.UNRESOLVED_REFERENCE,
+            )
+        }
+        val operandType = typeOf(expr.operand)
+        if (isAsyncFunCall(expr.operand)) return operandType
+        val base = SemaType.resolveVar(operandType)
+        val awaitable = base is SemaType.Declared && base.symbol is JvmClassSymbol &&
+            (base.symbol.qualifiedName == "yux.async.Task" ||
+                base.symbol.qualifiedName == "java.util.concurrent.CompletableFuture")
+        if (!operandType.isError && !awaitable) {
+            diagnostics.error(
+                "`await` 操作数必须是 Task / CompletableFuture 或 async fun 调用（T-M14），实际 '${operandType.render()}'",
+                expr.span.start,
+                ErrorCodes.TYPE_MISMATCH,
+            )
+        }
+        return if (awaitable) SemaType.basic("Any", nullable = true) else operandType
+    }
+
+    /** 操作数是否为 async fun 调用（双 ABI 挂起调用）。 */
+    private fun isAsyncFunCall(expr: YxExpr): Boolean = when (expr) {
+        is YxCall -> {
+            val sym = resolvedRefs[expr.callee]
+            sym is FunctionSymbol && sym.isAsync
+        }
+        else -> false
+    }
+
+    private fun checkFunctionCallArgs(params: List<SemaType>, ret: SemaType, call: YxCall): SemaType {        if (call.args.size != params.size) {
             diagnostics.error(
                 "实参数目不匹配: 期望 ${params.size} 个，实际 ${call.args.size} 个",
                 call.span.start,
@@ -1257,7 +1326,9 @@ class TypeChecker(
             }
             // 访问控制（S-5.1.4，缺陷 10）：取最派生候选的声明类
             fns.first().owner?.let { checkMemberAccess(it, fns.first().visibility, call.span, "方法 '${name}'") }
-            return checkCallable(fns, call, "方法 '${name}'")
+            val ret = checkCallable(fns, call, "方法 '${name}'")
+            // 双 ABI（T-M14）：async 成员在同步上下文调用返回 Task
+            return if (fns.first().isAsync && !isInAsyncContext()) taskType else ret
         }
         if (receiver is SemaType.Declared && receiver.symbol is JvmClassSymbol) {
             val sym = receiver.symbol
@@ -1727,7 +1798,11 @@ class TypeChecker(
             sym.definitelyAssigned = true
             varStack.last()[expr.params[i]] = sym
         }
+        // 普通 lambda 不能挂起：体内非 async 上下文（await 报错，T-M14）
+        val savedAsyncDepth = asyncContextDepth
+        asyncContextDepth = 0
         val bodyType = typeOf(expr.body, expected = expectedFn.ret)
+        asyncContextDepth = savedAsyncDepth
         if (!bodyType.isError) inference.expectAssignable(bodyType, expectedFn.ret, expr.body.span.start, "Lambda 返回")
         varStack.removeLast()
         smartCast.exitBlock()
@@ -1749,7 +1824,11 @@ class TypeChecker(
             itSym.definitelyAssigned = true
             varStack.last()["it"] = itSym
         }
+        // 普通块 Lambda 不能挂起：体内非 async 上下文（await 报错，T-M14）
+        val savedAsyncDepth = asyncContextDepth
+        asyncContextDepth = 0
         checkStatements(expr.body)
+        asyncContextDepth = savedAsyncDepth
         // S-7.4.3：非 Unit 返回时，末条语句必须是表达式且类型匹配（与箭头 Lambda 对称）
         if (SemaType.resolveVar(ret) != SemaType.UnitT) {
             val last = expr.body.statements.lastOrNull()

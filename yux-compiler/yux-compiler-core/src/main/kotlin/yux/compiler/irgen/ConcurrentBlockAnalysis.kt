@@ -2,6 +2,7 @@ package yux.compiler.irgen
 
 import yux.compiler.ast.YxAssign
 import yux.compiler.ast.YxAs
+import yux.compiler.ast.YxAwait
 import yux.compiler.ast.YxBinary
 import yux.compiler.ast.YxBlock
 import yux.compiler.ast.YxBlockLambda
@@ -117,6 +118,7 @@ class ConcurrentBlockAnalysis(
         is YxStringTemplate -> expr.parts.any { readsBlockLocalExpr(it, locals, bound) }
         is YxIndexExpr -> readsBlockLocalExpr(expr.base, locals, bound) || readsBlockLocalExpr(expr.index, locals, bound)
         is YxAssign -> readsBlockLocalExpr(expr.target, locals, bound) || readsBlockLocalExpr(expr.value, locals, bound)
+        is YxAwait -> readsBlockLocalExpr(expr.operand, locals, bound)
         is YxLambda -> {
             val saved = HashSet(bound)
             saved += expr.params
@@ -235,6 +237,7 @@ class ConcurrentBlockAnalysis(
                 checkExpr(expr.target, locals, bound)
                 checkExpr(expr.value, locals, bound)
             }
+            is YxAwait -> checkExpr(expr.operand, locals, bound)
             is YxLambda -> {
                 val saved = HashSet(bound)
                 saved += expr.params

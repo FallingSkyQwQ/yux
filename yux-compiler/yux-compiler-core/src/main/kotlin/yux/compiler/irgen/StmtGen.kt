@@ -7,6 +7,7 @@ import yux.compiler.ast.YxIfExpr
 import yux.compiler.ast.YxIs
 import yux.compiler.ast.YxLambda
 import yux.compiler.ast.YxNullable
+import yux.compiler.ast.YxNode
 import yux.compiler.ast.YxParen
 import yux.compiler.ast.YxRange
 import yux.compiler.ast.YxStringTemplate
@@ -248,6 +249,19 @@ class StmtGen(
     }
 }
 
+    /** 语句位置 async fun 挂起调用（T-M14）：Await 提升为临时局部，结果丢弃。 */
+    private fun emitSuspendCallStatement(sym: FunctionSymbol, callee: YxNode, args: List<IrExpr>, g: MethodGen, fileScope: FileScope) {
+        val entry = irGen.suspendEntryMethods[sym]
+            ?: error("IRGen: async fun 挂起入口未登记: ${sym.name}")
+        val resultType = TypeBridge.toIr(sym.returnType ?: SemaType.UnitT)
+        val tmp = g.newLocal("await\$result", resultType)
+        val receiver = when (callee) {
+            is YxMemberAccess -> exprGen.gen(callee.receiver, g, fileScope)
+            else -> null
+        }
+        g.emit(IrStmt.Await(tmp, IrExpr.Invoke(IrMethodRef(entry), receiver, args), isSuspendCall = true))
+    }
+
     /** 语句位置调用（结果丢弃）。 */
     private fun emitCallStatement(call: YxCall, g: MethodGen, fileScope: FileScope) {
         val args = call.args.map { exprGen.genLiteralAdapted(it, g, fileScope) }
@@ -257,6 +271,11 @@ class StmtGen(
                 val sym = irGen.resolvedRefs[callee]
                 when (sym) {
                     is FunctionSymbol -> {
+                        // 双 ABI（T-M14）：async fun 在 async 上下文为挂起调用（结果丢弃）
+                        if (sym.isAsync && irGen.isInAsyncContext()) {
+                            emitSuspendCallStatement(sym, callee, args, g, fileScope)
+                            return
+                        }
                         val irCall = irGen.functionMethods[sym]?.let { IrMethodRef(it) }
                             ?: IrJvmCall(
                                 name = sym.name,
@@ -292,6 +311,12 @@ class StmtGen(
                     val static = irGen.resolver.resolveStaticMethod(rt, callee.name, argTypes)
                         ?: error("IRGen: 静态方法不存在: ${callee.name}")
                     g.emit(IrStmt.Call(static, null, args, static.retType))
+                    return
+                }
+                // 双 ABI（T-M14）：async 成员在 async 上下文为挂起调用
+                val asyncFn = irGen.asyncCalleeSymbol(callee)
+                if (asyncFn != null && asyncFn.isAsync && irGen.isInAsyncContext()) {
+                    emitSuspendCallStatement(asyncFn, callee, args, g, fileScope)
                     return
                 }
                 val receiver = exprGen.gen(callee.receiver, g, fileScope)

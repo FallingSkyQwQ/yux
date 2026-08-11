@@ -3,9 +3,11 @@ package yux.compiler
 import yux.compiler.ast.YxDecl
 import yux.compiler.diag.DiagnosticSink
 import yux.compiler.ir.IrModule
+import yux.compiler.irgen.AsyncCpsLowering
 import yux.compiler.irgen.IRGen
 import yux.compiler.lowering.PluginLowering
 import yux.compiler.optimizer.BasicOpt
+import yux.compiler.optimizer.SsaOpt
 import yux.compiler.parser.CstToAst
 import yux.compiler.parser.Parser
 import yux.compiler.plugin.PluginManager
@@ -48,9 +50,14 @@ class Compiler(
         return analysis
     }
 
-    /** IR 生成 + 最小优化。 */
+    /** IR 生成 + async CPS 降级 + SSA 优化 + 最小优化。 */
     fun generate(declsByFile: Map<String, List<YxDecl>>, analysis: AnalysisResult): IrModule {
         val module = IRGen(analysis, classLoader).generate(declsByFile)
+        // T-M14：async fun → CPS 状态机（门面/挂起入口/状态机类）；必须在优化前（await 尚未消费）
+        AsyncCpsLowering(module).transform()
+        // 完整 SSA 优化（CFG/φ/SCCP/拷贝传播/激进 DCE/φ 销毁）
+        SsaOpt.optimize(module)
+        // 最小优化收尾（语句级常量折叠、死代码、冗余跳转、空守卫折叠）
         BasicOpt.optimize(module)
         return module
     }

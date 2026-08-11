@@ -59,6 +59,7 @@ import yux.compiler.ast.YxStmt
 import yux.compiler.ast.YxStringLiteral
 import yux.compiler.ast.YxStringTemplate
 import yux.compiler.ast.YxStringText
+import yux.compiler.ast.YxAwait
 import yux.compiler.ast.YxSuper
 import yux.compiler.ast.YxThis
 import yux.compiler.ast.YxThrow
@@ -308,6 +309,7 @@ class CstToAst {
         is CstTypeCall -> YxTypeCall(convertType(expr.type), expr.args.map { convertExpr(it) }, expr.span)
         is CstBinary -> YxBinary(expr.op.text, convertExpr(expr.left), convertExpr(expr.right), expr.span)
         is CstUnary -> YxUnary(expr.op.text, convertExpr(expr.operand), expr.span)
+        is CstAwait -> YxAwait(convertExpr(expr.operand), expr.span)
         is CstLambda -> YxLambda(expr.params.map { it.text }, convertExpr(expr.body), expr.span)
         is CstBlockLambda -> YxBlockLambda(convertBlock(expr.block), expr.span)
         is CstParen -> YxParen(convertExpr(expr.expr), expr.span)

@@ -3,18 +3,15 @@ module {
   static synthetic method $clinit(): Unit {
   }
   static method main(): Unit {
-   LocalAssign #0: Any? = Const(null)
-   Branch IsType(LocalRead(#0), Sword) L0 L1
+   Branch IsType(Const(null), Sword) L0 L1
    Label L0
-   LocalAssign #1: Int = Invoke Sword.getDamage [Convert(LocalRead(#0), Sword)]
+   LocalAssign #6: Int = Invoke Sword.getDamage [Convert(Const(null), Sword)]
    Label L1
-   LocalAssign #2: String = Const("Steve")
-   Branch Compare(NE, LocalRead(#2), Const(null)) L2 L3
+   Branch Compare(NE, Const("Steve"), Const(null)) L2 L3
    Label L2
-   LocalAssign #3: Int = Invoke java.lang.String#length [LocalRead(#2)]
+   LocalAssign #8: Int = Invoke java.lang.String#length [Const("Steve")]
    Label L3
-   LocalAssign #4: Any? = LocalRead(#0)
-   Branch IsType(LocalRead(#4), Sword) L5 L6
+   Branch IsType(Const(null), Sword) L5 L6
    Label L5
    Call yux.core.CoreLib.print [Const("sword")] : Unit
    Goto L4

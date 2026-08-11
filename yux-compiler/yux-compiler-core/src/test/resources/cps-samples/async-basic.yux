@@ -1,0 +1,32 @@
+async fun fetch(n: Int): Int {
+    t = Tasks.launch { }
+    await t
+    if n > 0 {
+        return fetch(n - 1)
+    }
+    return 0
+}
+
+async fun guarded(): Int {
+    try {
+        t = Tasks.launch { throw RuntimeException() }
+        await t
+        return 1
+    } catch e {
+        return 42
+    } finally {
+        print "fin"
+    }
+}
+
+async fun loop(n: Int): Int {
+    total = 0
+    i = 0
+    while i < n {
+        t = Tasks.launch { }
+        await t
+        total = total + i
+        i = i + 1
+    }
+    return total
+}

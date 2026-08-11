@@ -66,6 +66,10 @@ yux/
 ./yux-compiler/yux-compiler-cli/build/install/yuxc/bin/yuxc run samples/stdlib.yux
 # 期望输出: 60.030306030.012.0ABCabc3HELLOyux=42async!done（map/filter/sum/uppercase/split/format/launch）
 ./bench/run-bench.sh --out bench/RESULTS.md   # M11 基准复跑
+
+# M14 async 协程：async fun / async{} / await（完整 CPS 状态机）
+./yux-compiler/yux-compiler-cli/build/install/yuxc/bin/yuxc run samples/async.yux
+# 期望输出: 42 8 caught（见 samples/async.stdout）
 ```
 
 ## 里程碑状态
@@ -84,6 +88,8 @@ yux/
 | M9 Paper 示例 | ✅ | Home 插件 samples/home-plugin（T-M9-1，04 全篇：4 命令 + tab + 3 事件 + 配置 + YAML 落盘 + 冷却 + 定时保存）+ 编译器扩展（扩展函数/索引/if 表达式/顶层属性/泛型构造/字符串拼接/JVM 互操作）+ HomePluginE2eTest 集成测试（T-M9-3）+ verify.sh（T-M9-2）+ Java 对照 samples/java-equivalent（T-M9-4，行数对比） |
 | M10 混合项目 | ✅ | 三方互操作 samples/mixed（T-M10-1/3，05-§9 余额系统：Yux→Kotlin/Java）+ 编译顺序编排（T-M10-2，compileMixed 双向自适应：Yux→Java/Kotlin 先 gradle classes；Kotlin/Java→Yux 先 Yux）+ 编译器 classLoader 注入 + 生成脚本（仓库声明/kotlin 工具链/files() 依赖）+ MixedProjectE2eTest（含反向互操作） |
 | M11 标准库完善 | ✅ | yux.io.IO / yux.net.Http（T-M11-1）+ yux.async Task/Tasks（T-M11-2，launch/parallel/await/sleep 真并发）+ yux.collection.Colls / yux.core.Text（T-M11-3）+ 编译器成员调用降级（JvmExtensions 注册表 `xs.map {}`/`s.uppercase()` + FunctionN 桥接 + Unit-Lambda 修复）+ fuzz 5000 例（T-M11-4）+ bench/ 基准（T-M11-5）+ core 覆盖率 ≥70% 门禁（T-M11-6，实际 84.3%）+ samples/stdlib 端到端样例 |
+| M14 async 协程 | ✅ | `async fun`/`async{}` 完整 CPS 状态机（T-M14-1..7，R3 转正）：`await` 软关键字 + 双 ABI（async 上下文挂起调用 / 同步门面返回 Task）+ `yux.async.Continuation`/`Suspendable`/`Continuations` 运行时 + try/catch/finally 跨挂起点 + await 挂起可取消 + CancellationException 自动重抛 + CPS golden 套件 + AsyncFunE2e 15 例（含深循环栈安全、递归链、async{} 内 await）+ `parallel{}` 保持 ForkJoinPool |
+| M15 完整 SSA 优化器 | ✅ | 完整 SSA 优化框架（T-M15-1..7，02-§8.4 后置转正）：CFG + 支配树/支配边界 + Cytron φ 插入/重命名 + SCCP 全局常量传播（常量分支折叠 + 死边移除）+ 拷贝传播/平凡 φ 消除 + 激进 DCE + φ 销毁（边分裂拷贝）；结构化 Try 不透明节点 + flush 拷贝 + 原寄存器回退；break/continue 跨 try 保守回退 BasicOpt；`SsaOptTest` 12 例 + `SsaE2eTest` 6 例 + 覆盖率 82.0% |
 
 ## 文档索引
 

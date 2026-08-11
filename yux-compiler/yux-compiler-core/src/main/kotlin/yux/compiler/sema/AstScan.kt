@@ -58,8 +58,9 @@ object AstScan {
                 visit(e.target, onNode)
                 visit(e.value, onNode)
             }
-            is yux.compiler.ast.YxBlockLambda -> visit(e.body, onNode)
-            is yux.compiler.ast.YxLambda -> visit(e.body, onNode)
+        is yux.compiler.ast.YxBlockLambda -> visit(e.body, onNode)
+        is yux.compiler.ast.YxLambda -> visit(e.body, onNode)
+        is yux.compiler.ast.YxAwait -> visit(e.operand, onNode)
             is yux.compiler.ast.YxStringTemplate -> e.parts.forEach { visit(it, onNode) }
             is yux.compiler.ast.YxMemberAccess -> visit(e.receiver, onNode)
             is yux.compiler.ast.YxCall -> {

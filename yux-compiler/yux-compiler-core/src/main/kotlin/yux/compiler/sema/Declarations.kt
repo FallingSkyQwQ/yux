@@ -334,28 +334,50 @@ class Declarations(
     private fun validateOverrides(sym: YxClassSymbol) {
         for (fn in sym.functions().filter { it.isOverride }) {
             // S-8.7.2：父类链 / 接口（均为 Yux 类或 JVM 类）中存在同名同元数成员即合法
-            if (!hasInheritedFunction(sym, fn.name, fn.params.size)) {
+            val inherited = inheritedFunction(sym, fn.name, fn.params.size)
+            val inheritedJvm = hasInheritedJvmFunction(sym, fn.name, fn.params.size)
+            if (inherited == null && !inheritedJvm) {
                 diagnostics.error(
                     "override 函数 '${fn.name}' 无对应父类成员",
                     fn.span?.start,
                     ErrorCodes.OVERRIDE_NO_SUPER,
                 )
+                continue
+            }
+            // T-M14：双 ABI 一致性——覆写 async fun 的成员必须同为 async fun
+            // （否则 JVM 签名不同不构成覆写，父类门面仍被调用，语义静默错误）
+            if (inherited != null && inherited.isAsync != fn.isAsync) {
+                diagnostics.error(
+                    if (inherited.isAsync) {
+                        "覆写 async fun '${fn.name}' 必须声明为 async fun（T-M14）"
+                    } else {
+                        "非 async fun '${fn.name}' 不可覆写为 async fun（T-M14）"
+                    },
+                    fn.span?.start,
+                    ErrorCodes.ASYNC_OVERRIDE_MISMATCH,
+                )
             }
         }
     }
 
-    /** override 目标查找：父类链（含父类自身接口）+ 本类接口（传递）。 */
-    private fun hasInheritedFunction(sym: YxClassSymbol, name: String, arity: Int): Boolean {
+    /** override 目标查找：父类链（含父类自身接口）+ 本类接口（传递）。返回目标符号或 null。 */
+    private fun inheritedFunction(sym: YxClassSymbol, name: String, arity: Int): FunctionSymbol? {
         when (val parent = (sym.superType as? SemaType.Declared)?.symbol) {
             // 父类链 + 父类接口：父类自身的 functionsIncludingSuper 已覆盖其祖先链与接口
-            is YxClassSymbol -> if (parent.functionsIncludingSuper(name).any { it.params.size == arity }) return true
-            is JvmClassSymbol -> if (parent.allMethods().any { it.name == name && it.params.size == arity }) return true
+            is YxClassSymbol -> parent.functionsIncludingSuper(name).firstOrNull { it.params.size == arity }?.let { return it }
+            is JvmClassSymbol -> return null // JVM 方法无 isAsync，合法性见 hasInheritedJvmFunction
             else -> Unit
         }
         // 本类接口（传递闭包，仅 Yux 声明类；JVM 接口不要求 override）
         for (iface in sym.interfaceSymbols()) {
-            if (iface.functionsNamed(name).any { it.params.size == arity }) return true
+            iface.functionsNamed(name).firstOrNull { it.params.size == arity }?.let { return it }
         }
-        return false
+        return null
+    }
+
+    /** 父类为 JVM 类时 override 合法性（JVM 方法无 isAsync，不参与 async 一致性）。 */
+    private fun hasInheritedJvmFunction(sym: YxClassSymbol, name: String, arity: Int): Boolean {
+        val parent = (sym.superType as? SemaType.Declared)?.symbol as? JvmClassSymbol ?: return false
+        return parent.allMethods().any { it.name == name && it.params.size == arity }
     }
 }

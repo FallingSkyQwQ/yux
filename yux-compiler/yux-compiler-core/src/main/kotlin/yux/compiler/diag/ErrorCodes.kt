@@ -41,6 +41,7 @@ object ErrorCodes {
     const val WHEN_NOT_EXHAUSTIVE = "E0034"
     const val SEALED_INSTANTIATION = "E0035"
     const val SEALED_SUBCLASS_DIFFERENT_FILE = "E0036"
+    const val ASYNC_OVERRIDE_MISMATCH = "E0037"
 
     // ── W 系列：警告 ──────────────────────────────────────────────────────────
     const val TYPE_FALLBACK = "W0001"

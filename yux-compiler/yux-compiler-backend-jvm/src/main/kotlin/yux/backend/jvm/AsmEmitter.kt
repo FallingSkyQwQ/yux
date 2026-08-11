@@ -366,6 +366,7 @@ private fun findLocalInStmt(stmt: IrStmt, name: String): IrLocal? = when (stmt) 
     is IrStmt.Try -> findLocalByNameRecursive(stmt.body, name)
         ?: stmt.catches.firstNotNullOfOrNull { findLocalByNameRecursive(it.body, name) }
         ?: stmt.finallyBody?.let { findLocalByNameRecursive(it, name) }
+    is IrStmt.Await -> findLocalInExpr(stmt.target, name) ?: stmt.local.takeIf { it.name == name }
     is IrStmt.Nop -> null
 }
 

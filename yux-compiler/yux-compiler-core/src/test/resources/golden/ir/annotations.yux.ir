@@ -3,8 +3,8 @@ module {
   static synthetic method $clinit(): Unit {
   }
   static method main(): Unit {
-   LocalAssign #0: Player = New Player [Const("Alex")]
-   Call yux.core.CoreLib.print [Invoke Player#toString [LocalRead(#0)]] : Unit
+   LocalAssign #1: Player = New Player [Const("Alex")]
+   Call yux.core.CoreLib.print [Invoke Player#toString [LocalRead(#1)]] : Unit
   }
  }
  class Database (service) @yux.di.YuxService {

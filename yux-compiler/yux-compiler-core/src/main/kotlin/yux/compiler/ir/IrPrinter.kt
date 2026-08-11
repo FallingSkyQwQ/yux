@@ -94,6 +94,11 @@ object IrPrinter {
             line(depth, "Return$value")
         }
         is IrStmt.Throw -> line(depth, "Throw ${IrExprRenderer.render(stmt.value)}")
+        is IrStmt.Await -> line(
+            depth,
+            "Await ${localIndex(stmt.local)}: ${stmt.local.type.render()} = " +
+                "${if (stmt.isSuspendCall) "suspend " else ""}${IrExprRenderer.render(stmt.target)}",
+        )
         is IrStmt.Monitor -> line(
             depth,
             if (stmt.enter) {
