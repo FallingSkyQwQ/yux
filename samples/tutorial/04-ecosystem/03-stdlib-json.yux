@@ -1,0 +1,15 @@
+// 04-生态 · 第 3 章：JSON 序列化（yux.json：serialize/deserialize）
+import yux.json.Json
+data Item {
+    id:Int
+    tag:String
+}
+fun main() {
+    it = Item(7, "sword")
+    s = Json.serialize(it) as String
+    println s
+    raw = Json.deserialize(s, Item)
+    if raw is Item {
+        println raw.tag
+    }
+}

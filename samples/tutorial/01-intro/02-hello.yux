@@ -1,0 +1,4 @@
+// 01-入门 · 第 2 章：第一个程序（T-M12 圣经示例）
+fun main() {
+    print "Hello Yux"
+}

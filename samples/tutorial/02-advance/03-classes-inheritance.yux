@@ -1,0 +1,11 @@
+// 02-进阶 · 第 3 章：类与继承（extends + 方法覆盖 + super 调用）
+Animal {
+    fun speak() = "generic"
+}
+Dog extends Animal {
+    fun speak() = super.speak() + " dog"
+}
+fun main() {
+    d = Dog()
+    println d.speak()
+}

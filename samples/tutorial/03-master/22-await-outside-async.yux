@@ -1,0 +1,5 @@
+// 03-精通 · 反例：await 用在非 async 上下文（E0001）
+fun main() {
+    t = Tasks.launch { }
+    await t
+}

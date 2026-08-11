@@ -1,0 +1,8 @@
+// 02-进阶 · 第 15 章：闭包（捕获外部局部）
+fun main() {
+    x = 5
+    addX:(Int)->Int = v -> v + x
+    println addX(3)
+    mul:(Int)->Int = { it * x }
+    println mul(4)
+}

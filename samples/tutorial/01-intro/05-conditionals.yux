@@ -1,0 +1,13 @@
+// 01-入门 · 第 5 章：条件分支（if/else + if 表达式）
+fun main() {
+    health = 8
+    if health <= 0 {
+        print "dead"
+    } else if health < 10 {
+        print "low"
+    } else {
+        print "fine"
+    }
+    msg = if health > 0 then "alive" else "dead"
+    print msg
+}

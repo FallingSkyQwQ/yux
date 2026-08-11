@@ -1,0 +1,13 @@
+// 03-精通 · 第 12 章：递归组合（阶乘 + 斐波那契）
+fun fact(n:Int):Int {
+    if n <= 1 { return 1 }
+    return n * fact(n-1)
+}
+fun fib(n:Int):Int {
+    if n < 2 { return n }
+    return fib(n-1) + fib(n-2)
+}
+fun main() {
+    println fact(5)
+    println fib(10)
+}

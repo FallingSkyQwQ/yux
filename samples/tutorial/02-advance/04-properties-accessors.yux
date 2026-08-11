@@ -1,0 +1,14 @@
+// 02-进阶 · 第 4 章：属性访问器（自定义 get/set）
+Thermostat {
+    temperature:Int = 20
+    display:Int {
+        get { return this.temperature }
+        set { this.temperature = 26 }
+    }
+}
+fun main() {
+    t = Thermostat(20, 0)
+    println t.temperature
+    t.display = 99
+    println t.temperature
+}

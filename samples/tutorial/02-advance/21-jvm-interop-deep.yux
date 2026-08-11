@@ -1,0 +1,11 @@
+// 02-进阶 · 第 21 章：JVM 互操作深入（UUID/Math/String）
+import java.util.UUID
+fun main() {
+    id = UUID.randomUUID()
+    println (id != null)
+    println Math.max(1, 2)
+    println Math.min(5, 3)
+    s = "  abc  ".trim() as String
+    println s
+    println "hello".length
+}

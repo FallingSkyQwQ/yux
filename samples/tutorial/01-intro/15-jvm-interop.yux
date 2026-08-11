@@ -1,0 +1,9 @@
+// 01-入门 · 第 12 章：JVM 互操作初体验（Math/String 方法）
+fun main() {
+    m = Math.max(3, 7)
+    println m
+    s = "  hi  ".trim() as String
+    println s
+    n = "yux".length
+    println n
+}

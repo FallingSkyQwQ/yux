@@ -1,0 +1,9 @@
+// 02-进阶 · 第 7 章：集合变换（map/filter）
+fun main() {
+    xs = List Int()
+    xs.add(1); xs.add(2); xs.add(3)
+    doubled = xs.map { (it as Int) * 2 }
+    println doubled.sum()
+    evens = xs.filter { (it as Int) % 2 == 0 }
+    println evens.size
+}

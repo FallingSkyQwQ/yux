@@ -1,0 +1,17 @@
+// 03-精通 · 第 10 章：穷尽 when（密封 + 无 else 的表达式）
+sealed Shape {
+}
+Circle extends Shape {
+    r:Int
+}
+Square extends Shape {
+    side:Int
+}
+fun describe(s:Shape):String = when s {
+    is Circle -> "circle r=${s.r}"
+    is Square -> "square side=${s.side}"
+}
+fun main() {
+    println describe(Circle(2))
+    println describe(Square(3))
+}

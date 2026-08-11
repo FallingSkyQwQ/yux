@@ -1,0 +1,13 @@
+// 01-入门 · 第 3 章：类型速览（Int/Double/Boolean/Char/String）
+fun main() {
+    a:Int = 42
+    b:Double = 3.14
+    c:Boolean = true
+    d:Char = 'X'
+    e:String = "yux"
+    println a
+    println b
+    println c
+    println d
+    println e
+}

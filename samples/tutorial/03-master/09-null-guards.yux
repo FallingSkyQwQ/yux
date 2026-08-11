@@ -1,0 +1,11 @@
+// 03-精通 · 第 9 章：空守卫（?. 短路 + 判空惯用法）
+fun main() {
+    s:String? = null
+    len = s?.length
+    println len
+    t:String? = "abc"
+    println t?.length
+    if s == null {
+        println "s is null"
+    }
+}

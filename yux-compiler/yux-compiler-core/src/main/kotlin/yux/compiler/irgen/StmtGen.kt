@@ -1,41 +1,41 @@
 package yux.compiler.irgen
 
 import yux.compiler.ast.YxAs
-import yux.compiler.ast.YxBinary
-import yux.compiler.ast.YxExpr
-import yux.compiler.ast.YxIfExpr
-import yux.compiler.ast.YxIs
-import yux.compiler.ast.YxLambda
-import yux.compiler.ast.YxNullable
-import yux.compiler.ast.YxNode
-import yux.compiler.ast.YxParen
-import yux.compiler.ast.YxRange
-import yux.compiler.ast.YxStringTemplate
-import yux.compiler.ast.YxUnary
 import yux.compiler.ast.YxAssign
 import yux.compiler.ast.YxAsyncBlock
+import yux.compiler.ast.YxBinary
 import yux.compiler.ast.YxBlock
 import yux.compiler.ast.YxBlockLambda
 import yux.compiler.ast.YxBreak
 import yux.compiler.ast.YxCall
 import yux.compiler.ast.YxContinue
 import yux.compiler.ast.YxElseCondition
+import yux.compiler.ast.YxExpr
 import yux.compiler.ast.YxExprCondition
 import yux.compiler.ast.YxExprStmt
 import yux.compiler.ast.YxFor
 import yux.compiler.ast.YxIdentifier
 import yux.compiler.ast.YxIf
+import yux.compiler.ast.YxIfExpr
 import yux.compiler.ast.YxIndexExpr
+import yux.compiler.ast.YxIs
 import yux.compiler.ast.YxIsCondition
+import yux.compiler.ast.YxLambda
 import yux.compiler.ast.YxMemberAccess
+import yux.compiler.ast.YxNode
+import yux.compiler.ast.YxNullable
 import yux.compiler.ast.YxParallelBlock
+import yux.compiler.ast.YxParen
+import yux.compiler.ast.YxRange
 import yux.compiler.ast.YxReturn
 import yux.compiler.ast.YxStmt
+import yux.compiler.ast.YxStringTemplate
 import yux.compiler.ast.YxSuper
 import yux.compiler.ast.YxThrow
 import yux.compiler.ast.YxTry
 import yux.compiler.ast.YxTypeCall
 import yux.compiler.ast.YxTypeReference
+import yux.compiler.ast.YxUnary
 import yux.compiler.ast.YxUnsafeBlock
 import yux.compiler.ast.YxVarDecl
 import yux.compiler.ast.YxWhen
@@ -76,43 +76,96 @@ class StmtGen(
     internal val exprGen: ExprGen = ExprGen(irGen, irGen.resolver)
     private val concurrentBlocks = ConcurrentBlockGen(this, irGen)
 
-    internal fun gen(stmt: YxStmt, g: MethodGen, fileScope: FileScope) {
+    internal fun gen(
+        stmt: YxStmt,
+        g: MethodGen,
+        fileScope: FileScope,
+    ) {
         // T-M12 LineNumberTable：标注当前源码行号，emit 时写入 IR 语句（嵌套语句各自覆盖/恢复）。
         // 仅标注 >0 行：插件下沉/合成节点可能携带 -1 哨兵 span，负数行号对 visitLineNumber 非法
         val savedLine = g.currentLine
-        g.currentLine = stmt.span.start.line.takeIf { it > 0 }
+        g.currentLine =
+            stmt.span.start.line
+                .takeIf { it > 0 }
         when (stmt) {
             is YxBlock -> {
                 g.enterScope()
                 stmt.statements.forEach { gen(it, g, fileScope) }
                 g.exitScope()
             }
-            is YxVarDecl -> genVarDecl(stmt, g, fileScope)
-            is YxAssign -> genAssign(stmt, g, fileScope)
-            is YxExprStmt -> genExprStmt(stmt, g, fileScope)
-            is YxIf -> genIf(stmt, g, fileScope)
-            is YxWhile -> genWhile(stmt, g, fileScope)
-            is YxFor -> genFor(stmt, g, fileScope)
-            is YxWhen -> genWhen(stmt, g, fileScope)
-            is YxReturn -> g.emit(IrStmt.Return(stmt.value?.let { exprGen.gen(it, g, fileScope) }))
-            is YxBreak -> g.currentLoop?.let { g.emit(IrStmt.Goto(it.second)) }
-            is YxContinue -> g.currentLoop?.let { g.emit(IrStmt.Goto(it.first)) }
-            is YxTry -> genTry(stmt, g, fileScope)
+
+            is YxVarDecl -> {
+                genVarDecl(stmt, g, fileScope)
+            }
+
+            is YxAssign -> {
+                genAssign(stmt, g, fileScope)
+            }
+
+            is YxExprStmt -> {
+                genExprStmt(stmt, g, fileScope)
+            }
+
+            is YxIf -> {
+                genIf(stmt, g, fileScope)
+            }
+
+            is YxWhile -> {
+                genWhile(stmt, g, fileScope)
+            }
+
+            is YxFor -> {
+                genFor(stmt, g, fileScope)
+            }
+
+            is YxWhen -> {
+                genWhen(stmt, g, fileScope)
+            }
+
+            is YxReturn -> {
+                g.emit(IrStmt.Return(stmt.value?.let { exprGen.gen(it, g, fileScope) }))
+            }
+
+            is YxBreak -> {
+                g.currentLoop?.let { g.emit(IrStmt.Goto(it.second)) }
+            }
+
+            is YxContinue -> {
+                g.currentLoop?.let { g.emit(IrStmt.Goto(it.first)) }
+            }
+
+            is YxTry -> {
+                genTry(stmt, g, fileScope)
+            }
+
             // 并发块（S-8.4）：async → Tasks.launch（不阻塞）；parallel → 语句级拆分并行 + 块尾 join；
             // unsafe → v0.1 透传（与普通块同语义，无安全检查）。
-            is YxAsyncBlock -> concurrentBlocks.genAsyncBlock(stmt.body, g, fileScope)
-            is YxParallelBlock -> concurrentBlocks.genParallelBlock(stmt.body, g, fileScope)
+            is YxAsyncBlock -> {
+                concurrentBlocks.genAsyncBlock(stmt.body, g, fileScope)
+            }
+
+            is YxParallelBlock -> {
+                concurrentBlocks.genParallelBlock(stmt.body, g, fileScope)
+            }
+
             is YxUnsafeBlock -> {
                 g.enterScope()
                 stmt.body.statements.forEach { gen(it, g, fileScope) }
                 g.exitScope()
             }
-            else -> Unit
+
+            else -> {
+                Unit
+            }
         }
         g.currentLine = savedLine
     }
 
-    private fun genVarDecl(stmt: YxVarDecl, g: MethodGen, fileScope: FileScope) {
+    private fun genVarDecl(
+        stmt: YxVarDecl,
+        g: MethodGen,
+        fileScope: FileScope,
+    ) {
         val init = stmt.initializer
         if (init == null) {
             // 无初始化器：先占位注册（确定性赋值由 S-6.1.2 保证使用前已赋值）
@@ -126,53 +179,77 @@ class StmtGen(
         g.emit(IrStmt.LocalAssign(local, exprGen.gen(init, g, fileScope)))
     }
 
-    private fun genAssign(stmt: YxAssign, g: MethodGen, fileScope: FileScope) {
+    private fun genAssign(
+        stmt: YxAssign,
+        g: MethodGen,
+        fileScope: FileScope,
+    ) {
         val op = compoundOp(stmt.op)
         when (val t = stmt.target) {
-            is YxIdentifier -> when (val sym = irGen.resolvedRefs[t]) {
-                is VariableSymbol -> {
-                    val local = g.lookupLocal(sym.name)
-                        ?: error("IRGen: 赋值目标未登记: ${sym.name}")
-                    val value = if (op == null) {
-                        exprGen.gen(stmt.value, g, fileScope)
-                    } else {
-                        IrExpr.Arith(op, IrExpr.LocalRead(local), exprGen.gen(stmt.value, g, fileScope))
+            is YxIdentifier -> {
+                when (val sym = irGen.resolvedRefs[t]) {
+                    is VariableSymbol -> {
+                        val local =
+                            g.lookupLocal(sym.name)
+                                ?: error("IRGen: 赋值目标未登记: ${sym.name}")
+                        val value =
+                            if (op == null) {
+                                exprGen.gen(stmt.value, g, fileScope)
+                            } else {
+                                IrExpr.Arith(op, IrExpr.LocalRead(local), exprGen.gen(stmt.value, g, fileScope))
+                            }
+                        g.emit(IrStmt.LocalAssign(local, value))
                     }
-                    g.emit(IrStmt.LocalAssign(local, value))
-                }
-                is PropertySymbol -> {
-                    val irProp = irGen.propertyAccessors[sym]
-                        ?: error("IRGen: 属性访问器未登记: ${sym.name}")
-                    val setter = irProp.setter
-                        ?: error("IRGen: 属性 setter 未登记: ${sym.name}")
-                    val getter = irProp.getter
-                        ?: error("IRGen: 属性 getter 未登记: ${sym.name}")
-                    val value = if (op == null) {
-                        exprGen.gen(stmt.value, g, fileScope)
-                    } else {
-                        // 复合赋值读取侧走 getter（S-5.2 自定义访问器语义）
-                        val read = if (irProp.isStatic) {
-                            IrExpr.Invoke(IrMethodRef(getter), null, emptyList())
+
+                    is PropertySymbol -> {
+                        val irProp =
+                            irGen.propertyAccessors[sym]
+                                ?: error("IRGen: 属性访问器未登记: ${sym.name}")
+                        val setter =
+                            irProp.setter
+                                ?: error("IRGen: 属性 setter 未登记: ${sym.name}")
+                        val getter =
+                            irProp.getter
+                                ?: error("IRGen: 属性 getter 未登记: ${sym.name}")
+                        val value =
+                            if (op == null) {
+                                exprGen.gen(stmt.value, g, fileScope)
+                            } else {
+                                // 复合赋值读取侧走 getter（S-5.2 自定义访问器语义）
+                                val read =
+                                    if (irProp.isStatic) {
+                                        IrExpr.Invoke(IrMethodRef(getter), null, emptyList())
+                                    } else {
+                                        IrExpr.Invoke(IrMethodRef(getter), IrExpr.This, emptyList())
+                                    }
+                                IrExpr.Arith(op, read, exprGen.gen(stmt.value, g, fileScope))
+                            }
+                        if (irProp.isStatic) {
+                            g.emit(IrStmt.Call(IrMethodRef(setter), null, listOf(value), IrType.Void))
                         } else {
-                            IrExpr.Invoke(IrMethodRef(getter), IrExpr.This, emptyList())
+                            g.emit(IrStmt.Call(IrMethodRef(setter), IrExpr.This, listOf(value), IrType.Void))
                         }
-                        IrExpr.Arith(op, read, exprGen.gen(stmt.value, g, fileScope))
                     }
-                    if (irProp.isStatic) {
-                        g.emit(IrStmt.Call(IrMethodRef(setter), null, listOf(value), IrType.Void))
-                    } else {
-                        g.emit(IrStmt.Call(IrMethodRef(setter), IrExpr.This, listOf(value), IrType.Void))
+
+                    else -> {
+                        error("IRGen: 不支持的赋值目标: ${t.name}")
                     }
                 }
-                else -> error("IRGen: 不支持的赋值目标: ${t.name}")
             }
-            is YxMemberAccess -> genMemberAssign(stmt, t, op, g, fileScope)
+
+            is YxMemberAccess -> {
+                genMemberAssign(stmt, t, op, g, fileScope)
+            }
+
             is YxIndexExpr -> {
                 // 语句位置索引赋值：走表达式赋值路径（Map.put/List.set），结果以 Eval 发射
                 if (op != null) error("IRGen: 索引复合赋值暂不支持（v0.1）")
                 g.emit(IrStmt.Eval(exprGen.gen(stmt, g, fileScope)))
             }
-            else -> error("IRGen: 不支持的赋值目标: ${t::class.simpleName}")
+
+            else -> {
+                error("IRGen: 不支持的赋值目标: ${t::class.simpleName}")
+            }
         }
     }
 
@@ -188,10 +265,12 @@ class StmtGen(
         val rt = SemaType.resolveVar(receiverType ?: SemaType.ErrorT)
         when {
             rt is SemaType.Declared && rt.symbol is YxClassSymbol -> {
-                val prop = (rt.symbol as YxClassSymbol).propertyIncludingSuper(target.name)
-                    ?: error("IRGen: 赋值目标属性不存在: ${target.name}")
-                val accessor = irGen.propertyAccessors[prop]
-                    ?: error("IRGen: 属性访问器未登记: ${target.name}")
+                val prop =
+                    (rt.symbol as YxClassSymbol).propertyIncludingSuper(target.name)
+                        ?: error("IRGen: 赋值目标属性不存在: ${target.name}")
+                val accessor =
+                    irGen.propertyAccessors[prop]
+                        ?: error("IRGen: 属性访问器未登记: ${target.name}")
                 val setter = accessor.setter ?: error("IRGen: 属性 setter 不存在: ${target.name}")
                 if (op == null) {
                     g.emit(IrStmt.Call(IrMethodRef(setter), receiver, listOf(exprGen.gen(stmt.value, g, fileScope)), IrType.Void))
@@ -202,68 +281,105 @@ class StmtGen(
                 val instanceReceiver = receiver ?: error("IRGen: 复合赋值需要实例接收者: ${target.name}")
                 val receiverLocal = g.newLocal("receiver", TypeBridge.toIr(rt))
                 g.emit(IrStmt.LocalAssign(receiverLocal, instanceReceiver))
-                val value = IrExpr.Arith(
-                    op,
-                    IrExpr.Invoke(IrMethodRef(getter), IrExpr.LocalRead(receiverLocal), emptyList()),
-                    exprGen.gen(stmt.value, g, fileScope),
-                )
+                val value =
+                    IrExpr.Arith(
+                        op,
+                        IrExpr.Invoke(IrMethodRef(getter), IrExpr.LocalRead(receiverLocal), emptyList()),
+                        exprGen.gen(stmt.value, g, fileScope),
+                    )
                 g.emit(IrStmt.Call(IrMethodRef(setter), IrExpr.LocalRead(receiverLocal), listOf(value), IrType.Void))
             }
+
             else -> {
                 // JVM JavaBean setter：`p.name = x` → `p.setName(x)`
-                val setter = irGen.resolver.resolveInstanceSetter(rt, target.name)
-                    ?: error("IRGen: JVM setter 不存在: ${target.name} on ${rt.render()}")
+                val setter =
+                    irGen.resolver.resolveInstanceSetter(rt, target.name)
+                        ?: error("IRGen: JVM setter 不存在: ${target.name} on ${rt.render()}")
                 if (op == null) {
                     g.emit(IrStmt.Call(setter, receiver, listOf(exprGen.gen(stmt.value, g, fileScope)), IrType.Void))
                     return
                 }
                 // 复合赋值：读取 getter + op + 写 setter（op 不得静默丢失）
-                val getter = irGen.resolver.resolveInstanceMethod(rt, target.name)
-                    ?: error("IRGen: JVM getter 不存在: ${target.name} on ${rt.render()}")
+                val getter =
+                    irGen.resolver.resolveInstanceMethod(rt, target.name)
+                        ?: error("IRGen: JVM getter 不存在: ${target.name} on ${rt.render()}")
                 val instanceReceiver = receiver ?: error("IRGen: 复合赋值需要实例接收者: ${target.name}")
                 val receiverLocal = g.newLocal("receiver", TypeBridge.toIr(rt))
                 g.emit(IrStmt.LocalAssign(receiverLocal, instanceReceiver))
-                val value = IrExpr.Arith(op, IrExpr.Invoke(getter, IrExpr.LocalRead(receiverLocal), emptyList()), exprGen.gen(stmt.value, g, fileScope))
+                val value =
+                    IrExpr.Arith(
+                        op,
+                        IrExpr.Invoke(getter, IrExpr.LocalRead(receiverLocal), emptyList()),
+                        exprGen.gen(stmt.value, g, fileScope),
+                    )
                 g.emit(IrStmt.Call(setter, IrExpr.LocalRead(receiverLocal), listOf(value), IrType.Void))
             }
         }
     }
 
-    private fun genExprStmt(stmt: YxExprStmt, g: MethodGen, fileScope: FileScope) {
+    private fun genExprStmt(
+        stmt: YxExprStmt,
+        g: MethodGen,
+        fileScope: FileScope,
+    ) {
         when (val expr = stmt.expr) {
-            is YxCall -> emitCallStatement(expr, g, fileScope)
-            is YxAssign -> genAssign(expr, g, fileScope)
-            is YxThrow -> g.emit(IrStmt.Throw(exprGen.gen(expr.expr, g, fileScope)))
-            is YxTypeCall -> g.emit(
-                IrStmt.New(
-                    TypeBridge.toIr(irGen.exprTypes[expr] ?: SemaType.ErrorT),
-                    expr.args.map { exprGen.gen(it, g, fileScope) },
-                ),
-            )
-        else -> {
-            // 表达式语句：gen 过程中已发射副作用语句（短路/表达式赋值）；结果若有
-            // 运行时副作用（调用/构造/强制转换等）则显式 Eval，否则为纯值，丢弃
-            val result = exprGen.gen(expr, g, fileScope)
-            if (!result.isDiscardable()) g.emit(IrStmt.Eval(result))
+            is YxCall -> {
+                emitCallStatement(expr, g, fileScope)
+            }
+
+            is YxAssign -> {
+                genAssign(expr, g, fileScope)
+            }
+
+            is YxThrow -> {
+                g.emit(IrStmt.Throw(exprGen.gen(expr.expr, g, fileScope)))
+            }
+
+            is YxTypeCall -> {
+                g.emit(
+                    IrStmt.New(
+                        TypeBridge.toIr(irGen.exprTypes[expr] ?: SemaType.ErrorT),
+                        expr.args.map { exprGen.gen(it, g, fileScope) },
+                    ),
+                )
+            }
+
+            else -> {
+                // 表达式语句：gen 过程中已发射副作用语句（短路/表达式赋值）；结果若有
+                // 运行时副作用（调用/构造/强制转换等）则显式 Eval，否则为纯值，丢弃
+                val result = exprGen.gen(expr, g, fileScope)
+                if (!result.isDiscardable()) g.emit(IrStmt.Eval(result))
+            }
         }
     }
-}
 
     /** 语句位置 async fun 挂起调用（T-M14）：Await 提升为临时局部，结果丢弃。 */
-    private fun emitSuspendCallStatement(sym: FunctionSymbol, callee: YxNode, args: List<IrExpr>, g: MethodGen, fileScope: FileScope) {
-        val entry = irGen.suspendEntryMethods[sym]
-            ?: error("IRGen: async fun 挂起入口未登记: ${sym.name}")
+    private fun emitSuspendCallStatement(
+        sym: FunctionSymbol,
+        callee: YxNode,
+        args: List<IrExpr>,
+        g: MethodGen,
+        fileScope: FileScope,
+    ) {
+        val entry =
+            irGen.suspendEntryMethods[sym]
+                ?: error("IRGen: async fun 挂起入口未登记: ${sym.name}")
         val resultType = TypeBridge.toIr(sym.returnType ?: SemaType.UnitT)
         val tmp = g.newLocal("await\$result", resultType)
-        val receiver = when (callee) {
-            is YxMemberAccess -> exprGen.gen(callee.receiver, g, fileScope)
-            else -> null
-        }
+        val receiver =
+            when (callee) {
+                is YxMemberAccess -> exprGen.gen(callee.receiver, g, fileScope)
+                else -> null
+            }
         g.emit(IrStmt.Await(tmp, IrExpr.Invoke(IrMethodRef(entry), receiver, args), isSuspendCall = true))
     }
 
     /** 语句位置调用（结果丢弃）。 */
-    private fun emitCallStatement(call: YxCall, g: MethodGen, fileScope: FileScope) {
+    private fun emitCallStatement(
+        call: YxCall,
+        g: MethodGen,
+        fileScope: FileScope,
+    ) {
         val args = call.args.map { exprGen.genLiteralAdapted(it, g, fileScope) }
         val argTypes = call.args.mapNotNull { irGen.exprTypes[it] }
         when (val callee = call.callee) {
@@ -273,19 +389,21 @@ class StmtGen(
                     is FunctionSymbol -> {
                         // 双 ABI（T-M14）：async fun 在 async 上下文为挂起调用（结果丢弃）
                         if (sym.isAsync && irGen.isInAsyncContext()) {
-                            emitSuspendCallStatement(sym, callee, args, g, fileScope)
+                            emitSuspendCallStatement(sym, callee, exprGen.padDefaultArgs(sym, args, g, fileScope), g, fileScope)
                             return
                         }
-                        val irCall = irGen.functionMethods[sym]?.let { IrMethodRef(it) }
-                            ?: IrJvmCall(
-                                name = sym.name,
-                                owner = BuiltinFunctions.ownerOf(sym.name) ?: "yux.core.CoreLib",
-                                static = true,
-                                params = sym.params.map { TypeBridge.toIr(it.type) },
-                                retType = TypeBridge.toIr(sym.returnType ?: SemaType.UnitT),
-                            )
-                        g.emit(IrStmt.Call(irCall, null, args, irCall.retType))
+                        val irCall =
+                            irGen.functionMethods[sym]?.let { IrMethodRef(it) }
+                                ?: IrJvmCall(
+                                    name = sym.name,
+                                    owner = BuiltinFunctions.ownerOf(sym.name) ?: "yux.core.CoreLib",
+                                    static = true,
+                                    params = sym.params.map { TypeBridge.toIr(it.type) },
+                                    retType = TypeBridge.toIr(sym.returnType ?: SemaType.UnitT),
+                                )
+                        g.emit(IrStmt.Call(irCall, null, exprGen.padDefaultArgs(sym, args, g, fileScope), irCall.retType))
                     }
+
                     is VariableSymbol, is ParameterSymbol -> {
                         // 函数类型局部/参数调用（B3）：语句位置发 Eval(FnInvoke)（结果丢弃）
                         val fnType = SemaType.resolveVar(symbolType(sym) ?: SemaType.ErrorT)
@@ -295,36 +413,49 @@ class StmtGen(
                             error("IRGen: 未解析的调用: ${callee.name}")
                         }
                     }
+
                     else -> {
                         // sema 的 typeOfCall 对函数类型局部/参数的调用未登记 resolvedRefs[callee]，
                         // 退化为本地变量（函数类型值）直查（B3）
-                        val local = g.lookupLocal(callee.name)
-                            ?: error("IRGen: 未解析的调用: ${callee.name}")
+                        val local =
+                            g.lookupLocal(callee.name)
+                                ?: error("IRGen: 未解析的调用: ${callee.name}")
                         g.emit(IrStmt.Eval(IrExpr.FnInvoke(IrExpr.LocalRead(local), args)))
                     }
                 }
             }
+
             is YxMemberAccess -> {
                 val receiverType = irGen.exprTypes[callee.receiver]
                 val rt = SemaType.resolveVar(receiverType ?: SemaType.ErrorT)
                 if (callee.receiver is YxTypeReference) {
-                    val static = irGen.resolver.resolveStaticMethod(rt, callee.name, argTypes)
-                        ?: error("IRGen: 静态方法不存在: ${callee.name}")
+                    val static =
+                        irGen.resolver.resolveStaticMethod(rt, callee.name, argTypes)
+                            ?: error("IRGen: 静态方法不存在: ${callee.name}")
                     g.emit(IrStmt.Call(static, null, args, static.retType))
                     return
                 }
                 // 双 ABI（T-M14）：async 成员在 async 上下文为挂起调用
                 val asyncFn = irGen.asyncCalleeSymbol(callee)
                 if (asyncFn != null && asyncFn.isAsync && irGen.isInAsyncContext()) {
-                    emitSuspendCallStatement(asyncFn, callee, args, g, fileScope)
+                    emitSuspendCallStatement(asyncFn, callee, exprGen.padDefaultArgs(asyncFn, args, g, fileScope), g, fileScope)
                     return
                 }
                 val receiver = exprGen.gen(callee.receiver, g, fileScope)
-                val (irCall, receiverExpr, callArgs) = resolveMemberCall(rt, callee.name, receiver, args, argTypes)
-                    ?: error("IRGen: 成员方法不存在: ${callee.name} on ${rt.render()}")
+                val fnSym =
+                    ((rt as? SemaType.Declared)?.symbol as? YxClassSymbol)
+                        ?.functionsIncludingSuper(callee.name)
+                        ?.firstOrNull()
+                val padded = if (fnSym != null) exprGen.padDefaultArgs(fnSym, args, g, fileScope) else args
+                val (irCall, receiverExpr, callArgs) =
+                    resolveMemberCall(rt, callee.name, receiver, padded, argTypes)
+                        ?: error("IRGen: 成员方法不存在: ${callee.name} on ${rt.render()}")
                 g.emit(IrStmt.Call(irCall, receiverExpr, callArgs, irCall.retType, isSuper = callee.receiver is YxSuper))
             }
-            else -> error("IRGen: 不支持的调用目标: ${callee::class.simpleName}")
+
+            else -> {
+                error("IRGen: 不支持的调用目标: ${callee::class.simpleName}")
+            }
         }
     }
 
@@ -338,27 +469,39 @@ class StmtGen(
         receiver: IrExpr,
         args: List<IrExpr>,
         argTypes: List<SemaType> = emptyList(),
-    ): Triple<yux.compiler.ir.IrCallable, IrExpr?, List<IrExpr>>? = when {
-        rt is SemaType.Declared && rt.symbol is YxClassSymbol -> {
-            val sym = rt.symbol as YxClassSymbol
-            // 沿父类链解析（S-8.7.1，缺陷 9）
-            sym.functionsIncludingSuper(name).firstOrNull()?.let { fn ->
-                irGen.functionMethods[fn]?.let { Triple(IrMethodRef(it), receiver, args) }
-            } ?: objectMethodCall(sym.qualifiedName, name)?.let { Triple(it, receiver, args) }
+    ): Triple<yux.compiler.ir.IrCallable, IrExpr?, List<IrExpr>>? =
+        when {
+            rt is SemaType.Declared && rt.symbol is YxClassSymbol -> {
+                val sym = rt.symbol as YxClassSymbol
+                // 沿父类链解析（S-8.7.1，缺陷 9）
+                sym.functionsIncludingSuper(name).firstOrNull()?.let { fn ->
+                    irGen.functionMethods[fn]?.let { Triple(IrMethodRef(it), receiver, args) }
+                } ?: objectMethodCall(sym.qualifiedName, name)?.let { Triple(it, receiver, args) }
+            }
+
+            else -> {
+                irGen.resolver.resolveJvmExtension(rt, name)?.let { Triple(it, null, listOf(receiver) + args) }
+                    ?: irGen.resolver.resolveInstanceMethod(rt, name, argTypes)?.let { Triple(it, receiver, args) }
+            }
         }
-        else -> irGen.resolver.resolveJvmExtension(rt, name)?.let { Triple(it, null, listOf(receiver) + args) }
-            ?: irGen.resolver.resolveInstanceMethod(rt, name, argTypes)?.let { Triple(it, receiver, args) }
-    }
 
     /** Object 方法回退（S-8.7.1，与 ExprGen 一致）：语句位置 `u.toString()`。 */
-    private fun objectMethodCall(owner: String, name: String): IrJvmCall? = when (name) {
-        "toString" -> IrJvmCall("toString", owner, static = false, params = emptyList(), retType = IrType.STRING)
-        "equals" -> IrJvmCall("equals", owner, static = false, params = listOf(IrType.ANY), retType = IrType.BOOLEAN)
-        "hashCode" -> IrJvmCall("hashCode", owner, static = false, params = emptyList(), retType = IrType.INT)
-        else -> null
-    }
+    private fun objectMethodCall(
+        owner: String,
+        name: String,
+    ): IrJvmCall? =
+        when (name) {
+            "toString" -> IrJvmCall("toString", owner, static = false, params = emptyList(), retType = IrType.STRING)
+            "equals" -> IrJvmCall("equals", owner, static = false, params = listOf(IrType.ANY), retType = IrType.BOOLEAN)
+            "hashCode" -> IrJvmCall("hashCode", owner, static = false, params = emptyList(), retType = IrType.INT)
+            else -> null
+        }
 
-    private fun genIf(stmt: YxIf, g: MethodGen, fileScope: FileScope) {
+    private fun genIf(
+        stmt: YxIf,
+        g: MethodGen,
+        fileScope: FileScope,
+    ) {
         val cond = exprGen.gen(stmt.condition, g, fileScope)
         val thenL = g.newLabel()
         val endL = g.newLabel()
@@ -379,7 +522,11 @@ class StmtGen(
         g.emit(IrStmt.Label(endL))
     }
 
-    private fun genWhile(stmt: YxWhile, g: MethodGen, fileScope: FileScope) {
+    private fun genWhile(
+        stmt: YxWhile,
+        g: MethodGen,
+        fileScope: FileScope,
+    ) {
         val condL = g.newLabel()
         val bodyL = g.newLabel()
         val endL = g.newLabel()
@@ -395,7 +542,11 @@ class StmtGen(
     }
 
     /** for 迭代器展开（T-M4-4 验收）：`for i in it {..}` → iterator()/hasNext()/next() 循环。 */
-    private fun genFor(stmt: YxFor, g: MethodGen, fileScope: FileScope) {
+    private fun genFor(
+        stmt: YxFor,
+        g: MethodGen,
+        fileScope: FileScope,
+    ) {
         val iterableType = irGen.exprTypes[stmt.iterable]
         val rt = SemaType.resolveVar(iterableType ?: SemaType.ErrorT)
         val elemType = irGen.resolver.elementType(rt) ?: SemaType.ErrorT
@@ -403,32 +554,37 @@ class StmtGen(
         val iterLocal = g.newLocal("iter", TypeBridge.toIr(rt))
         g.emit(IrStmt.LocalAssign(iterLocal, iterable))
         val isString = rt is SemaType.Basic && rt.name == "String"
-        val arrayQn = (rt as? SemaType.Declared)?.symbol
-            ?.let { it as? JvmClassSymbol }?.qualifiedName?.takeIf { qn -> qn.startsWith("[") }
+        val arrayQn =
+            (rt as? SemaType.Declared)
+                ?.symbol
+                ?.let { it as? JvmClassSymbol }
+                ?.qualifiedName
+                ?.takeIf { qn -> qn.startsWith("[") }
         if (isString || arrayQn != null) {
             // 字符串/数组走索引循环（S-6.4.1）：String 用 length()/charAt(i)；
             // JVM 数组用 length 字段 + xALOAD（String/数组不实现 java.lang.Iterable，无 iterator()）
             val lenLocal = g.newLocal("len", IrType.INT)
-            val length = if (isString) {
-                IrExpr.Invoke(
-                    IrJvmCall("length", "java.lang.String", static = false, params = emptyList(), retType = IrType.INT),
-                    IrExpr.LocalRead(iterLocal),
-                    emptyList(),
-                )
-            } else {
-                // 数组长度：Array.getLength（数组类不能作为字段所有者，fieldref 会 VerifyError）
-                IrExpr.Invoke(
-                    IrJvmCall(
-                        "getLength",
-                        "java.lang.reflect.Array",
-                        static = true,
-                        params = listOf(IrType.ANY),
-                        retType = IrType.INT,
-                    ),
-                    null,
-                    listOf(IrExpr.LocalRead(iterLocal)),
-                )
-            }
+            val length =
+                if (isString) {
+                    IrExpr.Invoke(
+                        IrJvmCall("length", "java.lang.String", static = false, params = emptyList(), retType = IrType.INT),
+                        IrExpr.LocalRead(iterLocal),
+                        emptyList(),
+                    )
+                } else {
+                    // 数组长度：Array.getLength（数组类不能作为字段所有者，fieldref 会 VerifyError）
+                    IrExpr.Invoke(
+                        IrJvmCall(
+                            "getLength",
+                            "java.lang.reflect.Array",
+                            static = true,
+                            params = listOf(IrType.ANY),
+                            retType = IrType.INT,
+                        ),
+                        null,
+                        listOf(IrExpr.LocalRead(iterLocal)),
+                    )
+                }
             g.emit(IrStmt.LocalAssign(lenLocal, length))
             val iLocal = g.newLocal("i", IrType.INT)
             g.emit(IrStmt.LocalAssign(iLocal, IrExpr.Const(0)))
@@ -447,19 +603,20 @@ class StmtGen(
             g.enterScope()
             val varLocal = g.newLocal(stmt.varName, TypeBridge.toIr(elemType))
             g.declareLocal(stmt.varName, varLocal)
-            val element = if (isString) {
-                IrExpr.Invoke(
-                    IrJvmCall("charAt", "java.lang.String", static = false, params = listOf(IrType.INT), retType = IrType.CHAR),
-                    IrExpr.LocalRead(iterLocal),
-                    listOf(IrExpr.LocalRead(iLocal)),
-                )
-            } else {
-                IrExpr.ArrayLoad(
-                    IrExpr.LocalRead(iterLocal),
-                    IrExpr.LocalRead(iLocal),
-                    TypeBridge.toIr(elemType),
-                )
-            }
+            val element =
+                if (isString) {
+                    IrExpr.Invoke(
+                        IrJvmCall("charAt", "java.lang.String", static = false, params = listOf(IrType.INT), retType = IrType.CHAR),
+                        IrExpr.LocalRead(iterLocal),
+                        listOf(IrExpr.LocalRead(iLocal)),
+                    )
+                } else {
+                    IrExpr.ArrayLoad(
+                        IrExpr.LocalRead(iterLocal),
+                        IrExpr.LocalRead(iLocal),
+                        TypeBridge.toIr(elemType),
+                    )
+                }
             g.emit(IrStmt.LocalAssign(varLocal, element))
             g.pushLoop(condL, endL)
             gen(stmt.body, g, fileScope)
@@ -523,7 +680,11 @@ class StmtGen(
     }
 
     /** when → 分支链（subject 求值一次；`is T` 用 IsType；else 兜底）。 */
-    private fun genWhen(stmt: YxWhen, g: MethodGen, fileScope: FileScope) {
+    private fun genWhen(
+        stmt: YxWhen,
+        g: MethodGen,
+        fileScope: FileScope,
+    ) {
         val subjectLocal = g.newLocal("subject", TypeBridge.toIr(irGen.exprTypes[stmt.subject] ?: SemaType.ErrorT))
         g.emit(IrStmt.LocalAssign(subjectLocal, exprGen.gen(stmt.subject, g, fileScope)))
         val endL = g.newLabel()
@@ -535,6 +696,7 @@ class StmtGen(
                     gen(branch.body, g, fileScope)
                     g.emit(IrStmt.Goto(endL))
                 }
+
                 is YxIsCondition -> {
                     val nextL = g.newLabel()
                     g.emit(
@@ -549,6 +711,7 @@ class StmtGen(
                     g.emit(IrStmt.Goto(endL))
                     g.emit(IrStmt.Label(nextL))
                 }
+
                 is YxExprCondition -> {
                     val nextL = g.newLabel()
                     g.emit(
@@ -568,24 +731,33 @@ class StmtGen(
         g.emit(IrStmt.Label(endL))
     }
 
-    private fun genTry(stmt: YxTry, g: MethodGen, fileScope: FileScope) {
+    private fun genTry(
+        stmt: YxTry,
+        g: MethodGen,
+        fileScope: FileScope,
+    ) {
         val body = genList(stmt.body, g, fileScope)
-        val catches = stmt.catches.map { c ->
-            val type = c.type?.let { irGen.resolveIrType(it, fileScope) }
-            val bodyList = mutableListOf<IrStmt>()
-            g.enterScope()
-            // catch 参数登记为局部（S-6.6.2：catch 体内可引用异常变量）
-            g.declareLocal(c.paramName, g.newLocal(c.paramName, type ?: IrType.ANY))
-            g.withTarget(bodyList) { gen(c.body, g, fileScope) }
-            g.exitScope()
-            IrCatch(c.paramName, type, bodyList)
-        }
+        val catches =
+            stmt.catches.map { c ->
+                val type = c.type?.let { irGen.resolveIrType(it, fileScope) }
+                val bodyList = mutableListOf<IrStmt>()
+                g.enterScope()
+                // catch 参数登记为局部（S-6.6.2：catch 体内可引用异常变量）
+                g.declareLocal(c.paramName, g.newLocal(c.paramName, type ?: IrType.ANY))
+                g.withTarget(bodyList) { gen(c.body, g, fileScope) }
+                g.exitScope()
+                IrCatch(c.paramName, type, bodyList)
+            }
         val finallyBody = stmt.finallyBody?.let { genList(it, g, fileScope) }
         g.emit(IrStmt.Try(body, catches, finallyBody))
     }
 
     /** 子块生成（Try/catch/finally 独立语句列表；单语句体与块体均适用）。 */
-    private fun genList(stmt: YxStmt, g: MethodGen, fileScope: FileScope): List<IrStmt> {
+    private fun genList(
+        stmt: YxStmt,
+        g: MethodGen,
+        fileScope: FileScope,
+    ): List<IrStmt> {
         val out = mutableListOf<IrStmt>()
         g.enterScope()
         g.withTarget(out) { gen(stmt, g, fileScope) }
@@ -594,21 +766,23 @@ class StmtGen(
     }
 
     /** 变量/参数符号携带的 SemaType（其他符号无类型）。 */
-    internal fun symbolType(sym: Symbol): SemaType? = when (sym) {
-        is VariableSymbol -> sym.type
-        is ParameterSymbol -> sym.type
-        else -> null
-    }
+    internal fun symbolType(sym: Symbol): SemaType? =
+        when (sym) {
+            is VariableSymbol -> sym.type
+            is ParameterSymbol -> sym.type
+            else -> null
+        }
 
     /** 复合赋值运算符映射；`=` 返回 null（纯赋值），未知运算符显式报错。 */
-    private fun compoundOp(op: String): ArithOp? = when (op) {
-        "=" -> null
-        "+=" -> ArithOp.ADD
-        "-=" -> ArithOp.SUB
-        "*=" -> ArithOp.MUL
-        "/=" -> ArithOp.DIV
-        "%=" -> ArithOp.MOD
-        "..=" -> error("IRGen: `..=` 复合赋值不支持（M4）")
-        else -> error("IRGen: 未知复合赋值运算符: $op")
-    }
+    private fun compoundOp(op: String): ArithOp? =
+        when (op) {
+            "=" -> null
+            "+=" -> ArithOp.ADD
+            "-=" -> ArithOp.SUB
+            "*=" -> ArithOp.MUL
+            "/=" -> ArithOp.DIV
+            "%=" -> ArithOp.MOD
+            "..=" -> error("IRGen: `..=` 复合赋值不支持（M4）")
+            else -> error("IRGen: 未知复合赋值运算符: $op")
+        }
 }

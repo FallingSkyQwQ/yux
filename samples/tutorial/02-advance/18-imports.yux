@@ -1,0 +1,6 @@
+// 02-进阶 · 第 18 章：导入（import java.*）
+import java.util.UUID
+fun main() {
+    id:UUID? = UUID.randomUUID()
+    println (id != null)
+}

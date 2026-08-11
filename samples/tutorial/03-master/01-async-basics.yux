@@ -1,0 +1,14 @@
+// 03-精通 · 第 1 章：async 协程基础（async fun + await 挂起调用）
+async fun doubleAsync(n:Int):Int {
+    t = Tasks.launch { }
+    await t
+    return n * 2
+}
+async fun compute():Int {
+    v = doubleAsync(21)   // async 上下文内挂起调用，直接得声明类型
+    return v + 1
+}
+fun main() {
+    print (Tasks.await(compute()) as Int)   // 42 + 1 = 43
+    println ""
+}

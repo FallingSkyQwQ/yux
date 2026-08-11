@@ -1,0 +1,7 @@
+// 02-进阶 · 第 17 章：顶层属性（文件级静态字段）
+gameVersion:Int = 12
+greeting:String = "welcome"
+fun main() {
+    println gameVersion
+    println greeting
+}

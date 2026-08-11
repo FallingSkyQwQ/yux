@@ -1,0 +1,5 @@
+// 03-精通 · 反例：重复声明相同签名（E0007）
+fun greet(name:String) = "hi " + name
+fun greet(name:String) = "hello " + name
+fun main() {
+}

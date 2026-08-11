@@ -1,0 +1,9 @@
+// 04-生态 · 第 5 章：异步任务（yux.async：Tasks.launch/await）
+fun main() {
+    t = Tasks.launch {
+        Tasks.sleep(10)
+        print "task"
+    }
+    Tasks.await(t)
+    println " done"
+}

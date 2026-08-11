@@ -1,0 +1,17 @@
+// 03-精通 · 第 8 章：智能转型（is 收窄 + 判空收窄）
+Animal {
+    fun speak() = "animal"
+}
+Dog extends Animal {
+    fun speak() = "dog"
+}
+fun main() {
+    pet:Any? = Dog()
+    if pet is Dog {
+        println pet.speak()
+    }
+    name:String? = "Steve"
+    if name != null {
+        println (name.uppercase() as String)
+    }
+}

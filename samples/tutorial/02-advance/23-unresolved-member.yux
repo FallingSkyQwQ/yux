@@ -1,0 +1,8 @@
+// 02-进阶 · 反例：成员不存在（E0016）
+Player {
+    name:String
+}
+fun main() {
+    p = Player("Steve")
+    println p.health
+}

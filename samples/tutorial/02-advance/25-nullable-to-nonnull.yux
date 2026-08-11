@@ -1,0 +1,8 @@
+// 02-进阶 · 反例：可空值传给非空参数（E0004）
+fun printName(name:String) {
+    println name
+}
+fun main() {
+    n:String? = "Steve"
+    printName(n)
+}

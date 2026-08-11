@@ -1,0 +1,7 @@
+// 03-精通 · 第 13 章：格式化输出（Text.format）
+fun main() {
+    args = List Any() as List Any
+    args.add("Steve")
+    args.add(3)
+    println (Text.format("name=%s level=%d", args) as String)
+}

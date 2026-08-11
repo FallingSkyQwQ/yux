@@ -259,6 +259,20 @@ class TypeChecker(
         fn.params.forEach { p ->
             varStack.last()[p.name] = VariableSymbol(p.name, p.type, isVal = true, p.span).also { it.definitelyAssigned = true }
         }
+        // S-5.5.5 参数默认值：在函数作用域内类型检查 `= Expression`（T-M12 缺陷修复，
+        // 默认值表达式此前从未被分析，导致类型不匹配被静默接受且 IRGen 无法生成）。
+        val recvOffset = if (fn.receiverType != null) 1 else 0
+        decl.params.forEachIndexed { i, p ->
+            p.defaultValue?.let { def ->
+                val param = fn.params.getOrNull(i + recvOffset)
+                if (param != null) {
+                    val t = typeOf(def, expected = param.type)
+                    if (!t.isError) {
+                        inference.expectAssignable(t, param.type, def.span.start, "参数 '${p.name}' 默认值")
+                    }
+                }
+            }
+        }
         // 返回类型：未声明 → 推断变量（S-5.5.2），块体无返回 → Unit
         val declaredReturn = fn.returnType ?: inference.freshVar().also { fn.returnType = it }
         currentReturnType = declaredReturn

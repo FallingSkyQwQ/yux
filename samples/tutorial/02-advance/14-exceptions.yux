@@ -1,0 +1,13 @@
+// 02-进阶 · 第 14 章：异常（try/catch/finally + throw）
+fun risky() {
+    throw RuntimeException()
+}
+fun main() {
+    try {
+        risky()
+    } catch e {
+        println "caught"
+    } finally {
+        println "done"
+    }
+}

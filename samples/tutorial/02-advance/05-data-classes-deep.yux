@@ -1,0 +1,14 @@
+// 02-进阶 · 第 5 章：data 类深入（相等/哈希/值语义）
+data Point {
+    x:Int
+    y:Int
+}
+fun main() {
+    a = Point(1, 2)
+    b = Point(1, 2)
+    c = Point(2, 1)
+    println (a == b)
+    println (a == c)
+    println (a.hashCode == b.hashCode)
+    println a.toString
+}

@@ -1,0 +1,9 @@
+// 02-进阶 · 第 10 章：字符串模板（$ / ${} / \$ 转义）
+fun main() {
+    name = "Steve"
+    level = 3
+    println "hi $name"
+    println "level=${level + 1}"
+    println "\$notInterpolated"
+    println "sum=${1 + 2}"
+}

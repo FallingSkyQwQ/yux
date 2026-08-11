@@ -1,0 +1,7 @@
+// 02-进阶 · 反例：返回类型不匹配（E0015）
+fun pick():Int {
+    return "oops"
+}
+fun main() {
+    println pick()
+}

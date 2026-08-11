@@ -1,0 +1,5 @@
+// 02-进阶 · 反例：实参类型不匹配（E0004）
+fun add(a:Int, b:Int):Int = a + b
+fun main() {
+    println add(1, "two")
+}

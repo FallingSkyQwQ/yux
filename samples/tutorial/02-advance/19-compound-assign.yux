@@ -1,0 +1,12 @@
+// 02-进阶 · 第 19 章：复合赋值（+= -= *= /=）
+fun main() {
+    x = 10
+    x += 5
+    println x
+    x -= 3
+    println x
+    x *= 2
+    println x
+    x /= 3
+    println x
+}

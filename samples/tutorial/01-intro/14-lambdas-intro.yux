@@ -1,0 +1,7 @@
+// 01-入门 · 第 11 章：Lambda 起步（箭头函数 + 隐式 it）
+fun main() {
+    double:(Int)->Int = x -> x * 2
+    println double(5)
+    triple:(Int)->Int = { it * 3 }
+    println triple(4)
+}
