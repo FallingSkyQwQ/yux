@@ -1,0 +1,11 @@
+// 01-入门 · 第 6 章：循环
+fun main() {
+    for i in 0..3 {
+        print i
+    }
+    x = 0
+    while x < 3 {
+        x = x + 1
+    }
+    print x
+}

@@ -1,0 +1,8 @@
+// 01-入门 · 第 4 章：字符串与插值
+fun main() {
+    name = "Alex"
+    level = 3
+    print "hi $name"
+    print "level=${level + 1}"
+    print "\$escaped"
+}

@@ -82,6 +82,23 @@ class Parser(
         if (suppressBlockDepth == 0) suppressBlockCall = false
     }
 
+    /**
+     * 属性访问器块前瞻（S-5.2，缺陷修复）：`{` 后（可跨换行）紧随 `get`/`set` 且再后为 `{` 时，
+     * 该 `{` 是属性声明的访问器块（`x:Int = 10 { get { } }`）而非块 lambda 实参。
+     * 用于让属性初始化表达式的无括号调用解析在访问器块前停下（否则 `0 { get { } }`
+     * 被解析成 `0(块 lambda)` → "Int 不可调用"）。
+     */
+    internal fun looksLikeAccessorBlock(): Boolean {
+        if (current.kind != LBRACE) return false
+        // 跳过 `{` 后的换行（访问器可换行书写：`{ \n get { } }`）
+        var i = 1
+        while (peek(i).kind == NEWLINE) i++
+        val kw = peek(i)
+        if (kw.kind != ID || (kw.text != "get" && kw.text != "set")) return false
+        // 与 parseProperty 的访问器判定一致：`get`/`set` 后紧跟 `{`（无换行）
+        return peek(i + 1).kind == LBRACE
+    }
+
     private class Scope(val parent: Scope?) {
         val names = mutableSetOf<String>()
     }
@@ -760,10 +777,12 @@ class Parser(
         return CstIfExpr(ifKw, condition, thenKw, thenExpr, elseKw, elseExpr, spanOf(ifKw, elseExpr))
     }
 
-    /** when 表达式（T-M12）：`when <subject> { cond -> expr ... [else -> expr] }`，分支体为单个表达式。 */
+    /** when 表达式（T-M12）：`when <subject> { cond -> expr ... [else -> expr] }`，分支体为单个表达式。
+     *  subject 可省略：`when { cond -> expr ... }` 条件为布尔表达式（Kotlin 同款）。 */
     private fun parseWhenExpr(): CstExpr {
         val whenKw = expect(KEYWORD, "'when'")
-        val subject = parseCondition()
+        // 无 subject 形式：`when` 后直接跟 `{`
+        val subject = if (at(LBRACE)) null else parseCondition()
         val lbrace = expect(LBRACE, "'{'")
         val branches = mutableListOf<CstWhenExprBranch>()
         skipNewlines()
@@ -794,7 +813,8 @@ class Parser(
 
     private fun parseWhen(): CstStmt {
         val whenKw = expect(KEYWORD, "'when'")
-        val subject = parseCondition()
+        // 无 subject 形式：`when` 后直接跟 `{`
+        val subject = if (at(LBRACE)) null else parseCondition()
         val lbrace = expect(LBRACE, "'{'")
         val branches = mutableListOf<CstWhenBranch>()
         skipNewlines()

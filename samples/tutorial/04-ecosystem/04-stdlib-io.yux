@@ -1,0 +1,9 @@
+// 04-生态 · 第 4 章：文件 IO（yux.io：write/read/exists）
+import yux.io.IO
+fun main() {
+    path = "/tmp/yux-eco-io.txt"
+    IO.writeText(path, "line1")
+    lines = IO.readLines(path)
+    println lines.size
+    println IO.exists(path)
+}

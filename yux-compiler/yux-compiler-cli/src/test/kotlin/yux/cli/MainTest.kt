@@ -215,16 +215,30 @@ class MainTest {
 
     @Test
     fun `samples directory e2e compares stdout`() {
-        // T-M5-11 端到端：samples/*.yux 逐一运行并比对 .stdout 快照
-        val samplesDir = java.nio.file.Path.of("samples").toAbsolutePath().normalize()
-        if (!java.nio.file.Files.isDirectory(samplesDir)) return
+        // T-M5-11 端到端：samples/*.yux 逐一运行并比对 .stdout 快照。
+        // 修复（T-M12）：原先 Path.of("samples") 相对测试 CWD（CLI 模块目录）解析，
+        // 目录不存在而静默 return，导致 CI 从未真正验证样例——现改为向上定位仓库根。
+        val samplesDir = repoRoot().resolve("samples")
+        var count = 0
         java.nio.file.Files.list(samplesDir).use { stream ->
             stream.filter { it.toString().endsWith(".yux") }.sorted().forEach { file ->
                 val expected = java.nio.file.Files.readString(file.resolveSibling(file.fileName.toString().substringBeforeLast('.') + ".stdout"))
                 val (out, err, code) = capture("run", file.toString())
                 assertEquals(0, code, "${file.fileName} 应运行成功: $err")
                 assertEquals(expected, out, "${file.fileName} stdout 不匹配")
+                count++
             }
         }
+        assert(count > 0) { "samples e2e 未发现任何样例" }
+    }
+
+    /** 从测试 CWD 逐级向上找仓库根（含 samples/ 的目录）。 */
+    private fun repoRoot(): java.nio.file.Path {
+        var dir = java.nio.file.Path.of("").toAbsolutePath().normalize()
+        while (dir != dir.parent) {
+            if (java.nio.file.Files.isDirectory(dir.resolve("samples"))) return dir
+            dir = dir.parent
+        }
+        throw AssertionError("未找到仓库根（samples/ 不存在于任何父目录）")
     }
 }

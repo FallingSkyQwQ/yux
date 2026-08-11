@@ -1,0 +1,11 @@
+// 03-精通 · 第 7 章：文件 IO（write/read/exists）
+import yux.io.IO
+fun main() {
+    path = "/tmp/yux-tutorial-io.txt"
+    IO.writeText(path, "hello yux io")
+    println IO.exists(path)
+    text = IO.readText(path)
+    if text != null {
+        println text
+    }
+}

@@ -228,9 +228,9 @@ class YxIf(
     override val span: SourceSpan,
 ) : YxStmt
 
-/** when（01-§6.3）。 */
+/** when（01-§6.3）。subject 可为空（`when { cond -> }` 无 subject 形式，条件为布尔表达式）。 */
 class YxWhen(
-    val subject: YxExpr,
+    val subject: YxExpr?,
     val branches: List<YxWhenBranch>,
     override val span: SourceSpan,
 ) : YxStmt
@@ -250,9 +250,10 @@ class YxIfExpr(
 ) : YxExpr
 
 /** when 表达式（T-M12，01-§7 扩展）：`when <subject> { cond -> expr ... [else -> expr] }`。
- *  与 if 表达式一致产生值；分支体为单个表达式。非密封 subject 要求 else（S-6.2.2 补充）。 */
+ *  与 if 表达式一致产生值；分支体为单个表达式。非密封 subject 要求 else（S-6.2.2 补充）。
+ *  subject 可为空（`when { cond -> expr ... }` 无 subject 形式，条件为布尔表达式，必须 else）。 */
 class YxWhenExpr(
-    val subject: YxExpr,
+    val subject: YxExpr?,
     val branches: List<YxWhenExprBranch>,
     override val span: SourceSpan,
 ) : YxExpr

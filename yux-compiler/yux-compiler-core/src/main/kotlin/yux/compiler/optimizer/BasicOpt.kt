@@ -22,7 +22,6 @@ import yux.compiler.ir.IrType
  * 在 [IrModule] 方法体上**原地**操作，重复迭代至不动点（最多 3 轮；收敛即提前退出）。
  */
 object BasicOpt {
-
     /** 对整个模块执行最小优化（原地）。 */
     fun optimize(module: IrModule) {
         for (cls in module.classes) {
@@ -59,25 +58,59 @@ object BasicOpt {
         return changed
     }
 
-    private fun foldStmt(stmt: IrStmt): IrStmt = when (stmt) {
-        // 重建时保留 line（T-M12 LineNumberTable）与 Call.isSuper
-        is IrStmt.LocalAssign -> IrStmt.LocalAssign(stmt.local, foldExpr(stmt.value), stmt.line)
-        is IrStmt.Call -> IrStmt.Call(stmt.callee, stmt.receiver?.let(::foldExpr), stmt.args.map(::foldExpr), stmt.ret, stmt.isSuper, stmt.line)
-        is IrStmt.New -> IrStmt.New(stmt.type, stmt.args.map(::foldExpr), stmt.line)
-        is IrStmt.Eval -> IrStmt.Eval(foldExpr(stmt.expr), stmt.line)
-        is IrStmt.FieldAccess -> stmt.value?.let { IrStmt.FieldAccess(stmt.receiver, stmt.field, stmt.write, foldExpr(it), stmt.line) } ?: stmt
-        is IrStmt.Branch -> foldBranch(stmt)
-        is IrStmt.Return -> stmt.value?.let { IrStmt.Return(foldExpr(it), stmt.line) } ?: stmt
-        is IrStmt.Throw -> IrStmt.Throw(foldExpr(stmt.value), stmt.line)
-        is IrStmt.Monitor -> IrStmt.Monitor(foldExpr(stmt.expr), stmt.enter, stmt.line)
-        is IrStmt.Try -> IrStmt.Try(
-            stmt.body.map(::foldStmt),
-            stmt.catches.map { yux.compiler.ir.IrCatch(it.paramName, it.type, it.body.map(::foldStmt)) },
-            stmt.finallyBody?.map(::foldStmt),
-            stmt.line,
-        )
-        else -> stmt // Label / Goto / Nop
-    }
+    private fun foldStmt(stmt: IrStmt): IrStmt =
+        when (stmt) {
+            // 重建时保留 line（T-M12 LineNumberTable）与 Call.isSuper
+            is IrStmt.LocalAssign -> {
+                IrStmt.LocalAssign(stmt.local, foldExpr(stmt.value), stmt.line)
+            }
+
+            is IrStmt.Call -> {
+                IrStmt.Call(stmt.callee, stmt.receiver?.let(::foldExpr), stmt.args.map(::foldExpr), stmt.ret, stmt.isSuper, stmt.line)
+            }
+
+            is IrStmt.New -> {
+                IrStmt.New(stmt.type, stmt.args.map(::foldExpr), stmt.line)
+            }
+
+            is IrStmt.Eval -> {
+                IrStmt.Eval(foldExpr(stmt.expr), stmt.line)
+            }
+
+            is IrStmt.FieldAccess -> {
+                stmt.value?.let { IrStmt.FieldAccess(stmt.receiver, stmt.field, stmt.write, foldExpr(it), stmt.line) }
+                    ?: stmt
+            }
+
+            is IrStmt.Branch -> {
+                foldBranch(stmt)
+            }
+
+            is IrStmt.Return -> {
+                stmt.value?.let { IrStmt.Return(foldExpr(it), stmt.line) } ?: stmt
+            }
+
+            is IrStmt.Throw -> {
+                IrStmt.Throw(foldExpr(stmt.value), stmt.line)
+            }
+
+            is IrStmt.Monitor -> {
+                IrStmt.Monitor(foldExpr(stmt.expr), stmt.enter, stmt.line)
+            }
+
+            is IrStmt.Try -> {
+                IrStmt.Try(
+                    stmt.body.map(::foldStmt),
+                    stmt.catches.map { yux.compiler.ir.IrCatch(it.paramName, it.type, it.body.map(::foldStmt)) },
+                    stmt.finallyBody?.map(::foldStmt),
+                    stmt.line,
+                )
+            }
+
+            else -> {
+                stmt
+            } // Label / Goto / Nop
+        }
 
     /** `Branch(Const, L1, L2)` → `Goto(目标)`。 */
     private fun foldBranch(stmt: IrStmt.Branch): IrStmt {
@@ -87,43 +120,79 @@ object BasicOpt {
     }
 
     private fun foldExpr(expr: IrExpr): IrExpr {
-        val folded = when (expr) {
-            is IrExpr.Arith -> {
-                val l = foldExpr(expr.l)
-                val r = foldExpr(expr.r)
-                foldArith(expr.op, l, r)
+        val folded =
+            when (expr) {
+                is IrExpr.Arith -> {
+                    val l = foldExpr(expr.l)
+                    val r = foldExpr(expr.r)
+                    foldArith(expr.op, l, r)
+                }
+
+                is IrExpr.Compare -> {
+                    val l = foldExpr(expr.l)
+                    val r = foldExpr(expr.r)
+                    foldCompare(expr.op, l, r)
+                }
+
+                is IrExpr.Not -> {
+                    val operand = foldExpr(expr.operand)
+                    if (operand is IrExpr.Const && operand.value is Boolean) IrExpr.Const(!operand.value) else IrExpr.Not(operand)
+                }
+
+                is IrExpr.Neg -> {
+                    val operand = foldExpr(expr.operand)
+                    if (operand is IrExpr.Const && isNumeric(operand.value)) IrExpr.Const(negate(operand.value!!)) else IrExpr.Neg(operand)
+                }
+
+                is IrExpr.Convert -> {
+                    val inner = foldExpr(expr.expr)
+                    if (inner is IrExpr.Const && inner.value is Number) foldConvert(inner, expr.to) else IrExpr.Convert(inner, expr.to)
+                }
+
+                is IrExpr.NullGuard -> {
+                    foldNullGuard(expr)
+                }
+
+                is IrExpr.New -> {
+                    IrExpr.New(expr.type, expr.args.map(::foldExpr))
+                }
+
+                is IrExpr.Invoke -> {
+                    IrExpr.Invoke(expr.target, expr.receiver?.let(::foldExpr), expr.args.map(::foldExpr), expr.isSuper)
+                }
+
+                is IrExpr.FnInvoke -> {
+                    IrExpr.FnInvoke(foldExpr(expr.fn), expr.args.map(::foldExpr))
+                }
+
+                is IrExpr.Lambda -> {
+                    IrExpr.Lambda(expr.target, expr.captures.map(::foldExpr))
+                }
+
+                is IrExpr.FieldRead -> {
+                    expr.receiver?.let { IrExpr.FieldRead(foldExpr(it), expr.field) } ?: expr
+                }
+
+                is IrExpr.StringTemplate -> {
+                    IrExpr.StringTemplate(expr.parts.map(::foldExpr))
+                }
+
+                is IrExpr.IsType -> {
+                    IrExpr.IsType(foldExpr(expr.expr), expr.type)
+                }
+
+                else -> {
+                    expr
+                }
             }
-            is IrExpr.Compare -> {
-                val l = foldExpr(expr.l)
-                val r = foldExpr(expr.r)
-                foldCompare(expr.op, l, r)
-            }
-            is IrExpr.Not -> {
-                val operand = foldExpr(expr.operand)
-                if (operand is IrExpr.Const && operand.value is Boolean) IrExpr.Const(!operand.value) else IrExpr.Not(operand)
-            }
-            is IrExpr.Neg -> {
-                val operand = foldExpr(expr.operand)
-                if (operand is IrExpr.Const && isNumeric(operand.value)) IrExpr.Const(negate(operand.value!!)) else IrExpr.Neg(operand)
-            }
-            is IrExpr.Convert -> {
-                val inner = foldExpr(expr.expr)
-                if (inner is IrExpr.Const && inner.value is Number) foldConvert(inner, expr.to) else IrExpr.Convert(inner, expr.to)
-            }
-            is IrExpr.NullGuard -> foldNullGuard(expr)
-            is IrExpr.New -> IrExpr.New(expr.type, expr.args.map(::foldExpr))
-            is IrExpr.Invoke -> IrExpr.Invoke(expr.target, expr.receiver?.let(::foldExpr), expr.args.map(::foldExpr))
-            is IrExpr.FnInvoke -> IrExpr.FnInvoke(foldExpr(expr.fn), expr.args.map(::foldExpr))
-            is IrExpr.Lambda -> IrExpr.Lambda(expr.target, expr.captures.map(::foldExpr))
-            is IrExpr.FieldRead -> expr.receiver?.let { IrExpr.FieldRead(foldExpr(it), expr.field) } ?: expr
-            is IrExpr.StringTemplate -> IrExpr.StringTemplate(expr.parts.map(::foldExpr))
-            is IrExpr.IsType -> IrExpr.IsType(foldExpr(expr.expr), expr.type)
-            else -> expr
-        }
         return folded
     }
 
-    private fun foldArith(op: ArithOp, l: IrExpr, r: IrExpr): IrExpr {
+    private fun foldArith(
+        op: ArithOp,
+        l: IrExpr,
+        r: IrExpr,
+    ): IrExpr {
         if (l !is IrExpr.Const || r !is IrExpr.Const) return IrExpr.Arith(op, l, r)
         val lv = l.value
         val rv = r.value
@@ -136,7 +205,11 @@ object BasicOpt {
         return IrExpr.Const(compute(op, lv, rv))
     }
 
-    private fun foldCompare(op: CompareOp, l: IrExpr, r: IrExpr): IrExpr {
+    private fun foldCompare(
+        op: CompareOp,
+        l: IrExpr,
+        r: IrExpr,
+    ): IrExpr {
         if (l !is IrExpr.Const || r !is IrExpr.Const) return IrExpr.Compare(op, l, r)
         val lv = l.value
         val rv = r.value
@@ -149,17 +222,22 @@ object BasicOpt {
             }
         }
         if (lv == null || rv == null || lv::class != rv::class) return IrExpr.Compare(op, l, r)
-        val result: Boolean = when (op) {
-            CompareOp.EQ -> lv == rv
-            CompareOp.NE -> lv != rv
-            else -> compareOrder(op, lv, rv) ?: return IrExpr.Compare(op, l, r)
-        }
+        val result: Boolean =
+            when (op) {
+                CompareOp.EQ -> lv == rv
+                CompareOp.NE -> lv != rv
+                else -> compareOrder(op, lv, rv) ?: return IrExpr.Compare(op, l, r)
+            }
         return IrExpr.Const(result)
     }
 
     /** 数值/字符串序比较；不可比较类型返回 null（不折叠）。 */
     @Suppress("UNCHECKED_CAST")
-    private fun compareOrder(op: CompareOp, l: Any, r: Any): Boolean? {
+    private fun compareOrder(
+        op: CompareOp,
+        l: Any,
+        r: Any,
+    ): Boolean? {
         if (l is Long && r is Long) {
             // Long 保留原类型比较（转 Double 会丢失 Long.MAX_VALUE 附近精度）
             return when (op) {
@@ -193,27 +271,32 @@ object BasicOpt {
         return null
     }
 
-    private fun foldConvert(inner: IrExpr.Const, to: IrType): IrExpr {
+    private fun foldConvert(
+        inner: IrExpr.Const,
+        to: IrType,
+    ): IrExpr {
         val v = inner.value as Number
-        val converted: Any? = when ((to.nonNull() as? IrType.Basic)?.name) {
-            "Int" -> v.toInt()
-            "Long" -> v.toLong()
-            "Float" -> v.toFloat()
-            "Double" -> v.toDouble()
-            "Byte" -> v.toByte()
-            else -> return IrExpr.Convert(inner, to)
-        }
+        val converted: Any? =
+            when ((to.nonNull() as? IrType.Basic)?.name) {
+                "Int" -> v.toInt()
+                "Long" -> v.toLong()
+                "Float" -> v.toFloat()
+                "Double" -> v.toDouble()
+                "Byte" -> v.toByte()
+                else -> return IrExpr.Convert(inner, to)
+            }
         return IrExpr.Const(converted)
     }
 
     /** 空守卫折叠：接收者静态为 null → 类型默认值；静态非空 → 去守卫。 */
     private fun foldNullGuard(expr: IrExpr.NullGuard): IrExpr {
         val inner = foldExpr(expr.expr)
-        val receiver = when (inner) {
-            is IrExpr.FieldRead -> inner.receiver
-            is IrExpr.Invoke -> inner.receiver
-            else -> inner
-        }
+        val receiver =
+            when (inner) {
+                is IrExpr.FieldRead -> inner.receiver
+                is IrExpr.Invoke -> inner.receiver
+                else -> inner
+            }
         // 接收者静态为 null → 守卫结果恒为类型默认值（先于可空性判断：
         // Const(null) 的 inferType 为 Nothing，非 Nullable）
         if (receiver is IrExpr.Const && receiver.value == null) {
@@ -240,19 +323,25 @@ object BasicOpt {
                     changed = true
                     continue
                 }
+
                 stmt is IrStmt.Label -> {
                     dead = false
                     out += stmt
                 }
+
                 stmt is IrStmt.Return || stmt is IrStmt.Throw -> {
                     out += stmt
                     dead = true
                 }
+
                 stmt is IrStmt.Goto -> {
                     out += stmt
                     dead = true
                 }
-                else -> out += stmt
+
+                else -> {
+                    out += stmt
+                }
             }
         }
         if (changed) {
@@ -268,14 +357,18 @@ object BasicOpt {
         var changed = false
         val out = ArrayList<IrStmt>(body.size)
         for (stmt in body) {
-            val keep = when (stmt) {
-                is IrStmt.LocalAssign -> {
-                    val discardable = stmt.value.isDiscardable()
-                    if (discardable && stmt.local !in read) changed = true
-                    !discardable || stmt.local in read
+            val keep =
+                when (stmt) {
+                    is IrStmt.LocalAssign -> {
+                        val discardable = stmt.value.isDiscardable()
+                        if (discardable && stmt.local !in read) changed = true
+                        !discardable || stmt.local in read
+                    }
+
+                    else -> {
+                        true
+                    }
                 }
-                else -> true
-            }
             if (keep) out += stmt
         }
         if (changed) {
@@ -290,50 +383,130 @@ object BasicOpt {
      */
     private fun readLocals(body: List<IrStmt>): Set<yux.compiler.ir.IrLocal> {
         val read = HashSet<yux.compiler.ir.IrLocal>()
+
         fun walkExpr(e: IrExpr?) {
             if (e == null) return
             when (e) {
-                is IrExpr.LocalRead -> read += e.local
-                is IrExpr.FieldRead -> walkExpr(e.receiver)
-                is IrExpr.New -> e.args.forEach(::walkExpr)
-                is IrExpr.Arith -> { walkExpr(e.l); walkExpr(e.r) }
-                is IrExpr.Compare -> { walkExpr(e.l); walkExpr(e.r) }
-                is IrExpr.Not -> walkExpr(e.operand)
-                is IrExpr.Neg -> walkExpr(e.operand)
-                is IrExpr.Convert -> walkExpr(e.expr)
-                is IrExpr.IsType -> walkExpr(e.expr)
-                is IrExpr.Invoke -> { walkExpr(e.receiver); e.args.forEach(::walkExpr) }
-                is IrExpr.FnInvoke -> { walkExpr(e.fn); e.args.forEach(::walkExpr) }
-                is IrExpr.Lambda -> e.captures.forEach(::walkExpr)
-                is IrExpr.StringTemplate -> e.parts.forEach(::walkExpr)
-                is IrExpr.NullGuard -> walkExpr(e.expr)
-                else -> Unit
+                is IrExpr.LocalRead -> {
+                    read += e.local
+                }
+
+                is IrExpr.FieldRead -> {
+                    walkExpr(e.receiver)
+                }
+
+                is IrExpr.New -> {
+                    e.args.forEach(::walkExpr)
+                }
+
+                is IrExpr.Arith -> {
+                    walkExpr(e.l)
+                    walkExpr(e.r)
+                }
+
+                is IrExpr.Compare -> {
+                    walkExpr(e.l)
+                    walkExpr(e.r)
+                }
+
+                is IrExpr.Not -> {
+                    walkExpr(e.operand)
+                }
+
+                is IrExpr.Neg -> {
+                    walkExpr(e.operand)
+                }
+
+                is IrExpr.Convert -> {
+                    walkExpr(e.expr)
+                }
+
+                is IrExpr.IsType -> {
+                    walkExpr(e.expr)
+                }
+
+                is IrExpr.Invoke -> {
+                    walkExpr(e.receiver)
+                    e.args.forEach(::walkExpr)
+                }
+
+                is IrExpr.FnInvoke -> {
+                    walkExpr(e.fn)
+                    e.args.forEach(::walkExpr)
+                }
+
+                is IrExpr.Lambda -> {
+                    e.captures.forEach(::walkExpr)
+                }
+
+                is IrExpr.StringTemplate -> {
+                    e.parts.forEach(::walkExpr)
+                }
+
+                is IrExpr.NullGuard -> {
+                    walkExpr(e.expr)
+                }
+
+                else -> {
+                    Unit
+                }
             }
         }
+
         fun walkStmt(s: IrStmt) {
             when (s) {
-                is IrStmt.LocalAssign -> walkExpr(s.value)
-                is IrStmt.Call -> { walkExpr(s.receiver); s.args.forEach(::walkExpr) }
-                is IrStmt.New -> s.args.forEach(::walkExpr)
-                is IrStmt.Eval -> walkExpr(s.expr)
-                is IrStmt.FieldAccess -> { walkExpr(s.receiver); walkExpr(s.value) }
-                is IrStmt.Branch -> walkExpr(s.cond)
-                is IrStmt.Return -> walkExpr(s.value)
-                is IrStmt.Throw -> walkExpr(s.value)
-                is IrStmt.Monitor -> walkExpr(s.expr)
+                is IrStmt.LocalAssign -> {
+                    walkExpr(s.value)
+                }
+
+                is IrStmt.Call -> {
+                    walkExpr(s.receiver)
+                    s.args.forEach(::walkExpr)
+                }
+
+                is IrStmt.New -> {
+                    s.args.forEach(::walkExpr)
+                }
+
+                is IrStmt.Eval -> {
+                    walkExpr(s.expr)
+                }
+
+                is IrStmt.FieldAccess -> {
+                    walkExpr(s.receiver)
+                    walkExpr(s.value)
+                }
+
+                is IrStmt.Branch -> {
+                    walkExpr(s.cond)
+                }
+
+                is IrStmt.Return -> {
+                    walkExpr(s.value)
+                }
+
+                is IrStmt.Throw -> {
+                    walkExpr(s.value)
+                }
+
+                is IrStmt.Monitor -> {
+                    walkExpr(s.expr)
+                }
+
                 is IrStmt.Try -> {
                     s.body.forEach(::walkStmt)
                     s.catches.forEach { it.body.forEach(::walkStmt) }
                     s.finallyBody?.forEach(::walkStmt)
                 }
-                else -> Unit
+
+                else -> {
+                    Unit
+                }
             }
         }
         body.forEach(::walkStmt)
         return read
     }
-
-
 
     // ── 冗余跳转消除 ───────────────────────────────────────────────────────────
 
@@ -372,64 +545,97 @@ object BasicOpt {
 
     private fun isNumeric(v: Any?): Boolean = v is Number
 
-    private fun isZero(v: Any?): Boolean = when (v) {
-        is Int -> v == 0
-        is Long -> v == 0L
-        is Float -> v == 0.0f
-        is Double -> v == 0.0
-        is Byte -> v == 0.toByte()
-        else -> false
-    }
+    private fun isZero(v: Any?): Boolean =
+        when (v) {
+            is Int -> v == 0
+            is Long -> v == 0L
+            is Float -> v == 0.0f
+            is Double -> v == 0.0
+            is Byte -> v == 0.toByte()
+            else -> false
+        }
 
-    private fun compute(op: ArithOp, l: Number, r: Number): Any = when (op) {
-        ArithOp.ADD -> add(l, r)
-        ArithOp.SUB -> sub(l, r)
-        ArithOp.MUL -> mul(l, r)
-        ArithOp.DIV -> div(l, r)
-        ArithOp.MOD -> mod(l, r)
-    }
+    private fun compute(
+        op: ArithOp,
+        l: Number,
+        r: Number,
+    ): Any =
+        when (op) {
+            ArithOp.ADD -> add(l, r)
+            ArithOp.SUB -> sub(l, r)
+            ArithOp.MUL -> mul(l, r)
+            ArithOp.DIV -> div(l, r)
+            ArithOp.MOD -> mod(l, r)
+        }
 
-    private fun add(l: Number, r: Number): Any = when {
-        l is Double || r is Double -> l.toDouble() + r.toDouble()
-        l is Float || r is Float -> l.toFloat() + r.toFloat()
-        l is Long || r is Long -> l.toLong() + r.toLong()
-        else -> l.toInt() + r.toInt()
-    }
+    private fun add(
+        l: Number,
+        r: Number,
+    ): Any =
+        when {
+            l is Double || r is Double -> l.toDouble() + r.toDouble()
+            l is Float || r is Float -> l.toFloat() + r.toFloat()
+            l is Long || r is Long -> l.toLong() + r.toLong()
+            else -> l.toInt() + r.toInt()
+        }
 
-    private fun sub(l: Number, r: Number): Any = when {
-        l is Double || r is Double -> l.toDouble() - r.toDouble()
-        l is Float || r is Float -> l.toFloat() - r.toFloat()
-        l is Long || r is Long -> l.toLong() - r.toLong()
-        else -> l.toInt() - r.toInt()
-    }
+    private fun sub(
+        l: Number,
+        r: Number,
+    ): Any =
+        when {
+            l is Double || r is Double -> l.toDouble() - r.toDouble()
+            l is Float || r is Float -> l.toFloat() - r.toFloat()
+            l is Long || r is Long -> l.toLong() - r.toLong()
+            else -> l.toInt() - r.toInt()
+        }
 
-    private fun mul(l: Number, r: Number): Any = when {
-        l is Double || r is Double -> l.toDouble() * r.toDouble()
-        l is Float || r is Float -> l.toFloat() * r.toFloat()
-        l is Long || r is Long -> l.toLong() * r.toLong()
-        else -> l.toInt() * r.toInt()
-    }
+    private fun mul(
+        l: Number,
+        r: Number,
+    ): Any =
+        when {
+            l is Double || r is Double -> l.toDouble() * r.toDouble()
+            l is Float || r is Float -> l.toFloat() * r.toFloat()
+            l is Long || r is Long -> l.toLong() * r.toLong()
+            else -> l.toInt() * r.toInt()
+        }
 
-    private fun div(l: Number, r: Number): Any = when {
-        l is Double || r is Double -> l.toDouble() / r.toDouble()
-        l is Float || r is Float -> l.toFloat() / r.toFloat()
-        l is Long || r is Long -> l.toLong() / r.toLong()
-        else -> l.toInt() / r.toInt()
-    }
+    private fun div(
+        l: Number,
+        r: Number,
+    ): Any =
+        when {
+            l is Double || r is Double -> l.toDouble() / r.toDouble()
+            l is Float || r is Float -> l.toFloat() / r.toFloat()
+            l is Long || r is Long -> l.toLong() / r.toLong()
+            else -> l.toInt() / r.toInt()
+        }
 
-    private fun mod(l: Number, r: Number): Any = when {
-        l is Double || r is Double -> l.toDouble() % r.toDouble()
-        l is Float || r is Float -> l.toFloat() % r.toFloat()
-        l is Long || r is Long -> l.toLong() % r.toLong()
-        else -> l.toInt() % r.toInt()
-    }
+    private fun mod(
+        l: Number,
+        r: Number,
+    ): Any =
+        when {
+            l is Double || r is Double -> l.toDouble() % r.toDouble()
+            l is Float || r is Float -> l.toFloat() % r.toFloat()
+            l is Long || r is Long -> l.toLong() % r.toLong()
+            else -> l.toInt() % r.toInt()
+        }
 
-    private fun negate(v: Any): Any = when (v) {
-        is Int -> -v
-        is Long -> -v
-        is Float -> -v
-        is Double -> -v
-        is Byte -> (-v).toByte() // Kotlin `-v` 对 Byte 返回 Int，回转为 Byte 保持 IR 类型
-        else -> v
-    }
+    private fun negate(v: Any): Any =
+        when (v) {
+            is Int -> -v
+
+            is Long -> -v
+
+            is Float -> -v
+
+            is Double -> -v
+
+            is Byte -> (-v).toByte()
+
+            // Kotlin `-v` 对 Byte 返回 Int，回转为 Byte 保持 IR 类型
+            else -> v
+        }
 }

@@ -1,0 +1,12 @@
+// 02-进阶 · 第 6 章：泛型集合（List Int / List Any + as 转换）
+fun main() {
+    nums = List Int()
+    nums.add(5)
+    nums.add(7)
+    println nums.get(0)
+    println nums.size
+    mixed = List Any() as List Any
+    mixed.add("str")
+    mixed.add(42)
+    println mixed.size
+}

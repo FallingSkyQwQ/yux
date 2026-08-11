@@ -1,0 +1,7 @@
+// 03-精通 · 第 15 章：unsafe 块（v0.1 透传语义）
+fun main() {
+    unsafe {
+        println "inside unsafe"
+    }
+    println "outside"
+}

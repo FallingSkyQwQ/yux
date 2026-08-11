@@ -1,0 +1,16 @@
+// 01-入门 · 第 5 章补充：when 多路分支（语句 + 表达式）
+fun main() {
+    level = 2
+    when level {
+        1 -> print "beginner"
+        2 -> print "intermediate"
+        else -> print "unknown"
+    }
+    println ""
+    msg = when level {
+        1 -> "low"
+        2 -> "mid"
+        else -> "high"
+    }
+    println msg
+}

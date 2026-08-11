@@ -1,0 +1,11 @@
+// 03-精通 · 第 18 章：顶层属性访问器（只读 get；init + 访问器组合）
+serverName:String {
+    get { return "lobby-1" }
+}
+maxPlayers:Int = 100 {
+    get { return value + 10 }
+}
+fun main() {
+    println serverName
+    println maxPlayers
+}

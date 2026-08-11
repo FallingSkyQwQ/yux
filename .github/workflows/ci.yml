@@ -20,7 +20,7 @@ jobs:
         uses: actions/setup-java@v5
         with:
           distribution: temurin
-          java-version: '21'
+          java-version: "21"
           cache: gradle
 
       - name: Build, test & lint
@@ -36,3 +36,67 @@ jobs:
             **/build/reports/jacoco/**
             build/reports/problems/**
           retention-days: 7
+
+  tutorial-docs:
+    name: tutorial docs ↔ samples consistency
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Docs ↔ samples consistency
+        run: bash scripts/check-tutorial-docs.sh
+
+      - name: setupyux.sh syntax
+        run: bash -n setupyux.sh
+
+      - name: setupyux.sh --help
+        run: bash setupyux.sh --help | grep -q '一键安装'
+
+      - name: setupyux.sh JDK guard（缺失 JDK 应报错退出）
+        run: |
+          set +e
+          env -i PATH=/usr/bin:/bin HOME="$HOME" bash setupyux.sh --quiet >/dev/null 2>&1
+          code=$?
+          if [ -d "$HOME/.yux" ]; then
+            echo "::warning::本机已有 ~/.yux，跳过 JDK 缺失场景断言"
+          elif [ "$code" -ne 0 ] && [ "$code" -ne 1 ]; then
+            echo "::error::setupyux 在异常环境应优雅退出（0/1），实际 $code"
+            exit 1
+          fi
+
+  setupyux-install:
+    # 全链路实测：clone 当前分支 + Gradle 编译 + 安装 + yuxc run 冒烟。
+    # 仅在 main 与手动触发时跑（PR 上 clone 的目标分支不确定，跑起来慢且不稳定）。
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    name: setupyux full install
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: gradle
+
+      - name: Full install via setupyux.sh
+        run: |
+          # 用本仓库默认分支（main）做全链路安装，避免 PR 分支不确定
+          bash setupyux.sh --quiet
+
+      - name: Smoke test installed yuxc
+        run: |
+          export PATH="$HOME/.yux/bin:$PATH"
+          yuxc --help | grep -q 'yuxc'
+          printf 'fun main() { println "smoke" }\n' > /tmp/smoke.yux
+          test "$(yuxc run /tmp/smoke.yux)" = "smoke"
+
+      - name: Idempotency（重复安装不重复改 PATH）
+        run: |
+          before=$(grep -c 'yux 工具链' "$HOME/.bashrc" || true)
+          bash setupyux.sh --quiet || true
+          after=$(grep -c 'yux 工具链' "$HOME/.bashrc" || true)
+          test "$after" -le "$before"

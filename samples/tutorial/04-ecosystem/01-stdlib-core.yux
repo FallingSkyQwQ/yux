@@ -1,0 +1,10 @@
+// 04-生态 · 第 1 章：标准库核心（yux.core：print/println/Text）
+fun main() {
+    print "no newline"
+    println ""
+    println "yux core"
+    println ("Hello".uppercase() as String)
+    args = List Any() as List Any
+    args.add("eco")
+    println (Text.format("==%s==", args) as String)
+}

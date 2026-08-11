@@ -1,0 +1,16 @@
+// 04-生态 · 第 6 章：依赖注入（yux.di：service 装配）
+service Logger {
+    fun log(msg:String) {
+        println msg
+    }
+}
+service Greeter {
+    fun greet(log:Logger) {
+        log.log("hello from greeter")
+    }
+}
+fun main() {
+    logger = Logger()
+    greeter = Greeter()
+    greeter.greet(logger)
+}

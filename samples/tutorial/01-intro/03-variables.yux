@@ -1,0 +1,11 @@
+// 01-入门 · 第 3 章：变量与类型
+fun main() {
+    count = 18
+    score:Double = 3.14
+    name:String = "Steve"
+    active:Boolean = true
+    print count
+    print score
+    print name
+    print active
+}

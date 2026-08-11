@@ -1,0 +1,15 @@
+// 02-进阶 · 第 20 章：注解与 service（@ + 注入载体）
+@Deprecated
+Greeter {
+    fun hello() = "hi"
+}
+service Database {
+    connect() { }
+}
+fun main() {
+    g = Greeter()
+    println g.hello()
+    db = Database()
+    db.connect()
+    println "ok"
+}

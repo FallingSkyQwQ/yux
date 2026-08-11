@@ -1,0 +1,17 @@
+// 03-精通 · 第 3 章：异步异常（async + try/catch 捕获）
+async fun risky():Int {
+    t = Tasks.launch { throw RuntimeException() }
+    await t
+    return 1
+}
+async fun guarded():Int {
+    try {
+        return risky()
+    } catch e {
+        return 0
+    }
+}
+fun main() {
+    print (Tasks.await(guarded()) as Int)   // catch 捕获 → 0
+    println ""
+}

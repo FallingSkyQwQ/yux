@@ -1,0 +1,15 @@
+// 03-精通 · 第 6 章：依赖注入（service 声明 + 手动装配）
+service Database {
+    connect() { }
+}
+service App {
+    fun run(db:Database) {
+        db.connect()
+        println "run"
+    }
+}
+fun main() {
+    db = Database()
+    app = App()
+    app.run(db)
+}
