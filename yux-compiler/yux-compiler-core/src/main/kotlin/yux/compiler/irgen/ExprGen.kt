@@ -388,7 +388,12 @@ class ExprGen(
                         val target: IrCallable =
                             irGen.functionMethods[sym]?.let { IrMethodRef(it) }
                                 ?: builtinCall(sym)
-                        IrExpr.Invoke(target, null, padDefaultArgs(sym, args, g, fileScope))
+                        // 隐式 this 成员调用（缺陷修复）：同类方法以标识符调用（`g()`）时接收者为 this；
+                        // 否则 JVM 后端对非静态方法发 invokevirtual 而栈上无接收者 → VerifyError。
+                        // 顶层函数（isFileClass）与内置函数保持 receiver=null（invokestatic）。
+                        val receiver =
+                            if (target is IrMethodRef && !target.method.isStatic) IrExpr.This else null
+                        IrExpr.Invoke(target, receiver, padDefaultArgs(sym, args, g, fileScope))
                     }
 
                     is VariableSymbol, is ParameterSymbol -> {
@@ -710,7 +715,8 @@ class ExprGen(
         return IrExpr.LocalRead(tmp)
     }
 
-    /** when 表达式（T-M12）：subject 求值一次 → if 链分支 → 各分支体落同一临时变量（镜像 genIfExpr）。 */
+    /** when 表达式（T-M12）：subject 求值一次 → if 链分支 → 各分支体落同一临时变量（镜像 genIfExpr）。
+     *  无 subject 形式（`when { cond -> expr }`）：条件为布尔表达式，直接分支。 */
     private fun genWhenExpr(
         expr: YxWhenExpr,
         g: MethodGen,
@@ -718,8 +724,12 @@ class ExprGen(
     ): IrExpr {
         val type = TypeBridge.toIr(irGen.exprTypes[expr] ?: SemaType.ErrorT)
         val tmp = g.newLocal("whenTmp", type)
-        val subjectLocal = g.newLocal("whenSubject", TypeBridge.toIr(irGen.exprTypes[expr.subject] ?: SemaType.ErrorT))
-        g.emit(IrStmt.LocalAssign(subjectLocal, gen(expr.subject, g, fileScope)))
+        val subjectLocal =
+            expr.subject?.let { subj ->
+                g.newLocal("whenSubject", TypeBridge.toIr(irGen.exprTypes[subj] ?: SemaType.ErrorT)).also { local ->
+                    g.emit(IrStmt.LocalAssign(local, gen(subj, g, fileScope)))
+                }
+            }
         val hasElse = expr.branches.any { it.condition is YxElseCondition }
         val endL = g.newLabel()
         for (branch in expr.branches) {
@@ -735,7 +745,7 @@ class ExprGen(
                     val nextL = g.newLabel()
                     g.emit(
                         IrStmt.Branch(
-                            IrExpr.IsType(IrExpr.LocalRead(subjectLocal), irGen.resolveIrType(cond.type, fileScope)),
+                            IrExpr.IsType(IrExpr.LocalRead(subjectLocal!!), irGen.resolveIrType(cond.type, fileScope)),
                             bodyL,
                             nextL,
                         ),
@@ -748,13 +758,14 @@ class ExprGen(
 
                 is YxExprCondition -> {
                     val nextL = g.newLabel()
-                    g.emit(
-                        IrStmt.Branch(
-                            IrExpr.Compare(CompareOp.EQ, IrExpr.LocalRead(subjectLocal), gen(cond.expr, g, fileScope)),
-                            bodyL,
-                            nextL,
-                        ),
-                    )
+                    val branchCond =
+                        if (subjectLocal != null) {
+                            IrExpr.Compare(CompareOp.EQ, IrExpr.LocalRead(subjectLocal), gen(cond.expr, g, fileScope))
+                        } else {
+                            // 无 subject：条件本身为布尔表达式（sema 已保证 Boolean）
+                            gen(cond.expr, g, fileScope)
+                        }
+                    g.emit(IrStmt.Branch(branchCond, bodyL, nextL))
                     g.emit(IrStmt.Label(bodyL))
                     g.emit(IrStmt.LocalAssign(tmp, gen(branch.body, g, fileScope)))
                     g.emit(IrStmt.Goto(endL))
@@ -1123,7 +1134,7 @@ class ExprGen(
             }
 
             is YxWhen -> {
-                collectCaptures(node.subject, bound, captures)
+                node.subject?.let { collectCaptures(it, bound, captures) }
                 node.branches.forEach { b ->
                     (b.condition as? yux.compiler.ast.YxExprCondition)
                         ?.let { collectCaptures(it.expr, bound, captures) }
@@ -1132,7 +1143,7 @@ class ExprGen(
             }
 
             is YxWhenExpr -> {
-                collectCaptures(node.subject, bound, captures)
+                node.subject?.let { collectCaptures(it, bound, captures) }
                 node.branches.forEach { b ->
                     (b.condition as? yux.compiler.ast.YxExprCondition)
                         ?.let { collectCaptures(it.expr, bound, captures) }

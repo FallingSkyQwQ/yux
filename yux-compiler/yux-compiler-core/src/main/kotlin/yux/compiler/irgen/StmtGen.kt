@@ -401,7 +401,11 @@ class StmtGen(
                                     params = sym.params.map { TypeBridge.toIr(it.type) },
                                     retType = TypeBridge.toIr(sym.returnType ?: SemaType.UnitT),
                                 )
-                        g.emit(IrStmt.Call(irCall, null, exprGen.padDefaultArgs(sym, args, g, fileScope), irCall.retType))
+                        // 隐式 this 成员调用（缺陷修复）：同类方法以标识符调用（`g()`）时接收者为 this；
+                        // 否则 JVM 后端对非静态方法发 invokevirtual 而栈上无接收者 → VerifyError
+                        val receiver =
+                            if (irCall is IrMethodRef && !irCall.method.isStatic) IrExpr.This else null
+                        g.emit(IrStmt.Call(irCall, receiver, exprGen.padDefaultArgs(sym, args, g, fileScope), irCall.retType))
                     }
 
                     is VariableSymbol, is ParameterSymbol -> {
@@ -679,14 +683,19 @@ class StmtGen(
         g.emit(IrStmt.Label(endL))
     }
 
-    /** when → 分支链（subject 求值一次；`is T` 用 IsType；else 兜底）。 */
+    /** when → 分支链（subject 求值一次；`is T` 用 IsType；else 兜底）。
+     *  无 subject 形式（`when { cond -> }`）：条件为布尔表达式，直接分支。 */
     private fun genWhen(
         stmt: YxWhen,
         g: MethodGen,
         fileScope: FileScope,
     ) {
-        val subjectLocal = g.newLocal("subject", TypeBridge.toIr(irGen.exprTypes[stmt.subject] ?: SemaType.ErrorT))
-        g.emit(IrStmt.LocalAssign(subjectLocal, exprGen.gen(stmt.subject, g, fileScope)))
+        val subjectLocal =
+            stmt.subject?.let { subj ->
+                g.newLocal("subject", TypeBridge.toIr(irGen.exprTypes[subj] ?: SemaType.ErrorT)).also { local ->
+                    g.emit(IrStmt.LocalAssign(local, exprGen.gen(subj, g, fileScope)))
+                }
+            }
         val endL = g.newLabel()
         for (branch in stmt.branches) {
             val bodyL = g.newLabel()
@@ -701,7 +710,7 @@ class StmtGen(
                     val nextL = g.newLabel()
                     g.emit(
                         IrStmt.Branch(
-                            IrExpr.IsType(IrExpr.LocalRead(subjectLocal), irGen.resolveIrType(cond.type, fileScope)),
+                            IrExpr.IsType(IrExpr.LocalRead(subjectLocal!!), irGen.resolveIrType(cond.type, fileScope)),
                             bodyL,
                             nextL,
                         ),
@@ -714,13 +723,14 @@ class StmtGen(
 
                 is YxExprCondition -> {
                     val nextL = g.newLabel()
-                    g.emit(
-                        IrStmt.Branch(
-                            IrExpr.Compare(CompareOp.EQ, IrExpr.LocalRead(subjectLocal), exprGen.gen(cond.expr, g, fileScope)),
-                            bodyL,
-                            nextL,
-                        ),
-                    )
+                    val branchCond =
+                        if (subjectLocal != null) {
+                            IrExpr.Compare(CompareOp.EQ, IrExpr.LocalRead(subjectLocal), exprGen.gen(cond.expr, g, fileScope))
+                        } else {
+                            // 无 subject：条件本身为布尔表达式（sema 已保证 Boolean）
+                            exprGen.gen(cond.expr, g, fileScope)
+                        }
+                    g.emit(IrStmt.Branch(branchCond, bodyL, nextL))
                     g.emit(IrStmt.Label(bodyL))
                     gen(branch.body, g, fileScope)
                     g.emit(IrStmt.Goto(endL))

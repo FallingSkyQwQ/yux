@@ -1,13 +1,14 @@
-// 02-进阶 · 第 3 章：类与继承（extends + 方法覆盖 + super 非虚拟调用）
+// 02-进阶 · 第 3 章：类与继承（extends + 方法覆盖 + super 非虚拟调用 + 表达式体推断）
 Animal {
-    fun speak():String = "generic"
+    fun speak() = "generic"
 }
 Dog extends Animal {
-    fun speak():String = super.speak() + " dog"
+    fun speak() = super.speak() + " dog"
 }
 fun main() {
     a = Animal()
     d = Dog()
     println a.speak()
+    println (a.speak().length)
     println d.speak()
 }

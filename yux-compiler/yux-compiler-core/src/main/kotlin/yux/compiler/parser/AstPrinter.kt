@@ -211,7 +211,8 @@ object AstPrinter {
                 }
             }
             is YxWhen -> {
-                appendLine(this, depth, "when ${renderExpr(stmt.subject)}")
+                val subj = stmt.subject?.let { " ${renderExpr(it)}" } ?: ""
+                appendLine(this, depth, "when$subj")
                 stmt.branches.forEach { append(renderWhenBranch(it, depth + 1)) }
             }
             is YxFor -> {
@@ -318,7 +319,10 @@ object AstPrinter {
         is YxRange -> "Range(${renderExpr(expr.from)}, ${renderExpr(expr.to)})"
         is YxAssign -> "Assign(${renderExpr(expr.target)}, ${expr.op}, ${renderExpr(expr.value)})"
         is YxIfExpr -> "IfExpr(${renderExpr(expr.condition)}, ${renderExpr(expr.thenExpr)}, ${renderExpr(expr.elseExpr)})"
-        is YxWhenExpr -> "WhenExpr(${renderExpr(expr.subject)}, [${expr.branches.joinToString("; ") { renderWhenExprBranch(it) }}])"
+        is YxWhenExpr -> {
+            val subj = expr.subject?.let { renderExpr(it) } ?: "-"
+            "WhenExpr($subj, [${expr.branches.joinToString("; ") { renderWhenExprBranch(it) }}])"
+        }
         is YxIndexExpr -> "Index(${renderExpr(expr.base)}, ${renderExpr(expr.index)})"
     }
 

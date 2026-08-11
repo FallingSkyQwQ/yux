@@ -249,7 +249,7 @@ class CstToAst {
             stmt.span,
         )
         is CstWhenStmt -> YxWhen(
-            convertExpr(stmt.subject),
+            stmt.subject?.let { convertExpr(it) },
             stmt.branches.map { branch ->
                 YxWhenBranch(convertWhenCondition(branch.condition), convertStmt(branch.body), branch.span)
             },
@@ -326,7 +326,7 @@ class CstToAst {
             expr.span,
         )
         is CstWhenExpr -> YxWhenExpr(
-            convertExpr(expr.subject),
+            expr.subject?.let { convertExpr(it) },
             expr.branches.map { branch ->
                 YxWhenExprBranch(convertWhenCondition(branch.condition), convertExpr(branch.body), branch.span)
             },

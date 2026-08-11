@@ -2,6 +2,20 @@
 
 本文件记录各里程碑的显著变更（含 breaking changes，见 06-§3）。
 
+## [Unreleased] - 2026-08-11 — 教程三缺陷修复（无 subject 的 when / 属性 init+访问器 / 推断被 println 顶成 Any）
+
+### 修复
+
+- **无 subject 的 when（`when { cond -> }`）**：此前 `when` 后直接 `{` 被 `parseCondition` 吞掉，报一串"expected newline or ';'"。现在：解析器在 `when` 后跟 `{` 时 subject 置空；sema 对无 subject 分支检查——表达式条件须为 `Boolean`（否则 E0003）、`is` 分支非法（无转型目标，E0004）、when **表达式**必须 `else` 兑底（布尔条件不可证穷尽，E0034，语句形态可直落）；IRGen 无 subject 时条件直接分支（不再 Compare subject）。
+- **顶层/类属性 `init + 访问器` 组合（`x:Int = 10 { get { } }`）**：初始化表达式 `10 { get { } }` 此前被无括号调用解析吞成 `10(块 lambda)` → "Int 不可调用"。现在 PrattParser 对 `{` 后（可跨行）紧跟 `get`/`set` 再跟 `{` 的访问器块前瞻，不再当作块 lambda 实参；类属性与顶层属性同规则（初始化值仍为构造实参）。
+- **表达式体推断返回类型被调用点参数约束顶成 `Any`**：`println a.speak()` 的 `Any` 参数曾把 `speak` 已由函数体解出的 `String` 覆盖为 `Any`，后续 `a.speak().length` 报"成员 'length' 不存在于类型 'Any'"。现在 `Inference.checkAssignable` 对**已求解**推断变量按既有解验证（不重绑），且表达式体函数的返回类型最终由函数体确定（调用点约束不再参与求解）；顺带修复 when/if 表达式体返回类型直接取期望推断变量导致的自绑定成环（memberLookup 无限递归 StackOverflow）——`commonTypeOf`/`typeOfIfExpr` 在期望为未求解变量时改按分支公共类型求解，`memberLookup` 增加环防护。
+- **同类方法隐式 this 调用 VerifyError**：`g()` 以标识符调用同类方法时 IRGen 曾发 receiver=null 的 Invoke，JVM 后端对非静态方法发 `invokevirtual` 而栈上无接收者 → "Operand stack underflow"。现在表达式/语句两条调用路径对非静态成员补发 `IrExpr.This` 接收者（顶层函数仍 invokestatic）。
+- 回归测试：`StmtEmitterBugfixTest` +9 例、`TypeCheckerTest` +7 例、`PrattParserTest` +4 例、golden AST（statements.yux 无 subject when）；教程示例同步：`03-master/10-when-exhaustive.yux`（无 subject when）、`03-master/18-top-level-accessors.yux`（init+访问器）、`02-advance/03-classes-inheritance.yux`（推断 + 隐式 this），快照同步重新生成。
+
+### 新增
+
+- **教程同步**：`docs/tutorial/04-生态门户.md` 已知限制三项全部移入已修复表（附回归测试与示例指引）；`03-精通` 第 10/18 章、`02-进阶` 第 3 章要点更新。
+
 ## [Unreleased] - 2026-08-11 — 入门到精通教程 + 参数默认值修复
 
 ### 修复

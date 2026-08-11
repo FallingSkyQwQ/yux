@@ -340,9 +340,15 @@ class TypeChecker(
                     null
                 }
             }
-        // 返回类型求解：表达式体取表达式类型；块体未显式返回 → Unit（S-5.5.2）
-        if (declaredReturn is SemaType.InferenceVar && declaredReturn.solution == null) {
-            declaredReturn.solution = bodyType ?: SemaType.UnitT
+        // 返回类型求解：表达式体取表达式类型（函数体是推断返回类型的唯一权威——缺陷修复：
+        // 调用点约束（如 `println` 的 Any 参数）不再能覆盖由函数体解出的类型，见 Inference.checkAssignable；
+        // 块体未显式返回 → Unit（S-5.5.2））
+        if (declaredReturn is SemaType.InferenceVar) {
+            if (bodyType != null) {
+                declaredReturn.solution = bodyType
+            } else if (declaredReturn.solution == null) {
+                declaredReturn.solution = SemaType.UnitT
+            }
         }
         declTypes[decl] = (declaredReturn as? SemaType.InferenceVar)?.solution ?: declaredReturn
         currentReceiver = savedReceiver
@@ -782,28 +788,66 @@ class TypeChecker(
     }
 
     private fun checkWhen(stmt: YxWhen) {
-        val subjectType = typeOf(stmt.subject)
+        val subject = stmt.subject
+        val subjectType = subject?.let { typeOf(it) }
         for (branch in stmt.branches) {
             smartCast.enterBlock()
-            when (val cond = branch.condition) {
-                is YxIsCondition -> {
-                    val resolved = typeResolver.resolve(cond.type, currentFile!!)
-                    val name = subjectAsVariable(stmt.subject)
-                    val declared = name?.let { lookupVariable(it)?.type }
-                    if (name != null && !resolved.isError && declared != null && !TypeAssignability.possiblySame(declared, resolved)) {
-                        diagnostics.error(
-                            "类型检查不可能成立: '${declared.render()}' 与 '${resolved.render()}' 无交集（S-6.3.1）",
-                            cond.span.start,
-                            ErrorCodes.TYPE_MISMATCH,
-                        )
-                    } else if (name != null && !resolved.isError) {
-                        if (!smartCast.applyIsCast(name, resolved, ::isReassigned)) {
-                            diagnostics.remind("可变引用 '$name' 的智能转型被抑制", cond.span.start, ErrorCodes.SMART_CAST_MUTABLE)
-                        }
+            checkWhenCondition(branch.condition, subject, subjectType)
+            checkStatement(branch.body)
+            smartCast.exitBlock()
+        }
+        // T-M12：密封 subject 穷尽性检查（语句与表达式共用，非密封语句允许无 else 直落，S-6.3.2）
+        checkWhenExhaustiveness(stmt.span.start, stmt.branches.map { it.condition }, subjectType, isExpression = false)
+    }
+
+    /**
+     * when 分支条件检查（subject 可有可无，S-6.3）：
+     * - 有 subject：is 分支做智能转型、表达式条件与 subject 匹配；
+     * - 无 subject（`when { cond -> }`）：is 分支非法，表达式条件须为 Boolean。
+     */
+    private fun checkWhenCondition(
+        cond: YxWhenCondition,
+        subject: YxExpr?,
+        subjectType: SemaType?,
+    ) {
+        when (cond) {
+            is YxIsCondition -> {
+                if (subject == null || subjectType == null) {
+                    diagnostics.error(
+                        "无 subject 的 when 不能使用 is 分支（is 需要 subject 作转型目标，S-6.3.1）",
+                        cond.span.start,
+                        ErrorCodes.TYPE_MISMATCH,
+                    )
+                    return
+                }
+                val resolved = typeResolver.resolve(cond.type, currentFile!!)
+                val name = subjectAsVariable(subject)
+                val declared = name?.let { lookupVariable(it)?.type }
+                if (name != null && !resolved.isError && declared != null && !TypeAssignability.possiblySame(declared, resolved)) {
+                    diagnostics.error(
+                        "类型检查不可能成立: '${declared.render()}' 与 '${resolved.render()}' 无交集（S-6.3.1）",
+                        cond.span.start,
+                        ErrorCodes.TYPE_MISMATCH,
+                    )
+                } else if (name != null && !resolved.isError) {
+                    if (!smartCast.applyIsCast(name, resolved, ::isReassigned)) {
+                        diagnostics.remind("可变引用 '$name' 的智能转型被抑制", cond.span.start, ErrorCodes.SMART_CAST_MUTABLE)
                     }
                 }
+            }
 
-                is YxExprCondition -> {
+            is YxExprCondition -> {
+                if (subjectType == null) {
+                    // 无 subject：条件为布尔表达式（Kotlin 同款）
+                    val condType = typeOf(cond.expr)
+                    if (!condType.isError && !TypeAssignability.sameBase(condType, SemaType.BOOLEAN)) {
+                        diagnostics.error(
+                            "无 subject 的 when 分支条件必须是 Boolean（S-6.3），实际 ${condType.render()}",
+                            cond.span.start,
+                            ErrorCodes.CONDITION_NOT_BOOLEAN,
+                        )
+                    }
+                } else {
                     // when 分支条件与 subject 匹配（S-6.3），null 字面量以 subject 为期望
                     val condType = typeOf(cond.expr, expected = subjectType)
                     if (!condType.isError && !subjectType.isError && !TypeAssignability.sameBase(condType, subjectType)) {
@@ -814,20 +858,16 @@ class TypeChecker(
                         )
                     }
                 }
+            }
 
-                is YxElseCondition -> {
-                    // else 分支：subject == null 时 subject 为非空
-                    if (subjectType.nullable) {
-                        val name = subjectAsVariable(stmt.subject)
-                        if (name != null) smartCast.register(name, subjectType.nonNull())
-                    }
+            is YxElseCondition -> {
+                // else 分支：subject == null 时 subject 为非空
+                if (subjectType != null && subjectType.nullable) {
+                    val name = subject?.let { subjectAsVariable(it) }
+                    if (name != null) smartCast.register(name, subjectType.nonNull())
                 }
             }
-            checkStatement(branch.body)
-            smartCast.exitBlock()
         }
-        // T-M12：密封 subject 穷尽性检查（语句与表达式共用，非密封语句允许无 else 直落，S-6.3.2）
-        checkWhenExhaustiveness(stmt.span.start, stmt.branches.map { it.condition }, subjectType, isExpression = false)
     }
 
     // ── when 表达式（T-M12）────────────────────────────────────────────────
@@ -837,46 +877,12 @@ class TypeChecker(
         expr: YxWhenExpr,
         expected: SemaType?,
     ): SemaType {
-        val subjectType = typeOf(expr.subject)
+        val subject = expr.subject
+        val subjectType = subject?.let { typeOf(it) }
         val branchTypes = mutableListOf<SemaType>()
         for (branch in expr.branches) {
             smartCast.enterBlock()
-            when (val cond = branch.condition) {
-                is YxIsCondition -> {
-                    val resolved = typeResolver.resolve(cond.type, currentFile!!)
-                    val name = subjectAsVariable(expr.subject)
-                    val declared = name?.let { lookupVariable(it)?.type }
-                    if (name != null && !resolved.isError && declared != null && !TypeAssignability.possiblySame(declared, resolved)) {
-                        diagnostics.error(
-                            "类型检查不可能成立: '${declared.render()}' 与 '${resolved.render()}' 无交集（S-6.3.1）",
-                            cond.span.start,
-                            ErrorCodes.TYPE_MISMATCH,
-                        )
-                    } else if (name != null && !resolved.isError) {
-                        if (!smartCast.applyIsCast(name, resolved, ::isReassigned)) {
-                            diagnostics.remind("可变引用 '$name' 的智能转型被抑制", cond.span.start, ErrorCodes.SMART_CAST_MUTABLE)
-                        }
-                    }
-                }
-
-                is YxExprCondition -> {
-                    val condType = typeOf(cond.expr, expected = subjectType)
-                    if (!condType.isError && !subjectType.isError && !TypeAssignability.sameBase(condType, subjectType)) {
-                        diagnostics.error(
-                            "when 分支条件与 subject 类型不匹配: '${condType.render()}' 与 '${subjectType.render()}'",
-                            cond.span.start,
-                            ErrorCodes.TYPE_MISMATCH,
-                        )
-                    }
-                }
-
-                is YxElseCondition -> {
-                    if (subjectType.nullable) {
-                        val name = subjectAsVariable(expr.subject)
-                        if (name != null) smartCast.register(name, subjectType.nonNull())
-                    }
-                }
-            }
+            checkWhenCondition(branch.condition, subject, subjectType)
             branchTypes += typeOf(branch.body, expected)
             smartCast.exitBlock()
         }
@@ -884,12 +890,17 @@ class TypeChecker(
         return commonTypeOf(branchTypes, expected)
     }
 
-    /** 多分支公共类型（镜像 typeOfIfExpr 的合并规则：Nothing/Error 传播 + 期望优先）。 */
+    /** 多分支公共类型（镜像 typeOfIfExpr 的合并规则：Nothing/Error 传播 + 期望优先）。
+     *  缺陷修复：期望为未求解推断变量时不直接返回它——分支体公共类型才是函数体推断
+     *  的答案（否则 `fun f() = when { ... }` 的返回变量自绑定成环 → memberLookup 栈溢出）。 */
     private fun commonTypeOf(
         types: List<SemaType>,
         expected: SemaType?,
     ): SemaType {
-        if (expected != null) return expected
+        val resolvedExpected = expected?.let { SemaType.resolveVar(it) }
+        if (resolvedExpected != null && resolvedExpected !is SemaType.InferenceVar && !resolvedExpected.isError) {
+            return resolvedExpected
+        }
         val resolved = types.map { SemaType.resolveVar(it) }
         var acc: SemaType? = null
         for (t in resolved) {
@@ -917,12 +928,23 @@ class TypeChecker(
     private fun checkWhenExhaustiveness(
         start: SourcePosition,
         conditions: List<YxWhenCondition>,
-        subjectType: SemaType,
+        subjectType: SemaType?,
         isExpression: Boolean,
     ) {
+        val hasElse = conditions.any { it is YxElseCondition }
+        // 无 subject（`when { cond -> }`）：无密封/可空性检查；表达式仍需 else（布尔条件不可证穷尽）
+        if (subjectType == null) {
+            if (isExpression && !hasElse) {
+                diagnostics.error(
+                    "when 表达式需要 else 分支（无 subject 时布尔条件不可证穷尽）（S-6.3）",
+                    start,
+                    ErrorCodes.WHEN_NOT_EXHAUSTIVE,
+                )
+            }
+            return
+        }
         val resolved = SemaType.resolveVar(subjectType)
         if (resolved.isError) return
-        val hasElse = conditions.any { it is YxElseCondition }
         val sealedSym = (resolved as? SemaType.Declared)?.symbol as? YxClassSymbol
         if (sealedSym != null && sealedSym.isSealed) {
             if (hasElse) return
@@ -1404,7 +1426,13 @@ class TypeChecker(
             }
 
             is SemaType.InferenceVar -> {
-                receiver.solution?.let { memberLookup(it, name) }
+                // 环防护（缺陷修复）：自绑定/环状解链时 resolveVar 返回 ErrorT，不再无限递归
+                val resolved = SemaType.resolveVar(receiver)
+                if (resolved !is SemaType.InferenceVar) {
+                    memberLookup(resolved, name)
+                } else {
+                    null
+                }
             }
 
             else -> {
@@ -2033,7 +2061,11 @@ class TypeChecker(
         val elseResolved = SemaType.resolveVar(elseType)
         if (thenResolved is SemaType.NothingT) return elseResolved
         if (elseResolved is SemaType.NothingT) return thenResolved
-        if (expected != null) return expected
+        // 期望为具体类型时以期望优先；未求解推断变量不返回（否则表达式体推断自绑定成环）
+        val resolvedExpected = expected?.let { SemaType.resolveVar(it) }
+        if (resolvedExpected != null && resolvedExpected !is SemaType.InferenceVar && !resolvedExpected.isError) {
+            return resolvedExpected
+        }
         if (thenResolved.isError) return elseResolved
         if (elseResolved.isError) return thenResolved
         return if (TypeAssignability.isAssignable(thenResolved, elseResolved)) {

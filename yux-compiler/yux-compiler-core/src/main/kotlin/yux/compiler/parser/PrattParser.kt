@@ -219,7 +219,9 @@ internal class PrattParser(
             }
 
             LBRACE -> {
-                !p.suppressBlockCall
+                // 属性访问器块前瞻（`{ get`/`{ set`）：不当作块 lambda 实参，
+                // 使 `x:Int = 10 { get { } }` 的初始化表达式在访问器块前停下
+                !p.suppressBlockCall && !p.looksLikeAccessorBlock()
             }
 
             KEYWORD -> {

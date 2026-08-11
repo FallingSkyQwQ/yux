@@ -635,4 +635,143 @@ class TypeCheckerTest {
             )
         assertFalse(r.hasErrors, r.errors.toString())
     }
+
+    // ── 无 subject 的 when（`when { cond -> }`，缺陷修复）──────────────────────
+
+    @Test
+    fun `subjectless when statement accepts boolean conditions`() {
+        val r =
+            SemaTestSupport.analyze(
+                """
+                fun main() {
+                    x = 5
+                    when {
+                        x > 0 -> print "positive"
+                        else -> print "other"
+                    }
+                }
+                """.trimIndent(),
+            )
+        assertFalse(r.hasErrors, r.errors.toString())
+    }
+
+    @Test
+    fun `subjectless when expression requires else`() {
+        // 无 subject 的 when 表达式：布尔条件不可证穷尽 → 必须 else（E0034）
+        val r =
+            SemaTestSupport.analyze(
+                """
+                fun f(x:Int):String = when {
+                    x > 0 -> "pos"
+                    x < 0 -> "neg"
+                }
+                """.trimIndent(),
+            )
+        assertTrue(r.hasCode(ErrorCodes.WHEN_NOT_EXHAUSTIVE), r.errors.toString())
+    }
+
+    @Test
+    fun `subjectless when rejects non boolean condition`() {
+        // 无 subject 时条件必须是 Boolean：`x`（Int）报 E0003
+        val r =
+            SemaTestSupport.analyze(
+                """
+                fun main() {
+                    x = 5
+                    when {
+                        x -> print "x"
+                        else -> print "y"
+                    }
+                }
+                """.trimIndent(),
+            )
+        assertTrue(r.hasCode(ErrorCodes.CONDITION_NOT_BOOLEAN), r.errors.toString())
+    }
+
+    @Test
+    fun `subjectless when rejects is branch`() {
+        // is 分支需要 subject 作转型目标：无 subject 时报 E0004
+        val r =
+            SemaTestSupport.analyze(
+                """
+                Animal {
+                    fun speak() = "x"
+                }
+                fun main() {
+                    when {
+                        is Animal -> print "a"
+                        else -> print "b"
+                    }
+                }
+                """.trimIndent(),
+            )
+        assertTrue(r.hasErrors, "is 分支在无 subject 的 when 中应报错")
+    }
+
+    // ── 表达式体推断不被调用点约束顶成 Any（缺陷修复）──────────────────────────
+
+    @Test
+    fun `println arg does not clobber inferred return type`() {
+        // 修复前：`println a.speak()` 把 speak 的返回推断变量绑定到 Any（println 参数），
+        // 后续 `a.speak().length` 报 E0016 "成员 'length' 不存在于类型 'Any'"
+        val r =
+            SemaTestSupport.analyze(
+                """
+                Animal {
+                    fun speak() = "generic"
+                }
+                fun main() {
+                    a:Animal = Animal()
+                    println a.speak()
+                    println (a.speak().length)
+                }
+                """.trimIndent(),
+            )
+        assertFalse(r.hasErrors, r.errors.toString())
+    }
+
+    @Test
+    fun `inferred return of forward referenced expr body stays concrete`() {
+        // 同类前向引用（caller 在 callee 之前声明）：函数体仍是返回类型的唯一权威
+        val r =
+            SemaTestSupport.analyze(
+                """
+                A {
+                    fun f():String = g()
+                    fun g() = "hi"
+                }
+                fun main() {
+                    a = A()
+                    println a.f()
+                }
+                """.trimIndent(),
+            )
+        assertFalse(r.hasErrors, r.errors.toString())
+        val f =
+            r.analysis.declTypes.values
+                .firstOrNull { it.render() == "String" }
+        assertTrue(f != null, "g 的推断返回应为 String: ${r.analysis.declTypes}")
+    }
+
+    @Test
+    fun `when expression as inferred expression body resolves`() {
+        // 缺陷修复：when/if 表达式体返回类型曾直接取期望推断变量（自绑定成环）→
+        // 后续成员查找 memberLookup 无限递归 StackOverflow；现按分支公共类型求解
+        val r =
+            SemaTestSupport.analyze(
+                """
+                fun classify(x:Int) = when {
+                    x > 0 -> "pos"
+                    else -> "neg"
+                }
+                fun abs(x:Int) = if (x > 0) then x else -x
+                fun main() {
+                    println classify(3)
+                    println (classify(-1).length)
+                    println abs(-4)
+                }
+                """.trimIndent(),
+            )
+        assertFalse(r.hasErrors, r.errors.toString())
+    }
 }
