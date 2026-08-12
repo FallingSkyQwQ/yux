@@ -1,8 +1,8 @@
 package yux.compiler.sema
 
-import yux.compiler.lexer.SourcePosition
 import yux.compiler.diag.DiagnosticSink
 import yux.compiler.diag.ErrorCodes
+import yux.compiler.lexer.SourcePosition
 
 /**
  * 局部双向推断（T-M3-5 / ADR-08，02-§7.2）。
@@ -11,7 +11,9 @@ import yux.compiler.diag.ErrorCodes
  * 由上下文（期望类型/初始化表达式）双向收紧，冲突即报 [ErrorCodes.TYPE_MISMATCH]。
  * 不做全局 HM，不猜测 Lambda 参数类型（S-4.5.3）。
  */
-class Inference(private val diagnostics: DiagnosticSink) {
+class Inference(
+    private val diagnostics: DiagnosticSink,
+) {
     private var varCounter = 0
 
     /** 新建推断变量 `?T`. */
@@ -25,7 +27,10 @@ class Inference(private val diagnostics: DiagnosticSink) {
      * - 同底类型：可空性取「任一可空则可空」；
      * - 不同底类型：返回 null（调用方报错）。
      */
-    fun unify(a: SemaType, b: SemaType): SemaType? {
+    fun unify(
+        a: SemaType,
+        b: SemaType,
+    ): SemaType? {
         val av = a.resolveInferenceVar()
         val bv = b.resolveInferenceVar()
         if (av === bv) return av
@@ -34,8 +39,14 @@ class Inference(private val diagnostics: DiagnosticSink) {
             av.solution = bv
             return bv
         }
-        if (av is SemaType.InferenceVar) { av.solution = bv; return bv }
-        if (bv is SemaType.InferenceVar) { bv.solution = av; return av }
+        if (av is SemaType.InferenceVar) {
+            av.solution = bv
+            return bv
+        }
+        if (bv is SemaType.InferenceVar) {
+            bv.solution = av
+            return av
+        }
         if (av.isError || bv.isError) return SemaType.ErrorT
         if (av is SemaType.NothingT) return bv
         if (bv is SemaType.NothingT) return av
@@ -115,7 +126,10 @@ class Inference(private val diagnostics: DiagnosticSink) {
     }
 
     /** 推断失败报告（S-4.5.4）：不猜测类型，给出定位。 */
-    fun reportInferenceFailure(position: SourcePosition?, detail: String) {
+    fun reportInferenceFailure(
+        position: SourcePosition?,
+        detail: String,
+    ) {
         diagnostics.error("类型推断失败: $detail", position, ErrorCodes.INFERENCE_FAILURE)
     }
 
@@ -123,17 +137,21 @@ class Inference(private val diagnostics: DiagnosticSink) {
      * 追踪推断变量解链（S-4.5.4，含环检测，镜像 [SemaType.resolveVar]）：
      * 遇环返回 [SemaType.ErrorT]，避免无限递归 → StackOverflow。
      */
-    private fun SemaType.resolveInferenceVar(seen: MutableSet<Int> = mutableSetOf()): SemaType = when (this) {
-        is SemaType.InferenceVar -> {
-            val s = solution
-            if (s == null) {
+    private fun SemaType.resolveInferenceVar(seen: MutableSet<Int> = mutableSetOf()): SemaType =
+        when (this) {
+            is SemaType.InferenceVar -> {
+                val s = solution
+                if (s == null) {
+                    this
+                } else if (!seen.add(id)) {
+                    SemaType.ErrorT
+                } else {
+                    s.resolveInferenceVar(seen)
+                }
+            }
+
+            else -> {
                 this
-            } else if (!seen.add(id)) {
-                SemaType.ErrorT
-            } else {
-                s.resolveInferenceVar(seen)
             }
         }
-        else -> this
-    }
 }

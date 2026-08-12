@@ -26,10 +26,10 @@ import yux.compiler.lexer.TokenKind.SOFT_KEYWORD
 import yux.compiler.lexer.TokenKind.STRING_END
 import yux.compiler.lexer.TokenKind.STRING_START
 import yux.compiler.lexer.TokenKind.STRING_TEXT
-import yux.compiler.lexer.TokenKind.IDENTIFIER as ID
 import yux.compiler.plugin.KeywordBinding
 import yux.compiler.plugin.PluginManager
 import yux.compiler.source.SourceFile
+import yux.compiler.lexer.TokenKind.IDENTIFIER as ID
 
 /**
  * 语法分析器（02-§5 / T-M2）：手写递归下降 + Pratt 表达式。
@@ -42,7 +42,10 @@ class Parser(
     val diagnostics: DiagnosticSink = DiagnosticSink(),
     val pluginManager: PluginManager? = null,
 ) {
-    internal val tokens: List<Token> = yux.compiler.lexer.Lexer(source, diagnostics).tokenize()
+    internal val tokens: List<Token> =
+        yux.compiler.lexer
+            .Lexer(source, diagnostics)
+            .tokenize()
     internal var index = 0
     internal val symbols: PreSymbolTable =
         DeclarationsCollector.collect(tokens, pluginManager?.registeredKeywords ?: emptySet())
@@ -99,7 +102,9 @@ class Parser(
         return peek(i + 1).kind == LBRACE
     }
 
-    private class Scope(val parent: Scope?) {
+    private class Scope(
+        val parent: Scope?,
+    ) {
         val names = mutableSetOf<String>()
     }
 
@@ -124,20 +129,27 @@ class Parser(
 
     fun atSoft(word: String): Boolean = current.kind == SOFT_KEYWORD && current.text == word
 
-    fun atStatementEnd(): Boolean = when (current.kind) {
-        NEWLINE, SEMICOLON, RBRACE, EOF -> true
-        KEYWORD -> current.text == "else" || current.text == "catch" || current.text == "finally"
-        else -> false
-    }
+    fun atStatementEnd(): Boolean =
+        when (current.kind) {
+            NEWLINE, SEMICOLON, RBRACE, EOF -> true
+            KEYWORD -> current.text == "else" || current.text == "catch" || current.text == "finally"
+            else -> false
+        }
 
-    fun expect(kind: TokenKind, what: String): Token {
+    fun expect(
+        kind: TokenKind,
+        what: String,
+    ): Token {
         if (at(kind)) return advance()
         error("expected $what, found '${current.text}'")
         return advance()
     }
 
     /** 期望软关键字（如 `then`）；缺失时报错并跳过。 */
-    fun expectSoft(word: String, what: String): Token {
+    fun expectSoft(
+        word: String,
+        what: String,
+    ): Token {
         if (atSoft(word)) return advance()
         error("expected $what, found '${current.text}'")
         return advance()
@@ -149,7 +161,10 @@ class Parser(
         return advance()
     }
 
-    fun error(message: String, position: yux.compiler.lexer.SourcePosition = current.position) {
+    fun error(
+        message: String,
+        position: yux.compiler.lexer.SourcePosition = current.position,
+    ) {
         diagnostics.error(message, position)
     }
 
@@ -206,17 +221,38 @@ class Parser(
             return parseExtensionDecl(binding)
         }
         return when {
-            atKeyword("package") -> parsePackageDecl()
-            atKeyword("import") -> parseImportDecl()
-            atKeyword("data") -> parseDataClass(annotations, null, null)
-            atKeyword("service") -> parseService(annotations)
+            atKeyword("package") -> {
+                parsePackageDecl()
+            }
+
+            atKeyword("import") -> {
+                parseImportDecl()
+            }
+
+            atKeyword("data") -> {
+                parseDataClass(annotations, null, null)
+            }
+
+            atKeyword("service") -> {
+                parseService(annotations)
+            }
+
             at(ID) || atSoft("private") || atSoft("protected") ||
                 atKeyword("fun") || atKeyword("async") -> {
                 val flags = parseDeclFlags()
                 when {
-                    atKeyword("fun") -> parseFunction(annotations, flags, funKw = advance())
-                    atKeyword("data") -> parseDataClass(annotations, flags.modifier, flags.sealed)
-                    atKeyword("service") -> parseService(annotations)
+                    atKeyword("fun") -> {
+                        parseFunction(annotations, flags, funKw = advance())
+                    }
+
+                    atKeyword("data") -> {
+                        parseDataClass(annotations, flags.modifier, flags.sealed)
+                    }
+
+                    atKeyword("service") -> {
+                        parseService(annotations)
+                    }
+
                     at(ID) -> {
                         val nxt = peek(1)
                         if (nxt.kind == LBRACE ||
@@ -227,6 +263,7 @@ class Parser(
                             parseProperty(annotations, flags.modifier)
                         }
                     }
+
                     else -> {
                         error("expected declaration after modifier")
                         index = Recovery.skipToLineEnd(tokens, index)
@@ -234,11 +271,13 @@ class Parser(
                     }
                 }
             }
+
             at(LBRACE) -> {
                 error("unexpected '{' at top level: expected declaration")
                 skipBalancedBraces()
                 null
             }
+
             else -> {
                 // 死关键字（new/native/stack，01-§3 保留字）：明确诊断而非泛化 "unexpected token"
                 if (!deadKeywordDiagnostic()) {
@@ -251,21 +290,27 @@ class Parser(
     }
 
     /** 死关键字诊断（new/native/stack，S-8.6）：消费并给出 v0.1 明确语义；返回是否命中。 */
-    private fun deadKeywordDiagnostic(): Boolean = when {
-        atKeyword("new") -> {
-            error("`new` 关键字暂不支持（v0.1）：请使用 `Type(...)` 构造对象")
-            true
+    private fun deadKeywordDiagnostic(): Boolean =
+        when {
+            atKeyword("new") -> {
+                error("`new` 关键字暂不支持（v0.1）：请使用 `Type(...)` 构造对象")
+                true
+            }
+
+            atKeyword("native") -> {
+                error("`native fun` 暂不支持（v0.1）：JVM 后端未实现原生函数声明（S-8.6.4）")
+                true
+            }
+
+            atKeyword("stack") -> {
+                error("`stack` 栈分配暂不支持（v0.1）：对象一律 GC 分配（S-8.6.2）")
+                true
+            }
+
+            else -> {
+                false
+            }
         }
-        atKeyword("native") -> {
-            error("`native fun` 暂不支持（v0.1）：JVM 后端未实现原生函数声明（S-8.6.4）")
-            true
-        }
-        atKeyword("stack") -> {
-            error("`stack` 栈分配暂不支持（v0.1）：对象一律 GC 分配（S-8.6.2）")
-            true
-        }
-        else -> false
-    }
 
     private data class DeclFlags(
         val async: Token? = null,
@@ -291,11 +336,15 @@ class Parser(
         while (looping) {
             when {
                 atKeyword("async") -> async = advance()
+
                 atSoft("override") -> override = advance()
+
                 atSoft("private") || atSoft("protected") -> modifier = advance()
+
                 // `sealed` 为软关键字：仅当后随类声明首符（类名 / `data`）时视为修饰符，
                 // 其余位置（属性名、表达式、成员名）保持普通标识符语义（T-M12）。
                 at(ID) && current.text == "sealed" && isSealedModifierAhead() -> sealed = advance()
+
                 else -> looping = false
             }
         }
@@ -328,25 +377,39 @@ class Parser(
             advance()
             name += advance()
         }
-        val star = if (at(DOT) && peek(1).kind == TokenKind.STAR) {
-            advance()
-            advance()
-        } else {
-            null
-        }
+        val star =
+            if (at(DOT) && peek(1).kind == TokenKind.STAR) {
+                advance()
+                advance()
+            } else {
+                null
+            }
         finishStatement()
         return CstImportDecl(importKw, name, star, spanOf(importKw, star ?: name.last()))
     }
 
-    private fun parseDataClass(annotations: List<CstAnnotation>, modifier: Token?, sealedKw: Token?): CstDecl {
+    private fun parseDataClass(
+        annotations: List<CstAnnotation>,
+        modifier: Token?,
+        sealedKw: Token?,
+    ): CstDecl {
         val dataKw = expect(KEYWORD, "'data'")
         val name = expectIdent("class name")
         val typeParams = parseTypeParams()
         val (extendsKw, extendsType, implementsKw, implements) = parseExtendsImplements()
         val body = parseClassBody()
         return CstDataClassDecl(
-            dataKw, modifier, sealedKw, annotations, name, typeParams,
-            extendsKw, extendsType, implementsKw, implements, body,
+            dataKw,
+            modifier,
+            sealedKw,
+            annotations,
+            name,
+            typeParams,
+            extendsKw,
+            extendsType,
+            implementsKw,
+            implements,
+            body,
             spanOf(dataKw, body),
         )
     }
@@ -359,14 +422,25 @@ class Parser(
         return CstServiceDecl(serviceKw, annotations, name, typeParams, body, spanOf(serviceKw, body))
     }
 
-    private fun parseClass(annotations: List<CstAnnotation>, flags: DeclFlags): CstDecl {
+    private fun parseClass(
+        annotations: List<CstAnnotation>,
+        flags: DeclFlags,
+    ): CstDecl {
         val name = expectIdent("class name")
         val typeParams = parseTypeParams()
         val (extendsKw, extendsType, implementsKw, implements) = parseExtendsImplements()
         val body = parseClassBody()
         return CstClassDecl(
-            flags.modifier, flags.sealed, annotations, name, typeParams,
-            extendsKw, extendsType, implementsKw, implements, body,
+            flags.modifier,
+            flags.sealed,
+            annotations,
+            name,
+            typeParams,
+            extendsKw,
+            extendsType,
+            implementsKw,
+            implements,
+            body,
             spanOf(name, body),
         )
     }
@@ -414,10 +488,13 @@ class Parser(
             if (member != null) members += member
             skipNewlines()
         }
-        val rbrace = if (at(RBRACE)) advance() else {
-            error("expected '}' to close class body")
-            current
-        }
+        val rbrace =
+            if (at(RBRACE)) {
+                advance()
+            } else {
+                error("expected '}' to close class body")
+                current
+            }
         popScope()
         return CstClassBody(lbrace, members, rbrace, SourceSpan(lbrace.position, rbrace.position))
     }
@@ -426,19 +503,31 @@ class Parser(
         val annotations = parseAnnotations()
         skipNewlines()
         return when {
-            at(RBRACE) || at(EOF) -> null
+            at(RBRACE) || at(EOF) -> {
+                null
+            }
+
             atKeyword("fun") || atKeyword("async") || atSoft("override") ||
                 atSoft("private") || atSoft("protected") || at(ID) || at(LBRACE) -> {
                 val flags = parseDeclFlags()
                 when {
-                    atKeyword("fun") -> parseFunction(annotations, flags, funKw = advance())
-                    at(ID) && peek(1).kind == LPAREN ->
+                    atKeyword("fun") -> {
+                        parseFunction(annotations, flags, funKw = advance())
+                    }
+
+                    at(ID) && peek(1).kind == LPAREN -> {
                         parseFunction(annotations, flags, funKw = null)
-                    at(ID) -> parseProperty(annotations, flags.modifier)
+                    }
+
+                    at(ID) -> {
+                        parseProperty(annotations, flags.modifier)
+                    }
+
                     at(LBRACE) -> {
                         val b = parseBlock()
                         CstInitBlock(b, b.span)
                     }
+
                     else -> {
                         error("expected 'fun' or property after modifier")
                         index = Recovery.skipToLineEnd(tokens, index)
@@ -446,6 +535,7 @@ class Parser(
                     }
                 }
             }
+
             else -> {
                 if (!deadKeywordDiagnostic()) {
                     error("unexpected token '${current.text}' in class body")
@@ -476,28 +566,41 @@ class Parser(
         val params = parseParameters()
         val colonKw = if (at(COLON)) advance() else null
         val returnType = if (colonKw != null) parseType() else null
-        val body = when {
-            at(LBRACE) -> {
-                val b = if (flags.async != null) withAsyncContext { parseBlock() } else parseBlock()
-                CstBlockBody(b, b.span)
+        val body =
+            when {
+                at(LBRACE) -> {
+                    val b = if (flags.async != null) withAsyncContext { parseBlock() } else parseBlock()
+                    CstBlockBody(b, b.span)
+                }
+
+                at(ASSIGN) -> {
+                    val assignKw = advance()
+                    // async fun 表达式体（`async fun f() = ...`）：体为 async 上下文
+                    val expr = if (flags.async != null) withAsyncContext { pratt.parseExpression() } else pratt.parseExpression()
+                    finishStatement()
+                    CstExpressionBody(assignKw, expr, spanOf(assignKw, expr))
+                }
+
+                else -> {
+                    error("expected function body ('{' or '= expr')")
+                    val empty = CstBlock(current, emptyList(), current, spanOf(current, current))
+                    CstBlockBody(empty, empty.span)
+                }
             }
-            at(ASSIGN) -> {
-                val assignKw = advance()
-                // async fun 表达式体（`async fun f() = ...`）：体为 async 上下文
-                val expr = if (flags.async != null) withAsyncContext { pratt.parseExpression() } else pratt.parseExpression()
-                finishStatement()
-                CstExpressionBody(assignKw, expr, spanOf(assignKw, expr))
-            }
-            else -> {
-                error("expected function body ('{' or '= expr')")
-                val empty = CstBlock(current, emptyList(), current, spanOf(current, current))
-                CstBlockBody(empty, empty.span)
-            }
-        }
         popScope()
         return CstFunctionDecl(
-            annotations, flags.async, flags.override, flags.modifier, funKw, receiverType, name,
-            typeParams, params, colonKw, returnType, body,
+            annotations,
+            flags.async,
+            flags.override,
+            flags.modifier,
+            funKw,
+            receiverType,
+            name,
+            typeParams,
+            params,
+            colonKw,
+            returnType,
+            body,
             spanOf(funKw ?: name, body),
         )
     }
@@ -518,10 +621,16 @@ class Parser(
                 declareLocal(name.text)
                 val startSpan = ann.firstOrNull()?.span ?: spanOf(name)
                 val endSpan = (defaultValue ?: type)?.span ?: spanOf(name)
-                params += CstParameter(
-                    ann, name, colonKw, type, assignKw, defaultValue,
-                    spanOf(startSpan, endSpan),
-                )
+                params +=
+                    CstParameter(
+                        ann,
+                        name,
+                        colonKw,
+                        type,
+                        assignKw,
+                        defaultValue,
+                        spanOf(startSpan, endSpan),
+                    )
                 skipNewlines()
                 if (at(COMMA)) {
                     advance()
@@ -534,7 +643,10 @@ class Parser(
         return params
     }
 
-    private fun parseProperty(annotations: List<CstAnnotation>, modifier: Token?): CstPropertyDecl {
+    private fun parseProperty(
+        annotations: List<CstAnnotation>,
+        modifier: Token?,
+    ): CstPropertyDecl {
         val name = expectIdent("property name")
         val colonKw = if (at(COLON)) advance() else null
         val type = if (colonKw != null) parseType() else null
@@ -572,7 +684,14 @@ class Parser(
         val endNode: CstNode? = accessors.lastOrNull() ?: initializer ?: type
         val endSpan = endNode?.span ?: spanOf(name)
         return CstPropertyDecl(
-            annotations, modifier, name, colonKw, type, assignKw, initializer, accessors,
+            annotations,
+            modifier,
+            name,
+            colonKw,
+            type,
+            assignKw,
+            initializer,
+            accessors,
             spanOf(startSpan, endSpan),
         )
     }
@@ -666,52 +785,85 @@ class Parser(
 
     // ── 语句（01-§6）──────────────────────────────────────────────────────────
 
-    private fun parseStatement(): CstStmt {
-        return when {
-            at(LBRACE) -> parseBlock()
-            atKeyword("if") -> parseIf()
-            atKeyword("when") -> parseWhen()
-            atKeyword("for") -> parseFor()
-            atKeyword("while") -> parseWhile()
-            atKeyword("return") -> parseReturn()
+    private fun parseStatement(): CstStmt =
+        when {
+            at(LBRACE) -> {
+                parseBlock()
+            }
+
+            atKeyword("if") -> {
+                parseIf()
+            }
+
+            atKeyword("when") -> {
+                parseWhen()
+            }
+
+            atKeyword("for") -> {
+                parseFor()
+            }
+
+            atKeyword("while") -> {
+                parseWhile()
+            }
+
+            atKeyword("return") -> {
+                parseReturn()
+            }
+
             atKeyword("break") -> {
                 val kw = advance()
                 finishStatement()
                 CstBreakStmt(kw, spanOf(kw, kw))
             }
+
             atKeyword("continue") -> {
                 val kw = advance()
                 finishStatement()
                 CstContinueStmt(kw, spanOf(kw, kw))
             }
-            atKeyword("try") -> parseTry()
+
+            atKeyword("try") -> {
+                parseTry()
+            }
+
             atKeyword("async") -> {
                 val kw = advance()
                 // async{} 块体为 async 上下文（体内 await 为挂起点，T-M14）
                 val block = withAsyncContext { parseBlock() }
                 CstAsyncStmt(kw, block, spanOf(kw, block))
             }
+
             atKeyword("parallel") -> {
                 val kw = advance()
                 val block = parseBlock()
                 CstParallelStmt(kw, block, spanOf(kw, block))
             }
+
             atKeyword("unsafe") -> {
                 val kw = advance()
                 val block = parseBlock()
                 CstUnsafeStmt(kw, block, spanOf(kw, block))
             }
-            at(ID) && peek(1).kind == COLON -> parseVarDeclWithType()
-            at(ID) && peek(1).kind == ASSIGN && !isDeclared(current.text) -> parseVarDeclInferred()
-            else -> if (deadKeywordDiagnostic()) {
-                val kw = advance()
-                finishStatement()
-                CstExprStmt(CstIdentifier(kw, spanOf(kw)), spanOf(kw))
-            } else {
-                parseExpressionStatement()
+
+            at(ID) && peek(1).kind == COLON -> {
+                parseVarDeclWithType()
+            }
+
+            at(ID) && peek(1).kind == ASSIGN && !isDeclared(current.text) -> {
+                parseVarDeclInferred()
+            }
+
+            else -> {
+                if (deadKeywordDiagnostic()) {
+                    val kw = advance()
+                    finishStatement()
+                    CstExprStmt(CstIdentifier(kw, spanOf(kw)), spanOf(kw))
+                } else {
+                    parseExpressionStatement()
+                }
             }
         }
-    }
 
     private fun parseVarDeclWithType(): CstStmt {
         val name = advance()
@@ -765,14 +917,15 @@ class Parser(
         val thenKw = expectSoft("then", "if 表达式需要 'then'")
         val thenExpr = pratt.parseExpression()
         skipNewlines()
-        val elseKw = if (atKeyword("else")) {
-            val kw = advance()
-            skipNewlines()
-            kw
-        } else {
-            error("if 表达式需要 'else' 分支")
-            advance()
-        }
+        val elseKw =
+            if (atKeyword("else")) {
+                val kw = advance()
+                skipNewlines()
+                kw
+            } else {
+                error("if 表达式需要 'else' 分支")
+                advance()
+            }
         val elseExpr = pratt.parseExpression()
         return CstIfExpr(ifKw, condition, thenKw, thenExpr, elseKw, elseExpr, spanOf(ifKw, elseExpr))
     }
@@ -868,13 +1021,14 @@ class Parser(
 
     private fun parseTry(): CstStmt {
         val tryKw = expect(KEYWORD, "'try'")
-        val body: CstStmt = if (at(LBRACE)) {
-            parseBlock()
-        } else {
-            val expr = pratt.parseExpression(suppressBlock = true)
-            finishStatement()
-            CstExprStmt(expr, expr.span)
-        }
+        val body: CstStmt =
+            if (at(LBRACE)) {
+                parseBlock()
+            } else {
+                val expr = pratt.parseExpression(suppressBlock = true)
+                finishStatement()
+                CstExprStmt(expr, expr.span)
+            }
         val catches = mutableListOf<CstCatchClause>()
         var finallyKw: Token? = null
         var finallyBody: CstStmt? = null
@@ -910,10 +1064,13 @@ class Parser(
             statements += parseStatement()
             skipNewlines()
         }
-        val rbrace = if (at(RBRACE)) advance() else {
-            error("expected '}' to close block")
-            current
-        }
+        val rbrace =
+            if (at(RBRACE)) {
+                advance()
+            } else {
+                error("expected '}' to close block")
+                current
+            }
         popScope()
         return CstBlock(lbrace, statements, rbrace, SourceSpan(lbrace.position, rbrace.position))
     }
@@ -939,12 +1096,16 @@ class Parser(
                     depth++
                     advance()
                 }
+
                 at(RBRACE) -> {
                     depth--
                     advance()
                     if (depth == 0) return
                 }
-                else -> advance()
+
+                else -> {
+                    advance()
+                }
             }
         }
     }
@@ -955,24 +1116,64 @@ class Parser(
     fun parsePrimaryExpr(): CstExpr {
         val t = current
         return when {
-            t.kind == TokenKind.INT_LITERAL -> CstIntLiteral(advance(), spanOf(t))
-            t.kind == TokenKind.FLOAT_LITERAL -> CstFloatLiteral(advance(), spanOf(t))
-            t.kind == TokenKind.CHAR_LITERAL -> CstCharLiteral(advance(), spanOf(t))
-            t.kind == TokenKind.STRING_LITERAL -> CstStringLiteral(advance(), spanOf(t))
-            t.kind == TokenKind.RAW_STRING_LITERAL -> CstRawStringLiteral(advance(), spanOf(t))
-            t.kind == STRING_START -> parseStringTemplate()
-            t.kind == KEYWORD && t.text == "true" -> CstBoolLiteral(advance(), spanOf(t))
-            t.kind == KEYWORD && t.text == "false" -> CstBoolLiteral(advance(), spanOf(t))
-            t.kind == KEYWORD && t.text == "null" -> CstNullLiteral(advance(), spanOf(t))
-            t.kind == KEYWORD && t.text == "this" -> CstThis(advance(), spanOf(t))
-            t.kind == KEYWORD && t.text == "super" -> CstSuper(advance(), spanOf(t))
-            t.kind == KEYWORD && t.text == "if" -> parseIfExpr()
-            t.kind == KEYWORD && t.text == "when" -> parseWhenExpr()
+            t.kind == TokenKind.INT_LITERAL -> {
+                CstIntLiteral(advance(), spanOf(t))
+            }
+
+            t.kind == TokenKind.FLOAT_LITERAL -> {
+                CstFloatLiteral(advance(), spanOf(t))
+            }
+
+            t.kind == TokenKind.CHAR_LITERAL -> {
+                CstCharLiteral(advance(), spanOf(t))
+            }
+
+            t.kind == TokenKind.STRING_LITERAL -> {
+                CstStringLiteral(advance(), spanOf(t))
+            }
+
+            t.kind == TokenKind.RAW_STRING_LITERAL -> {
+                CstRawStringLiteral(advance(), spanOf(t))
+            }
+
+            t.kind == STRING_START -> {
+                parseStringTemplate()
+            }
+
+            t.kind == KEYWORD && t.text == "true" -> {
+                CstBoolLiteral(advance(), spanOf(t))
+            }
+
+            t.kind == KEYWORD && t.text == "false" -> {
+                CstBoolLiteral(advance(), spanOf(t))
+            }
+
+            t.kind == KEYWORD && t.text == "null" -> {
+                CstNullLiteral(advance(), spanOf(t))
+            }
+
+            t.kind == KEYWORD && t.text == "this" -> {
+                CstThis(advance(), spanOf(t))
+            }
+
+            t.kind == KEYWORD && t.text == "super" -> {
+                CstSuper(advance(), spanOf(t))
+            }
+
+            t.kind == KEYWORD && t.text == "if" -> {
+                parseIfExpr()
+            }
+
+            t.kind == KEYWORD && t.text == "when" -> {
+                parseWhenExpr()
+            }
+
             t.kind == KEYWORD && t.text == "throw" -> {
                 advance()
                 val expr = pratt.parseExpression()
                 CstThrow(t, expr, spanOf(t, expr))
             }
+
             t.kind == IDENTIFIER -> {
                 if (peek(1).kind == ARROW) {
                     lambda.parseArrowLambda()
@@ -988,6 +1189,7 @@ class Parser(
                     CstIdentifier(advance(), spanOf(t))
                 }
             }
+
             t.kind == LPAREN -> {
                 if (lambda.looksLikeParenLambda()) {
                     lambda.parseParenLambda()
@@ -998,7 +1200,11 @@ class Parser(
                     CstParen(lparen, expr, rparen, spanOf(lparen, rparen))
                 }
             }
-            t.kind == LBRACE -> lambda.parseBlockLambda()
+
+            t.kind == LBRACE -> {
+                lambda.parseBlockLambda()
+            }
+
             else -> {
                 if (!deadKeywordDiagnostic()) {
                     error("unexpected token '${t.text}' in expression")
@@ -1010,8 +1216,7 @@ class Parser(
     }
 
     /** 命名约定回退（01-§7.7 规则 4）：首字母大写视为类型（仅作最后回退）。 */
-    private fun looksLikeTypeName(name: String): Boolean =
-        name.firstOrNull()?.isUpperCase() == true
+    private fun looksLikeTypeName(name: String): Boolean = name.firstOrNull()?.isUpperCase() == true
 
     private fun parseTypeCallOrRef(): CstExpr {
         // 表达式位置的类型引用不允许限定名分段（`System.currentTimeMillis` 为静态访问）
@@ -1025,9 +1230,13 @@ class Parser(
     }
 
     /** `(` 之后的实参列表 + 收尾 `)`。 */
-    class CallArgs(val args: List<CstExpr>, val rparen: Token)
+    class CallArgs(
+        val args: List<CstExpr>,
+        val rparen: Token,
+    )
 
-    fun parseCallArguments(): CallArgs {        val args = mutableListOf<CstExpr>()
+    fun parseCallArguments(): CallArgs {
+        val args = mutableListOf<CstExpr>()
         skipNewlines()
         if (!at(RPAREN)) {
             while (true) {
@@ -1062,6 +1271,7 @@ class Parser(
                     val tok = advance()
                     parts += CstStringText(tok, spanOf(tok))
                 }
+
                 at(INTERPOLATION_START) -> {
                     val dollar = advance()
                     when {
@@ -1071,13 +1281,18 @@ class Parser(
                             expect(RBRACE, "'}'")
                             parts += expr
                         }
+
                         at(ID) -> {
                             val idToken = advance()
                             parts += CstIdentifier(idToken, spanOf(idToken))
                         }
-                        else -> error("expected identifier or '{' after '\$'", dollar.position)
+
+                        else -> {
+                            error("expected identifier or '{' after '\$'", dollar.position)
+                        }
                     }
                 }
+
                 else -> {
                     error("unexpected token '${current.text}' in string template")
                     advance()
