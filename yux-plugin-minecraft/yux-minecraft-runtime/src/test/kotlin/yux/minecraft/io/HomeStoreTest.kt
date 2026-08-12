@@ -102,4 +102,12 @@ class HomeStoreTest {
         File(dataFolder, "broken-map.yml").writeText("player: [unclosed")
         assertTrue(HomeStore.loadMap(dataFolder, "broken-map.yml", LocationData()).isEmpty())
     }
+
+    @Test
+    fun `loadMap 缺失文件回退可写映射`() {
+        val map: MutableMap<String, Any> = HomeStore.loadMap(dataFolder, "missing.yml", LocationData())
+        assertTrue(map.isEmpty())
+        map["default"] = LocationData("world", 1.0, 64.0, 2.0, 0.0f, 0.0f)
+        assertEquals(1, map.size, "缺失文件回退的映射必须可写（HomeData.homes 会直接 put）")
+    }
 }

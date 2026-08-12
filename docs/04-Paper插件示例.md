@@ -252,8 +252,8 @@ task repeat(20, interval:6000) {
     }
 }
 
-// 冷却时间记录（内存表）
-cooldowns = Map String Int
+// 冷却时间记录（内存表；毫秒时间戳用 Long，避免 Int 截断使冷却失效）
+cooldowns = Map String Long
 
 fun cooldownActive(player:Player):Boolean {
     now = System.currentTimeMillis()

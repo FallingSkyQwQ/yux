@@ -120,7 +120,8 @@ class YxProperty(
     val isTopLevel: Boolean,
     val visibility: YxVisibility = YxVisibility.PUBLIC,
     override val span: SourceSpan,
-) : YxClassMember, YxDecl
+) : YxClassMember,
+    YxDecl
 
 enum class YxAccessorKind { GET, SET }
 
@@ -146,12 +147,15 @@ class YxFunction(
     val body: YxFunctionBody,
     val isAsync: Boolean,
     val isOverride: Boolean,
+    /** 运算符重载（M13）：`operator fun plus(...)` 参与 `+` 等运算符解析。 */
+    val isOperator: Boolean = false,
     val visibility: YxVisibility,
     val annotations: List<YxAnnotation>,
     /** 扩展函数接收者类型（M9：`fun <Receiver>.<name>`，null=普通函数）。 */
     val receiver: YxType? = null,
     override val span: SourceSpan,
-) : YxClassMember, YxDecl
+) : YxClassMember,
+    YxDecl
 
 sealed interface YxFunctionBody : YxNode {
     /** `= expr` 单表达式体（推断返回类型，S-5.5.2）。 */
@@ -212,7 +216,8 @@ class YxAssign(
     val op: String,
     val value: YxExpr,
     override val span: SourceSpan,
-) : YxStmt, YxExpr
+) : YxStmt,
+    YxExpr
 
 /** 表达式语句。 */
 class YxExprStmt(

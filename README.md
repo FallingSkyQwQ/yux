@@ -104,7 +104,8 @@ $YUXC run --plugin samples/extension/build/libs/extension-0.1.0-SNAPSHOT.jar sam
 | M11 标准库完善 | ✅ | yux.io.IO / yux.net.Http（T-M11-1）+ yux.async Task/Tasks（T-M11-2，launch/parallel/await/sleep 真并发）+ yux.collection.Colls / yux.core.Text（T-M11-3）+ 编译器成员调用降级（JvmExtensions 注册表 `xs.map {}`/`s.uppercase()` + FunctionN 桥接 + Unit-Lambda 修复）+ fuzz 5000 例（T-M11-4）+ bench/ 基准（T-M11-5）+ core 覆盖率 ≥70% 门禁（T-M11-6，实际 84.3%）+ samples/stdlib 端到端样例 |
 | M14 async 协程 | ✅ | `async fun`/`async{}` 完整 CPS 状态机（T-M14-1..7，R3 转正）：`await` 软关键字 + 双 ABI（async 上下文挂起调用 / 同步门面返回 Task）+ `yux.async.Continuation`/`Suspendable`/`Continuations` 运行时 + try/catch/finally 跨挂起点 + await 挂起可取消 + CancellationException 自动重抛 + CPS golden 套件 + AsyncFunE2e 15 例（含深循环栈安全、递归链、async{} 内 await）+ `parallel{}` 保持 ForkJoinPool |
 | M15 完整 SSA 优化器 | ✅ | 完整 SSA 优化框架（T-M15-1..7，02-§8.4 后置转正）：CFG + 支配树/支配边界 + Cytron φ 插入/重命名 + SCCP 全局常量传播（常量分支折叠 + 死边移除）+ 拷贝传播/平凡 φ 消除 + 激进 DCE + φ 销毁（边分裂拷贝）；结构化 Try 不透明节点 + flush 拷贝 + 原寄存器回退；break/continue 跨 try 保守回退 BasicOpt；`SsaOptTest` 12 例 + `SsaE2eTest` 6 例 + 覆盖率 82.0% |
-| M12 发布 + 教程 | ✅ | 入门到精通语言圣经 `docs/tutorial/`（6 篇，锁 v0.1.0-m15）+ golden 示例 `samples/tutorial/` 74 例（62 正例 .stdout + 12 反例 .err，`TutorialSamplesTest` 逐字节比对）+ 参数默认值 IRGen 修复（S-5.5.5）+ `setupyux.sh` 一键安装 + `scripts/check-tutorial-docs.sh` 文档↔示例一致性校验 |
+| M12 发布 + 教程 | ✅ | 入门到精通语言圣经 `docs/tutorial/`（6 篇，锁 v0.1.0-m15）+ golden 示例 `samples/tutorial/` 75 例（63 正例 .stdout + 12 反例 .err，`TutorialSamplesTest` 逐字节比对）+ 参数默认值 IRGen 修复（S-5.5.5）+ `setupyux.sh` 一键安装 + `scripts/check-tutorial-docs.sh` 文档↔示例一致性校验 |
+| M13 运算符重载 + 类级增量 | ✅ | `operator fun` 全映射（成员>扩展>JVM 扩展>内建）+ 索引 get/set + `sum()` 元素类型收窄 + 文件依赖图反向依赖增量（类字节复用） |
 | M16 实用 CLI | ✅ | Clikt 4.4 重写（T-M16-1..5）：声明式子命令 + 自动 help/usage + `--completion` shell 补全；`yuxc new` 脚手架（hello/project/plugin 模板）；`yuxc fmt` 格式化器（CST 驱动、幂等、注释保留、插件块 raw copy）；彩色诊断 + 源码插入符标注（tty 检测 + `--color`）；构建生成版本号 `yuxc version`；`yuxc doc`/`yuxc help`；核心 + CLI 756 测试全绿 |
 
 ## 文档索引

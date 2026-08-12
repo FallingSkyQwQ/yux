@@ -50,12 +50,15 @@
 | E0035 | `SEALED_INSTANTIATION` | T-M12 | 直接实例化密封类 |
 | E0036 | `SEALED_SUBCLASS_DIFFERENT_FILE` | T-M12 | 密封类的直接子类声明在其它文件 |
 | E0037 | `ASYNC_OVERRIDE_MISMATCH` | T-M14 | 覆写 async fun 必须声明为 async fun（反之亦然，双 ABI 一致性） |
+| E0038 | `OPERATOR_MODIFIER_REQUIRED` | M13 | 运算符解析命中同名但缺 `operator` 修饰符的函数（不静默回退内建） |
+| E0039 | `ILLEGAL_OPERATOR_DECL` | M13 | operator 函数返回类型不满足约定（equals→Boolean、compareTo→Int、not→Boolean、set→Unit） |
 
 ## W 系列：警告
 
 | 码 | 常量名 | 规则依据 | 说明 |
 |---|---|---|---|
 | W0001 | `TYPE_FALLBACK` | 01-§7.7.4 | 未知名称按命名约定（大写→类型）回退 |
+| W0002 | `EQUALS_WITHOUT_HASHCODE` | M13 | 声明 operator equals 但未声明 hashCode（破坏 hash 容器语义） |
 
 ## R 系列：REMIND
 

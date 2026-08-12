@@ -219,6 +219,39 @@ class IRGenTest {
     }
 
     @Test
+    fun `data class with all-default properties gets no-arg constructor`() {
+        val module =
+            ir(
+                """
+                data Config {
+                    motd:String = "Welcome"
+                    maxPlayers:Int = 100
+                }
+                data Plain {
+                    id:Int
+                    name:String
+                }
+                fun main() {
+                    c = Config("hi", 10)
+                    p = Plain(1, "x")
+                }
+                """.trimIndent(),
+            )
+        // 全属性带默认初始化器 → 额外无参构造器（@YuxConfig 扫描器反射实例化依赖）
+        val cfg = module.classNamed("Config")!!
+        val ctors = cfg.methods.filter { it.isConstructor }
+        assertEquals(2, ctors.size)
+        val noArg = ctors.single { it.params.isEmpty() }
+        val writes = noArg.body.filterIsInstance<IrStmt.FieldAccess>()
+        // 仅写默认值（Const），不做参数覆盖
+        assertEquals(listOf("motd", "maxPlayers"), writes.map { it.field.name })
+        assertTrue(writes.all { (it.value as? IrExpr.Const)?.value != null })
+        // 非全默认 data 类不生成无参构造器
+        val plain = module.classNamed("Plain")!!
+        assertEquals(1, plain.methods.count { it.isConstructor })
+    }
+
+    @Test
     fun `jvm interop call keeps owner and name`() {
         val module = ir("fun f() { t = System.currentTimeMillis() }")
         val body = methodBody(module, "Main", "f")

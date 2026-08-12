@@ -21,13 +21,16 @@ BASE_URL="https://github.com/${REPO}"
 RAW_BASE="https://raw.githubusercontent.com/${REPO}"
 PREFIX="${YUX_PREFIX:-$HOME/.yux}"
 BIN_DIR="$PREFIX/bin"
-REF="${YUX_REF:-}"                 # 空 = main 最新；可指定 tag（v0.1.0-m15）或 commit
-KEEP_SRC="${YUX_KEEP_SRC:-0}"      # 1 = 编译后不删除临时源码目录（调试用）
+REF="${YUX_REF:-}"            # 空 = main 最新；可指定 tag（v0.1.0-m15）或 commit
+KEEP_SRC="${YUX_KEEP_SRC:-0}" # 1 = 编译后不删除临时源码目录（调试用）
 QUIET="${YUX_QUIET:-0}"
-FORCE_DIST="${YUX_FORCE_DIST:-0}"   # 1 = 跳过发布产物，强制源码编译
+FORCE_DIST="${YUX_FORCE_DIST:-0}" # 1 = 跳过发布产物，强制源码编译
 
-say()  { if [ "$QUIET" != "1" ]; then printf '%s\n' "$*"; fi; }
-die()  { printf 'setupyux: 错误: %s\n' "$*" >&2; exit 1; }
+say() { if [ "$QUIET" != "1" ]; then printf '%s\n' "$*"; fi; }
+die() {
+    printf 'setupyux: 错误: %s\n' "$*" >&2
+    exit 1
+}
 
 # --- 帮助 ---
 if [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ]; then
@@ -52,20 +55,39 @@ fi
 # --- 参数解析 ---
 while [ $# -gt 0 ]; do
     case "$1" in
-        --ref)        REF="${2:?--ref 需要一个值}"; shift 2 ;;
-        --force-dist) FORCE_DIST=1; shift ;;
-        --keep-src)   KEEP_SRC=1; shift ;;
-        --quiet)      QUIET=1; shift ;;
-        --prefix)     PREFIX="${2:?--prefix 需要一个值}"; BIN_DIR="$PREFIX/bin"; shift 2 ;;
-        --)           shift; break ;;
-        *)            die "未知参数: $1（--help 查看用法）" ;;
+    --ref)
+        REF="${2:?--ref 需要一个值}"
+        shift 2
+        ;;
+    --force-dist)
+        FORCE_DIST=1
+        shift
+        ;;
+    --keep-src)
+        KEEP_SRC=1
+        shift
+        ;;
+    --quiet)
+        QUIET=1
+        shift
+        ;;
+    --prefix)
+        PREFIX="${2:?--prefix 需要一个值}"
+        BIN_DIR="$PREFIX/bin"
+        shift 2
+        ;;
+    --)
+        shift
+        break
+        ;;
+    *) die "未知参数: $1（--help 查看用法）" ;;
     esac
 done
 
 # --- 平台检查 ---
 case "$(uname -s)" in
-    Linux|Darwin) ;;
-    *) die "暂不支持 $(uname -s)；Linux / macOS / WSL 用户请用 WSL 后再试。" ;;
+Linux | Darwin) ;;
+*) die "暂不支持 $(uname -s)；Linux / macOS / WSL 用户请用 WSL 后再试。" ;;
 esac
 
 # --- JDK 检查（≥21）---
@@ -153,11 +175,11 @@ trap cleanup EXIT
 say "克隆 ${REPO}（${VER}）→ 临时目录编译..."
 git clone --quiet --filter=blob:none "${BASE_URL}.git" "$WORK/yux"
 if [ "$VER" != "latest" ]; then
-    ( cd "$WORK/yux" && git -c advice.detachedHead=false checkout --quiet "$REF" )
+    (cd "$WORK/yux" && git -c advice.detachedHead=false checkout --quiet "$REF")
 fi
 
 say "构建 yuxc（./gradlew :yux-compiler:yux-compiler-cli:installDist）..."
-( cd "$WORK/yux" && ./gradlew --quiet :yux-compiler:yux-compiler-cli:installDist )
+(cd "$WORK/yux" && ./gradlew --quiet :yux-compiler:yux-compiler-cli:installDist)
 
 DIST_BIN="$WORK/yux/yux-compiler/yux-compiler-cli/build/install/yuxc/bin/yuxc"
 [ -x "$DIST_BIN" ] || die "构建成功但未找到 yuxc: $DIST_BIN"
@@ -168,18 +190,18 @@ chmod +x "$BIN_DIR/yuxc"
 # --- PATH 配置（幂等）---
 install_path() {
     case ":$PATH:" in
-        *":$BIN_DIR:"*) return 0 ;;
+    *":$BIN_DIR:"*) return 0 ;;
     esac
     local rc="$HOME/.bashrc"
     if [ -f "$HOME/.zshrc" ]; then rc="$HOME/.zshrc"; fi
     if ! grep -qF "export PATH=\"$BIN_DIR" "$rc" 2>/dev/null; then
-        printf '\n# yux 工具链\nexport PATH="%s:$PATH"\n' "$BIN_DIR" >> "$rc"
+        printf '\n# yux 工具链\nexport PATH="%s:$PATH"\n' "$BIN_DIR" >>"$rc"
     fi
 }
 install_path
 export PATH="$BIN_DIR:$PATH"
 
 say "已安装 yux ${VER} → ${BIN_DIR}"
-say "PATH 已写入 $( [ -f "$HOME/.zshrc" ] && echo ~/.zshrc || echo ~/.bashrc )（新终端生效；当前终端可执行: export PATH=\"$BIN_DIR:\$PATH\"）"
+say "PATH 已写入 $([ -f "$HOME/.zshrc" ] && echo ~/.zshrc || echo ~/.bashrc)（新终端生效；当前终端可执行: export PATH=\"$BIN_DIR:\$PATH\"）"
 "$BIN_DIR/yuxc" --help >/dev/null 2>&1 || true
 say "完成。运行 'yuxc run hello.yux' 开始使用。"

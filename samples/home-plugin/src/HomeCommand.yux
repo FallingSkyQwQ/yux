@@ -92,7 +92,9 @@ command "/homes" {
             sb.append(k)
             first = false
         }
-        player.sendMessage "你的家：" + sb.toString()
+        // S-7.2.2：无括号实参只吃单个 Primary，`send "a" + x` == `(send "a") + x`；
+        // 拼接表达式作实参须加括号。
+        player.sendMessage ("你的家：" + sb.toString())
         return true
     }
 }

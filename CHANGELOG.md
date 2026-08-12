@@ -2,6 +2,49 @@
 
 本文件记录各里程碑的显著变更（含 breaking changes，见 06-§3）。
 
+## [Unreleased] - 2026-08-12 — 运算符重载（M13 转正）+ 类级增量编译
+
+### 新增
+
+- **文档语义收口**：
+  - `01-语法规范.md` §8.6 明确 `unsafe { }` 已实现 / `stack`/`native fun`/`new` 仅语法接受 + 明确诊断（Native 后端预留），消除「缺语义」歧义；
+  - §8.5 明确互操作可空性为**设计决策**（JVM 无强制空性标注，S-8.5 引用类型返回按可空 + 显式 `as` 收窄），并记录平台类型推断（读取 `@NotNull`/`@Nullable` 注解）为未来项；
+  - §8.7/06-§8.1 类↔类依赖边粒度的增量失效列入后置（文件级反向依赖已实现）。
+  - **教程新增**：`docs/tutorial/02-进阶.md` 第 22 章「运算符重载 operator」+ golden 示例 `samples/tutorial/02-advance/26-operator-overloading.yux`（正例 .stdout）；golden 总数 74→75（63 正例 + 12 反例），`05-附录.md`/`04-生态门户.md`/`README.md`/`06-开发计划.md` 计数同步。
+
+- **类级增量编译（M13，T-M7-6 升级）**：`build/yux-cache` 清单升级为**文件粒度元数据**（`{sha, deps, classes}`），
+  增量判定从「全项目 all-or-nothing」改为「**变更文件 + 反向依赖闭包**」：
+  - `FileDependencies` 保守依赖图（声明级类型 + 函数体/初始值标识符 + import 目标 vs 全局简单名索引）；
+  - `Compiler.generateProject(bodyFiles)` 选择性 codegen：骨架遍注册全部类（跨文件引用解析），
+    仅受影响文件生成方法体；未受影响文件的类字节从 `build/yux-classes` 逐字节复用；
+  - 生效范围：**纯 Yux 项目**（无编译器插件 / 无 Java/Kotlin）；插件与混合项目保持全量编译。
+  - 回归：`YuxBuildTest` +2 例（改 util 重编 util+main 反向依赖、改 main 只重编 main 且 Util 字节复用、增量产物可运行）；`IncrementalTest` 兼容旧清单格式。
+  - 设计偏差：依赖图/字节复用按**文件**归属类；类↔类依赖边（类级精确失效）留待统一符号收集（05-§4 未来项）。
+
+- **`sum()` 按元素类型收窄（M13）**：`List Int.sum()` → `Colls.sumInt`（返回 `Int`）、`List Long` → `sumLong`、`List Float` → `sumFloat`；`List Double`/未知元素回退通用 `sum`（`Double`）。sema（`checkJvmExtension`）与 IRGen（`JvmCallResolver`）共用 `JvmExtensions.sumVariant` 选择逻辑，声明返回类型与降级目标一致。设计偏差消除：不再恒返回 `Double`（教程 04-生态 02 快照同步更新）。
+
+- **SDK 粗糙点补齐**：
+  - `command` 新增 `usage = "..."` 属性，下沉为 plugin.yml `commands.<name>.usage`（04-§2 的 usage 语法现可落地）；
+  - `config` 支持 **List 默认值**（`tags = ["a", "b"]`）：合成顶层 List 构建函数作为属性初始值（`as List T` 收窄适配擦除），元素类型由首元素推导（String/Int/Long/Double/Boolean），运行时 `ConfigMapping` 反射转换已就绪。
+
+- **运算符重载（M13）**：`operator fun plus/minus/times/div/rem/compareTo/equals/rangeTo/unaryMinus/unaryPlus/not/get/set` 将运算符分发到用户定义方法，解析顺序 **成员 > 扩展 > JVM 扩展 > 内建**：
+  - `operator` 软关键字（仅后随 `fun`/`async fun` 时视为修饰符，其余位置保持标识符语义）；
+  - `!=` 由 equals 取反派生；`< <= > >=` 经 `compareTo` 与 0 比较派生（表达式结果恒 `Boolean`）；
+  - 索引读写：`a[i]` → `operator get`、`a[i] = v` → `operator set`（读/写路径独立登记，避免 `set` 覆盖读取解析）；
+  - 约束：operator 返回类型校验（equals→Boolean、compareTo→Int、not→Boolean、set→Unit，新错误码 E0039）；命中同名但缺 `operator` 修饰符的函数报 E0038（不静默回退内建）；`operator equals` 未配套 `hashCode` 给 W0002 警告；
+  - JVM 扩展运算符：`JvmExtensions` 表改为多重载条目（`findAll`），`List + List` → `Colls.concat`、`List + elem` → `Colls.append`（`FunctionSymbol` 增 `jvmOwner`/`jvmMethod` 供 IRGen 静态降级）。
+- 回归：`OperatorOverloadE2eTest` 5 例（成员/一元/索引/扩展跨文件/JVM List `+`）、`NegativeCasesTest` +8 例（E0038×2、E0039×3、E0016 索引 set 缺失）、W0002 警告用例。
+- 文档：`01-语法规范.md` §7.5.5 运算符重载映射表、`06-开发计划.md` M13 转正、`ErrorCodes.md`/`05-附录.md` 新错误码。
+
+## [Unreleased] - 2026-08-12 — Home 插件加载修复（Unit 拼接 VerifyError / 配置无参构造 / stdlib 打包）
+
+### 修复
+
+- **字符串拼接放行 Unit 操作数 → 运行期 VerifyError**：`send "a" + x` 按 S-7.2.2 解析为 `(send "a") + x`，左侧为 void 调用（Unit），旧检查因“String 侧吸收任意操作数”恒放行，IRGen 把 void 调用当拼接操作数发射（`append` 从空栈弹值）→ 插件加载时 `java.lang.VerifyError: Operand stack underflow`。现在 sema 对拼接两侧**显式拒绝 Unit**（E0017，含 Yux 函数推断返回与 JVM void 方法两条路径）；`samples/home-plugin` 的 `/homes` 命令实参改为括号包裹（`send ("你的家：" + sb.toString())`），符合 S-7.2.2 的复杂实参写法。回归：`CorrectnessFixesTest` +4 例（Unit±String 两向拒绝、Boolean 吸收不误伤、数字/字符串拼接保持合法）。
+- **全默认 data 类缺无参构造器 → `@YuxConfig` 扫描器实例化失败**：`config HomeConfig { }` 下沉为全属性带初始化器的 data 类，但只生成全参构造器，`AnnotationScanner` 的 `getDeclaredConstructor().newInstance()` 抛异常并告警，config.yml 自动加载链路失效。现在 IRGen 对**全部属性均带默认初始化器**的 data 类额外合成无参构造器（Kotlin 语义，S-5.2.5：仅应用默认值，不做参数覆盖）；非全默认 data 类（如 `HomeData`）不生成，golden 不受影响。回归：`IRGenTest` +1 例。
+- **插件 jar 未打包 `yux-stdlib` → `NoClassDefFoundError: yux/core/CoreLib`**：`print` 等内置函数降级为 `yux.core.CoreLib` 静态调用，但 `locateShadeJars` 的 shade 清单只有 runtime/snakeyaml/kotlin-stdlib，插件启用/卸载时 `print` 找不到 CoreLib。现在 shade 清单加入 `yux.core.CoreLib` 标记，插件 jar 自包含 yux-stdlib。
+- **samples e2e 快照补齐**：`samples/hello.yux`、`lambdas.yux`、`nullable.yux`、`stdlib.yux` 缺失 `.stdout` 快照，`MainTest.samples directory e2e compares stdout` 在 tutorial-bible 重构后一直失败；补全 4 份快照。
+
 ## [v0.1.0-m16] - 2026-08-11 — 实用 CLI
 
 ### 新增

@@ -132,6 +132,104 @@ class YuxBuildTest {
         assertTrue(Files.isRegularFile(projectDir.resolve("build/yux-cache/manifest.json")))
     }
 
+    /** 双文件项目：src/main.yux 调用 src/util.yux 的顶层函数（跨文件依赖）。 */
+    private fun writeTwoFileProject(mainText: String, utilText: String) {
+        writeProject(mainText)
+        projectDir.resolve("src/util.yux").writeText(utilText)
+    }
+
+    private fun classBytes(name: String): ByteArray =
+        Files.readAllBytes(projectDir.resolve("build/yux-classes/$name.class"))
+
+    @Test
+    fun `类级增量仅重编变更文件及其反向依赖`() {
+        writeTwoFileProject(
+            "fun main() { print greeting() }\n",
+            "fun greeting():String {\n  return \"hi\"\n}\n",
+        )
+        val build = yuxBuild()
+        assertTrue(build.build(offline = true).success)
+
+        // 清单含文件粒度元数据：main.yux 依赖 util.yux，且记录了各自产出类
+        val entries = YuxCache(projectDir).loadFileEntries()
+        assertNotNull(entries, "应写入文件粒度缓存")
+        assertTrue(entries!!["src/main.yux"]!!.deps.contains("src/util.yux"), "main 应依赖 util: ${entries["src/main.yux"]}")
+        assertTrue(entries["src/util.yux"]!!.classes.contains("Util"), "util.yux 应产出 Util 类: ${entries["src/util.yux"]}")
+        assertTrue(entries["src/main.yux"]!!.classes.contains("Main"), "main.yux 应产出 Main 类")
+
+        val utilBytesV1 = classBytes("Util")
+        val mainBytesV1 = classBytes("Main")
+
+        // 改 util.yux 的 greeting 签名（String → Int）：调用点描述符变化 → 反向依赖 main 的
+        // 字节码必然重编（若只重编 util，main 的 invokestatic 描述符过期 → 运行期 NoSuchMethodError）
+        writeTwoFileProject(
+            "fun main() { print greeting() }\n",
+            "fun greeting():Int {\n  return 42\n}\n",
+        )
+        assertTrue(build.build(offline = true).success)
+        assertTrue(!utilBytesV1.contentEquals(classBytes("Util")), "util.yux 变更后 Util 应重编")
+        assertTrue(!mainBytesV1.contentEquals(classBytes("Main")), "util.yux 变更后反向依赖 main 应重编")
+
+        val utilBytesV2 = classBytes("Util")
+        val mainBytesV2 = classBytes("Main")
+
+        // 只改 main.yux：util 无变化且非反向依赖 → Util 字节码应复用缓存（逐字节不变）
+        writeTwoFileProject(
+            "fun main() { print (greeting() + 1) }\n",
+            "fun greeting():Int {\n  return 42\n}\n",
+        )
+        assertTrue(build.build(offline = true).success)
+        assertTrue(!mainBytesV2.contentEquals(classBytes("Main")), "main.yux 变更后 Main 应重编")
+        assertTrue(
+            utilBytesV2.contentEquals(classBytes("Util")),
+            "main.yux 变更不影响 util → Util 应复用缓存字节码（类级增量）",
+        )
+    }
+
+    @Test
+    fun `类级增量产物可运行`() {
+        writeTwoFileProject(
+            "fun main() { print greeting() }\n",
+            "fun greeting():String {\n  return \"incremental\"\n}\n",
+        )
+        val build = yuxBuild()
+        assertTrue(build.build(offline = true).success)
+        writeTwoFileProject(
+            "fun main() { print greeting() }\n",
+            "fun greeting():String {\n  return \"incremental-v2\"\n}\n",
+        )
+        assertTrue(build.build(offline = true).success)
+        // 增量后进程内编译（compile(clean=false) 走缓存命中 → 空产物），从磁盘类目录加载合并结果运行
+        val result = build.compile(clean = false)
+        assertTrue(result.success, result.diagnostics.diagnostics.toString())
+        val classes = result.classes
+        assertTrue(classes.containsKey("Util"), "增量 compile 应提供 Util 类")
+        assertTrue(classes.containsKey("Main"), "增量 compile 应提供 Main 类")
+        val out = runMain(classes)
+        assertTrue(out.contains("incremental-v2"), "增量构建产物应包含最新 util 逻辑，实际输出: $out")
+    }
+
+    /** 反射调用编译产物 main() 捕获 stdout（父加载器含 yux-stdlib 运行时）。 */
+    private fun runMain(classes: Map<String, ByteArray>): String {
+        val loader =
+            object : ClassLoader(yux.compiler.Compiler::class.java.classLoader) {
+                override fun findClass(name: String): Class<*> {
+                    val bytes = classes[name] ?: throw ClassNotFoundException(name)
+                    return defineClass(name, bytes, 0, bytes.size)
+                }
+            }
+        val cls = Class.forName("Main", true, loader)
+        val prev = System.out
+        val out = java.io.ByteArrayOutputStream()
+        System.setOut(java.io.PrintStream(out, true, java.nio.charset.StandardCharsets.UTF_8))
+        try {
+            cls.getMethod("main").invoke(null)
+        } finally {
+            System.setOut(prev)
+        }
+        return out.toString(java.nio.charset.StandardCharsets.UTF_8)
+    }
+
     @Test
     fun `compile 返回进程内类字节与主类名`() {
         writeProject("fun main() { print \"Hello Yux build\" }\n")

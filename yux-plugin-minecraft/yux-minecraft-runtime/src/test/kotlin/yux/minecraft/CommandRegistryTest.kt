@@ -64,6 +64,13 @@ class CommandRegistryTest {
     }
 
     @Test
+    fun `commandName 去掉斜杠前缀取末段`() {
+        assertEquals("sethome", CommandRegistry.commandName("/sethome"))
+        assertEquals("back", CommandRegistry.commandName("/admin/back"))
+        assertEquals("delhome", CommandRegistry.commandName("delhome"))
+    }
+
+    @Test
     fun `register 对非 JavaPlugin 或未注册路径静默返回`() {
         val fakePlugin = BukkitTestFixtures.plugin(server = BukkitTestFixtures.server())
         CommandRegistry.register(fakePlugin, FakeYuxCommand()) // 非 JavaPlugin → 静默

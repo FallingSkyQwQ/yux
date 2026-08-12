@@ -166,6 +166,18 @@ class NegativeCasesTest {
         // ── E0015 块 Lambda 非 Unit 返回缺末条表达式（S-7.4.3）────────────────
         c("块 Lambda if 末语句非表达式", "fun f() {\n  g:(Int)->Int = {\n    if true { 1 } else { 2 }\n  }\n}", ErrorCodes.RETURN_TYPE_MISMATCH)
         c("块 Lambda var 末语句非表达式", "fun f() {\n  g:(Int)->Int = {\n    x = 1\n  }\n}", ErrorCodes.RETURN_TYPE_MISMATCH)
+
+        // ── E0038 运算符缺 operator 修饰符（M13）────────────────────────────
+        c("同名函数缺 operator 修饰符", "V {\n  x:Int\n  fun plus(o:V):V {\n    return V(x + o.x)\n  }\n}\nfun main() {\n  a = V(1)\n  b = V(2)\n  c = a + b\n}", ErrorCodes.OPERATOR_MODIFIER_REQUIRED)
+        c("扩展函数缺 operator 修饰符", "V {\n  x:Int\n}\nfun V.plus(o:V):V {\n  return V(this.x + o.x)\n}\nfun main() {\n  a = V(1)\n  b = V(2)\n  c = a + b\n}", ErrorCodes.OPERATOR_MODIFIER_REQUIRED)
+
+        // ── E0039 operator 返回类型约束（M13）───────────────────────────────
+        c("operator equals 返回非 Boolean", "V {\n  x:Int\n  operator fun equals(o:V):Int {\n    return x - o.x\n  }\n}", ErrorCodes.ILLEGAL_OPERATOR_DECL)
+        c("operator compareTo 返回非 Int", "V {\n  x:Int\n  operator fun compareTo(o:V):Boolean {\n    return true\n  }\n}", ErrorCodes.ILLEGAL_OPERATOR_DECL)
+        c("operator set 返回非 Unit", "V {\n  x:Int\n  operator fun set(i:Int, v:Int):Int {\n    return 0\n  }\n}", ErrorCodes.ILLEGAL_OPERATOR_DECL)
+
+        // ── E0016 索引写入缺 set 运算符（M13）────────────────────────────────
+        c("用户类索引写入未定义 set", "V {\n  x:Int\n}\nfun main() {\n  v = V(1)\n  v[0] = 2\n}", ErrorCodes.UNRESOLVED_MEMBER)
     }
 
     @Test
@@ -206,6 +218,12 @@ class NegativeCasesTest {
             "fun main() {\n  x:Any? = null\n  if x is String {\n  }\n  x = 1\n}",
         )
         assertTrue(mutableCast.hasCode(ErrorCodes.SMART_CAST_MUTABLE), mutableCast.diagnostics.toString())
+
+        // W0002（M13）：operator equals 未声明 hashCode → 警告
+        val equalsNoHash = SemaTestSupport.analyze(
+            "V {\n  x:Int\n  operator fun equals(o:V):Boolean {\n    return x == o.x\n  }\n}",
+        )
+        assertTrue(equalsNoHash.hasCode(ErrorCodes.EQUALS_WITHOUT_HASHCODE), equalsNoHash.diagnostics.toString())
     }
 
     @Test

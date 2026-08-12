@@ -273,7 +273,10 @@ class Declarations(
                 ParameterSymbol(p.name, typeResolver.resolve(p.type, file), p.defaultValue != null, p.span)
             }
             val ret = decl.returnType?.let { typeResolver.resolve(it, file) }
-            FunctionSymbol(decl.name, params, ret, decl.isAsync, decl.isOverride, owner, receiver, decl.visibility, decl.span, decl)
+            FunctionSymbol(
+                decl.name, params, ret, decl.isAsync, decl.isOverride, owner, receiver, decl.visibility,
+                decl.isOperator, span = decl.span, decl = decl,
+            )
         }
     }
 

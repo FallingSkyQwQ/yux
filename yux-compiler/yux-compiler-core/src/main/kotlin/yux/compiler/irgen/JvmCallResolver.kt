@@ -104,7 +104,15 @@ if (name == "sendMessage") {
      */
     fun resolveJvmExtension(receiverType: SemaType, name: String): IrJvmCall? {
         val jc = jvmClassOf(receiverType) ?: return null
-        val entry = JvmExtensions.find(jc.qualifiedName, name) ?: return null
+        // M13：`sum()` 按元素类型收窄降级目标（与 sema checkJvmExtension 同一选择逻辑）
+        val entry =
+            if (name == "sum") {
+                val elem = elementType(receiverType)
+                val elemName = (SemaType.resolveVar(elem ?: SemaType.ErrorT) as? SemaType.Basic)?.name
+                JvmExtensions.sumVariant(elemName)
+            } else {
+                JvmExtensions.find(jc.qualifiedName, name) ?: return null
+            }
         val owner = classPath.resolve(entry.first) as? JvmClassSymbol ?: return null
         val method = owner.staticMethods.firstOrNull { it.name == entry.second } ?: return null
         return jvmCall(method, owner.qualifiedName)

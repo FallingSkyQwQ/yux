@@ -51,14 +51,33 @@ class Compiler(
     }
 
     /** IR 生成 + async CPS 降级 + SSA 优化 + 最小优化。 */
-    fun generate(declsByFile: Map<String, List<YxDecl>>, analysis: AnalysisResult): IrModule {
-        val module = IRGen(analysis, classLoader).generate(declsByFile)
+    fun generate(declsByFile: Map<String, List<YxDecl>>, analysis: AnalysisResult): IrModule =
+        generateProject(declsByFile, analysis, bodyFiles = null).module
+
+    /**
+     * 类级增量（M13）：返回 IR 模块 + 文件→产出类名映射。
+     * [bodyFiles] 非 null 时仅这些文件的类生成方法体（骨架遍注册全部类供跨文件引用），
+     * 其余文件的类字节由调用方从缓存复用。
+     */
+    fun generateProject(
+        declsByFile: Map<String, List<YxDecl>>,
+        analysis: AnalysisResult,
+        bodyFiles: Set<String>?,
+    ): IrGenerationResult {
+        val irGen = IRGen(analysis, classLoader, bodyFiles = bodyFiles)
+        val module = irGen.generate(declsByFile)
         // T-M14：async fun → CPS 状态机（门面/挂起入口/状态机类）；必须在优化前（await 尚未消费）
         AsyncCpsLowering(module).transform()
         // 完整 SSA 优化（CFG/φ/SCCP/拷贝传播/激进 DCE/φ 销毁）
         SsaOpt.optimize(module)
         // 最小优化收尾（语句级常量折叠、死代码、冗余跳转、空守卫折叠）
         BasicOpt.optimize(module)
-        return module
+        return IrGenerationResult(module, irGen.completedFileClassNames(module))
     }
 }
+
+/** IR 生成结果（类级增量）：模块 + 文件 → 产出类名映射。 */
+data class IrGenerationResult(
+    val module: IrModule,
+    val fileClassNames: Map<String, Set<String>>,
+)

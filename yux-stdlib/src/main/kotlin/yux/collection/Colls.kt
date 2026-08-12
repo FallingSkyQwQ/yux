@@ -49,15 +49,46 @@ object Colls {
     }
 
     /**
-     * 数值求和：Number 子类转 double 累加，非 Number 元素计 0.0；空列表返回 0.0。
+     * 数值求和（通用）：Number 子类转 double 累加，非 Number 元素计 0.0；空列表返回 0.0。
      *
-     * 设计偏差：01-§10.1 的求和按元素原类型返回，v0.1 擦除后统一返回 Double。
+     * 兼容回退（元素类型未知/非数值时使用）；`List Int` 等类型化列表经
+     * [sumInt]/[sumLong]/[sumFloat] 命中，返回元素同型结果（M13 类型收窄）。
      */
     @JvmStatic
     fun sum(list: java.util.List<*>): Double {
         var total = 0.0
         for (item in list) {
             total += (item as? Number)?.toDouble() ?: 0.0
+        }
+        return total
+    }
+
+    /** 整型求和（`List Int` 的 `sum()` 降级目标）：返回 Int。 */
+    @JvmStatic
+    fun sumInt(list: java.util.List<*>): Int {
+        var total = 0
+        for (item in list) {
+            total += (item as? Number)?.toInt() ?: 0
+        }
+        return total
+    }
+
+    /** 长整型求和（`List Long` 的 `sum()` 降级目标）：返回 Long。 */
+    @JvmStatic
+    fun sumLong(list: java.util.List<*>): Long {
+        var total = 0L
+        for (item in list) {
+            total += (item as? Number)?.toLong() ?: 0L
+        }
+        return total
+    }
+
+    /** 浮点求和（`List Float` 的 `sum()` 降级目标）：返回 Float。 */
+    @JvmStatic
+    fun sumFloat(list: java.util.List<*>): Float {
+        var total = 0f
+        for (item in list) {
+            total += (item as? Number)?.toFloat() ?: 0f
         }
         return total
     }
@@ -82,6 +113,18 @@ object Colls {
     /** 首元素；空列表返回 null。 */
     @JvmStatic
     fun first(list: java.util.List<*>): Any? = list.firstOrNull()
+
+    /** 列表拼接（M13 运算符 `+`）：`a + b` → 合并两个列表，返回新列表。 */
+    @Suppress("UNCHECKED_CAST")
+    @JvmStatic
+    fun concat(a: java.util.List<*>, b: java.util.List<*>): java.util.List<Any?> =
+        (a + b) as java.util.List<Any?>
+
+    /** 元素追加（M13 运算符 `+`）：`list + elem` → 追加单元素，返回新列表。 */
+    @Suppress("UNCHECKED_CAST")
+    @JvmStatic
+    fun append(list: java.util.List<*>, elem: Any?): java.util.List<Any?> =
+        (list + elem) as java.util.List<Any?>
 
     /**
      * 左折叠：以首个元素为初始累加值，对剩余元素依次执行 f(acc, item)；

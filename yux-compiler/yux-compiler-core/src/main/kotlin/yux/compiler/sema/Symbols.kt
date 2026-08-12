@@ -59,6 +59,12 @@ class FunctionSymbol(
     val receiverType: SemaType? = null,
     /** 访问控制（S-5.1.4）：默认 public。 */
     val visibility: yux.compiler.ast.YxVisibility = yux.compiler.ast.YxVisibility.PUBLIC,
+    /** 运算符重载（M13）：`operator fun` 声明的函数参与运算符解析。 */
+    val isOperator: Boolean = false,
+    /** JVM 扩展运算符宿主（M13）：非 null 时本符号由 [yux.compiler.sema.JvmExtensions] 合成，
+     *  IRGen 降级为静态调用（receiver 前置为实参 0）。 */
+    val jvmOwner: String? = null,
+    val jvmMethod: String? = null,
     override val span: SourceSpan?,
     /** 对应 AST 声明（函数体检查用）。 */
     val decl: yux.compiler.ast.YxFunction? = null,

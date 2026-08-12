@@ -80,19 +80,20 @@ object HomeStore {
 
     /** 加载 `<dataFolder>/<relPath>` 为 `Map<String, V>`（M9）：值类型由 defaults 元素示例确定。 */
     @JvmStatic
-    fun loadMap(dataFolder: File, relPath: String, valueExample: Any): Map<String, Any> {
+    fun loadMap(dataFolder: File, relPath: String, valueExample: Any): MutableMap<String, Any> {
         val file = File(dataFolder, relPath)
-        if (!file.isFile) return emptyMap()
+        // 返回可变映射：调用方（如 HomeData.homes）会直接写入，只读 emptyMap 会抛 UnsupportedOperationException
+        if (!file.isFile) return linkedMapOf()
         val loaded = try {
             Yaml().load<Any>(file.readText())
         } catch (e: IOException) {
             logger.warning("读取数据文件失败，回退空映射: $file: ${e.message}")
-            return emptyMap()
+            return linkedMapOf()
         } catch (e: RuntimeException) {
             logger.warning("数据文件损坏，回退空映射: $file: ${e.message}")
-            return emptyMap()
+            return linkedMapOf()
         }
-        if (loaded !is Map<*, *>) return emptyMap()
+        if (loaded !is Map<*, *>) return linkedMapOf()
         val result = linkedMapOf<String, Any>()
         for ((k, v) in loaded) {
             val value = when {

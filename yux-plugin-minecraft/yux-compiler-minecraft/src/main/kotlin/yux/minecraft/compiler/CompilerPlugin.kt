@@ -125,6 +125,7 @@ private fun parseCommand(parser: Parser): CommandPayload {
     parser.expect(TokenKind.LBRACE, "'{'")
     var permission: String? = null
     var description: String? = null
+    var usage: String? = null
     val aliases = mutableListOf<String>()
     var execute: CommandBlock? = null
     var tab: CommandBlock? = null
@@ -140,6 +141,10 @@ private fun parseCommand(parser: Parser): CommandPayload {
                 parser.expect(TokenKind.ASSIGN, "'='")
                 description = stringValue(parser)
             }
+            "usage" -> {
+                parser.expect(TokenKind.ASSIGN, "'='")
+                usage = stringValue(parser)
+            }
             "aliases" -> aliases += stringList(parser)
             "execute" -> execute = commandBlock(parser)
             "tab" -> tab = commandBlock(parser)
@@ -152,7 +157,7 @@ private fun parseCommand(parser: Parser): CommandPayload {
     }
     parser.expect(TokenKind.RBRACE, "'}'")
     if (execute == null) parser.error("command '$path' 必须声明 execute")
-    return CommandPayload(path, permission, description, aliases, execute, tab)
+    return CommandPayload(path, permission, description, usage, aliases, execute, tab)
 }
 
 private fun commandBlock(parser: Parser): CommandBlock {
@@ -217,13 +222,23 @@ private fun configValue(parser: Parser, fieldName: String): ConfigValue? {
             }
         }
         TokenKind.LBRACKET -> {
-            // v0.1 限制：List 默认值暂不支持（03-§3.5 支持嵌套/列表，留待后续）；
-            // 报诊断并跳过该字段，避免生成无法初始化的 List 属性。
-            parser.error(
-                "config 字段 '$fieldName' 暂不支持 List 默认值（v0.1 仅支持 String/Int/Long/Double/Boolean 标量）",
-            )
-            skipBalancedBrackets(parser)
-            null
+            // List 默认值（M13）：`[item, ...]` 元素复用标量字面量，元素间以逗号分隔
+            parser.advance()
+            val items = mutableListOf<ConfigValue>()
+            parser.skipNewlines()
+            while (!parser.at(TokenKind.RBRACKET) && !parser.at(TokenKind.EOF)) {
+                val item = configValue(parser, "$fieldName[]")
+                if (item != null) items += item
+                parser.skipNewlines()
+                if (parser.at(TokenKind.COMMA)) {
+                    parser.advance()
+                    parser.skipNewlines()
+                } else {
+                    break
+                }
+            }
+            parser.expect(TokenKind.RBRACKET, "']'")
+            ConfigValue.ListValue(items)
         }
         else -> {
             parser.error("config 字段 '$fieldName' 期望字面量，实际是 '${token.text}'")

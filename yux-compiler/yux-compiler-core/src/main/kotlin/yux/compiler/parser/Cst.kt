@@ -95,6 +95,7 @@ class CstFunctionDecl(
     val asyncKw: Token?, // async fun
     val overrideKw: Token?,
     val modifier: Token?, // private/protected
+    val operatorKw: Token?, // operator fun（运算符重载，M13）
     val funKw: Token?, // `fun`（service 成员可省略，01-§5.4 示例）
     val receiverType: CstType?, // 扩展函数接收者（M9：`fun <Receiver>.<name>`）
     val name: Token,
@@ -104,7 +105,8 @@ class CstFunctionDecl(
     val returnType: CstType?,
     val body: CstFunctionBody,
     override val span: SourceSpan,
-) : CstClassMember, CstDecl
+) : CstClassMember,
+    CstDecl
 
 sealed interface CstFunctionBody : CstNode
 
@@ -131,7 +133,8 @@ class CstPropertyDecl(
     val initializer: CstExpr?,
     val accessors: List<CstAccessor>, // `{ get {} set {} }`
     override val span: SourceSpan,
-) : CstClassMember, CstDecl
+) : CstClassMember,
+    CstDecl
 
 class CstAccessor(
     val kw: Token, // get / set
@@ -570,33 +573,40 @@ class CstAssignmentExpr(
 // ── 工具 ──────────────────────────────────────────────────────────────────────
 
 /** 记号范围：start 到 end（含两端的偏移）。 */
-internal fun spanOf(start: Token, end: Token): SourceSpan =
-    SourceSpan(start.position, end.position)
+internal fun spanOf(
+    start: Token,
+    end: Token,
+): SourceSpan = SourceSpan(start.position, end.position)
 
 /** 单个记号的跨度。 */
-internal fun spanOf(token: Token): SourceSpan =
-    SourceSpan(token.position, token.position)
+internal fun spanOf(token: Token): SourceSpan = SourceSpan(token.position, token.position)
 
 /** 以两个跨度构造合并范围（取各自起止偏移）。 */
-internal fun spanOf(start: SourceSpan, end: SourceSpan): SourceSpan =
-    SourceSpan(start.start, end.end)
+internal fun spanOf(
+    start: SourceSpan,
+    end: SourceSpan,
+): SourceSpan = SourceSpan(start.start, end.end)
 
 /** 记号到 CST 节点。 */
-internal fun spanOf(start: Token, end: CstNode): SourceSpan =
-    SourceSpan(start.position, end.span.end)
+internal fun spanOf(
+    start: Token,
+    end: CstNode,
+): SourceSpan = SourceSpan(start.position, end.span.end)
 
 /** CST 节点到记号。 */
-internal fun spanOf(start: CstNode, end: Token): SourceSpan =
-    SourceSpan(start.span.start, end.position)
+internal fun spanOf(
+    start: CstNode,
+    end: Token,
+): SourceSpan = SourceSpan(start.span.start, end.position)
 
 /** CST 节点到 CST 节点。 */
-internal fun spanOf(start: CstNode, end: CstNode): SourceSpan =
-    SourceSpan(start.span.start, end.span.end)
+internal fun spanOf(
+    start: CstNode,
+    end: CstNode,
+): SourceSpan = SourceSpan(start.span.start, end.span.end)
 
 /** 记号是否属于某关键字。 */
-internal fun Token.isKeyword(word: String): Boolean =
-    kind == TokenKind.KEYWORD && text == word
+internal fun Token.isKeyword(word: String): Boolean = kind == TokenKind.KEYWORD && text == word
 
 /** 记号是否属于某软关键字。 */
-internal fun Token.isSoft(word: String): Boolean =
-    kind == TokenKind.SOFT_KEYWORD && text == word
+internal fun Token.isSoft(word: String): Boolean = kind == TokenKind.SOFT_KEYWORD && text == word

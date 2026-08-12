@@ -581,12 +581,50 @@ class ExprGen(
             retType = TypeBridge.toIr(sym.returnType ?: SemaType.UnitT),
         )
 
+    /** 运算符方法调用（M13）：成员 → 实例调用（receiver 为 this）；扩展/JVM 静态 → 静态调用（receiver 前置实参 0）。 */
+    private fun genOperatorInvoke(fn: FunctionSymbol, receiver: IrExpr, args: List<IrExpr>): IrExpr {
+        if (fn.jvmOwner != null && fn.jvmMethod != null) {
+            val jvm =
+                IrJvmCall(
+                    name = fn.jvmMethod,
+                    owner = fn.jvmOwner,
+                    static = true,
+                    params = fn.params.map { TypeBridge.toIr(it.type) },
+                    retType = TypeBridge.toIr(fn.returnType ?: SemaType.ANY),
+                )
+            return IrExpr.Invoke(jvm, null, listOf(receiver) + args)
+        }
+        val method = irGen.functionMethods[fn] ?: error("IRGen: 运算符方法未登记: ${fn.name}")
+        return if (fn.receiverType != null) {
+            IrExpr.Invoke(IrMethodRef(method), null, listOf(receiver) + args)
+        } else {
+            IrExpr.Invoke(IrMethodRef(method), receiver, args)
+        }
+    }
+
     private fun genBinary(
         expr: YxBinary,
         g: MethodGen,
         fileScope: FileScope,
-    ): IrExpr =
-        when (expr.op) {
+    ): IrExpr {
+        // M13：用户运算符（sema 已在 resolvedRefs 登记）优先于内建指令
+        val opFn = irGen.resolvedRefs[expr] as? FunctionSymbol
+        if (opFn != null) {
+            val rt = SemaType.resolveVar(irGen.exprTypes[expr.left] ?: SemaType.ErrorT)
+            val receiver = castSmartReceiver(gen(expr.left, g, fileScope), rt)
+            val arg = gen(expr.right, g, fileScope)
+            val call = genOperatorInvoke(opFn, receiver, listOf(arg))
+            return when (expr.op) {
+                // equals 派生 `!=`；compareTo 派生四种比较（`a < b` ⇔ `a.compareTo(b) < 0`）
+                "!=" -> IrExpr.Not(call)
+                "<" -> IrExpr.Compare(CompareOp.LT, call, IrExpr.Const(0))
+                "<=" -> IrExpr.Compare(CompareOp.LE, call, IrExpr.Const(0))
+                ">" -> IrExpr.Compare(CompareOp.GT, call, IrExpr.Const(0))
+                ">=" -> IrExpr.Compare(CompareOp.GE, call, IrExpr.Const(0))
+                else -> call
+            }
+        }
+        return when (expr.op) {
             "&&", "||" -> {
                 genShortCircuit(expr, g, fileScope)
             }
@@ -638,6 +676,7 @@ class ExprGen(
                 error("IRGen: 未知运算符: ${expr.op}")
             }
         }
+    }
 
     /** `&&`/`||` 短路：临时变量 + 条件跳转（结果落在同一临时变量）。 */
     private fun genShortCircuit(
@@ -667,12 +706,20 @@ class ExprGen(
         expr: YxUnary,
         g: MethodGen,
         fileScope: FileScope,
-    ): IrExpr =
-        when (expr.op) {
+    ): IrExpr {
+        // M13：unaryMinus/unaryPlus/not 运算符优先于内建指令
+        val opFn = irGen.resolvedRefs[expr] as? FunctionSymbol
+        if (opFn != null) {
+            val rt = SemaType.resolveVar(irGen.exprTypes[expr.operand] ?: SemaType.ErrorT)
+            val receiver = castSmartReceiver(gen(expr.operand, g, fileScope), rt)
+            return genOperatorInvoke(opFn, receiver, emptyList())
+        }
+        return when (expr.op) {
             "!" -> IrExpr.Not(gen(expr.operand, g, fileScope))
             "-" -> IrExpr.Neg(gen(expr.operand, g, fileScope))
             else -> error("IRGen: 未知一元运算符: ${expr.op}")
         }
+    }
 
     /** 构造/调用实参字面量适配（M9）：sema 已按参数类型收窄（Double→Float），IRGen 按收窄类型生成常量。 */
     fun genLiteralAdapted(
@@ -811,6 +858,12 @@ class ExprGen(
         fileScope: FileScope,
     ): IrExpr {
         val baseType = SemaType.resolveVar(irGen.exprTypes[expr.base] ?: SemaType.ErrorT)
+        // M13：用户类索引读取走 `operator fun get(index)`（sema 在 operatorReadRefs 登记）
+        val getFn = (irGen.operatorReadRefs[expr] ?: irGen.resolvedRefs[expr]) as? FunctionSymbol
+        if (getFn != null) {
+            val receiver = castSmartReceiver(gen(expr.base, g, fileScope), baseType)
+            return genOperatorInvoke(getFn, receiver, listOf(gen(expr.index, g, fileScope)))
+        }
         val base = gen(expr.base, g, fileScope)
         val index = gen(expr.index, g, fileScope)
         val owner =
@@ -1275,7 +1328,7 @@ class ExprGen(
             }
         }
 
-    /** 索引赋值（M9）：Map→`put(k,v)`、List/Set→`set(i,v)`，返回被写值。 */
+    /** 索引赋值（M9）：Map→`put(k,v)`、List/Set→`set(i,v)`；用户类 → `operator set`（M13），返回被写值。 */
     private fun genIndexAssign(
         target: YxIndexExpr,
         valueExpr: YxExpr,
@@ -1283,6 +1336,23 @@ class ExprGen(
         fileScope: FileScope,
     ): IrExpr {
         val baseType = SemaType.resolveVar(irGen.exprTypes[target.base] ?: SemaType.ErrorT)
+        // M13：用户类索引写入走 `operator fun set(index, value)`（sema 在 resolvedRefs 登记）
+        val setFn = irGen.resolvedRefs[target] as? FunctionSymbol
+        if (setFn != null) {
+            val receiver = castSmartReceiver(gen(target.base, g, fileScope), baseType)
+            val call =
+                genOperatorInvoke(
+                    setFn,
+                    receiver,
+                    listOf(gen(target.index, g, fileScope), gen(valueExpr, g, fileScope)),
+                )
+            val targetType = TypeBridge.toIr(irGen.exprTypes[target] ?: SemaType.ANY)
+            return if (targetType != IrType.ANY && targetType != IrType.Void) {
+                IrExpr.Convert(call, targetType)
+            } else {
+                call
+            }
+        }
         val owner =
             when (val t = baseType) {
                 is SemaType.Declared -> (t.symbol as? JvmClassSymbol)?.qualifiedName

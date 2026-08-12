@@ -56,6 +56,11 @@ import yux.compiler.sema.YxClassSymbol
 class IRGen(
     private val analysis: AnalysisResult,
     classLoader: ClassLoader = ClassPathSymbolProvider::class.java.classLoader,
+    /**
+     * 类级增量（M13）：非 null 时仅为集合内的文件生成方法体（骨架遍仍注册全部类，
+     * 供跨文件引用解析）；其余文件的类只保留签名，调用方复用其缓存字节码。
+     */
+    private val bodyFiles: Set<String>? = null,
 ) {
     private val module = IrModule()
     private val classPath = ClassPathSymbolProvider(classLoader)
@@ -64,6 +69,9 @@ class IRGen(
 
     /** Yux 函数符号 → 其 IrMethod（调用解析）。 */
     val functionMethods = mutableMapOf<FunctionSymbol, IrMethod>()
+
+    /** IrClass → 归属源文件路径（类级增量：产物过滤 + 合成类归属）。 */
+    private val classFiles = mutableMapOf<IrClass, String>()
 
     /**
      * async fun 挂起入口（T-M14，双 ABI）：`(参数..., Continuation) -> Any?`，
@@ -128,6 +136,7 @@ class IRGen(
 
     val exprTypes: Map<yux.compiler.ast.YxExpr, SemaType> get() = analysis.exprTypes
     val resolvedRefs: Map<yux.compiler.ast.YxNode, yux.compiler.sema.Symbol> get() = analysis.resolvedRefs
+    val operatorReadRefs: Map<yux.compiler.ast.YxNode, FunctionSymbol> get() = analysis.operatorReadRefs
 
     /**
      * 用作接口的类（qualifiedName 集合，含传递闭包）：任一类的 `implements` 列表引用的 Yux 类。
@@ -155,10 +164,33 @@ class IRGen(
         for (cls in module.classes) {
             // 快照：Lambda 下沉会向 cls.methods 追加合成方法（newLambdaMethod）
             for (method in cls.methods.toList()) {
-                bodyGenerators[method]?.invoke(MethodGen(method, cls))
+                // 类级增量（M13）：非目标文件只保留签名（bodyGenerators 不执行 → 空体，
+                // 后端按返回类型补默认返回）；目标文件正常生成。
+                val ownerFile = classFiles[cls]
+                if (bodyFiles == null || ownerFile == null || ownerFile in bodyFiles) {
+                    bodyGenerators[method]?.invoke(MethodGen(method, cls))
+                }
             }
         }
         return module
+    }
+
+    /**
+     * 文件 → 产出类名映射（类级增量，M13）：含 CPS 降级后追加的合成类
+     * （状态机类名 = `<owner类名>$<方法名>$Sm`，按 `$` 前缀归属到 owner 所在文件）。
+     */
+    fun completedFileClassNames(module: IrModule): Map<String, Set<String>> {
+        val result = mutableMapOf<String, MutableSet<String>>()
+        for ((cls, path) in classFiles) result.getOrPut(path) { mutableSetOf() } += cls.name
+        val ownerNames = classFiles.keys.map { it.name }.toSet()
+        for (cls in module.classes) {
+            if (classFiles.containsKey(cls)) continue
+            val prefix = cls.name.substringBefore('$')
+            if (prefix !in ownerNames) continue
+            val ownerPath = classFiles.entries.first { it.key.name == prefix }.value
+            result.getOrPut(ownerPath) { mutableSetOf() } += cls.name
+        }
+        return result
     }
 
     /** 文件类 + 文件级声明注册（骨架遍）。 */
@@ -187,6 +219,7 @@ class IRGen(
                 interfaces = emptyList(),
             )
         module.classes.add(fileClass)
+        classFiles[fileClass] = path
         val clinit =
             IrMethod(
                 name = "\$clinit",
@@ -259,6 +292,7 @@ class IRGen(
                     },
             )
         module.classes.add(irClass)
+        classFiles[irClass] = fileScope.path
 
         val props = sym.properties()
         val propDecls = shape.members.filterIsInstance<YxProperty>()
@@ -281,6 +315,31 @@ class IRGen(
         irClass.methods.add(ctor)
         val initBlocks = shape.members.filterIsInstance<YxInitBlock>()
         bodyGenerators[ctor] = { g -> generateConstructor(irClass, props, propDecls, initBlocks, g, fileScope) }
+
+        // 全属性带默认初始化器的 data 类 → 额外无参构造器（Kotlin 语义，S-5.2.5）：
+        // 反射端（如 @YuxConfig 扫描器 getDeclaredConstructor().newInstance()）依赖无参构造器
+        // 拿到带默认字段值的实例；非 data 类不生成，避免隐式扩大构造面。
+        val allPropsDefaulted =
+            sym.isData && props.isNotEmpty() &&
+                props.all { prop -> propDecls.firstOrNull { it.name == prop.name }?.initializer != null }
+        if (allPropsDefaulted) {
+            val defaultCtor =
+                IrMethod(
+                    name = "<init>",
+                    params = emptyList(),
+                    returnType = IrType.Void,
+                    isStatic = false,
+                    isConstructor = true,
+                    isAsync = false,
+                    isOverride = false,
+                    isSynthetic = true,
+                    owner = irClass,
+                )
+            irClass.methods.add(defaultCtor)
+            bodyGenerators[defaultCtor] = { g ->
+                generateConstructor(irClass, props, propDecls, initBlocks, g, fileScope, applyParams = false)
+            }
+        }
 
         for (fnDecl in shape.members.filterIsInstance<YxFunction>()) {
             val fnSym = sym.functionsNamed(fnDecl.name).firstOrNull()
@@ -649,6 +708,7 @@ class IRGen(
         initBlocks: List<YxInitBlock>,
         g: MethodGen,
         fileScope: FileScope,
+        applyParams: Boolean = true,
     ) {
         // S-5.2.5：带初始化器的属性先执行初始化表达式（构造参数赋值之后覆盖）
         props.forEach { prop ->
@@ -657,10 +717,13 @@ class IRGen(
             val field = propertyFields[prop] ?: return@forEach
             g.emit(IrStmt.FieldAccess(IrExpr.This, field, write = true, value = genExpr(init, g, fileScope)))
         }
-        // 构造参数赋值（覆盖初始化器；S-5.1.3 全参构造器）
-        props.forEachIndexed { i, prop ->
-            val field = propertyFields[prop] ?: return@forEachIndexed
-            g.emit(IrStmt.FieldAccess(IrExpr.This, field, write = true, value = IrExpr.LocalRead(g.paramLocals[i])))
+        // 构造参数赋值（覆盖初始化器；S-5.1.3 全参构造器）。无参构造器（applyParams=false）
+        // 只保留默认初始化器，供反射端（@YuxConfig 扫描器）以默认值实例化。
+        if (applyParams) {
+            props.forEachIndexed { i, prop ->
+                val field = propertyFields[prop] ?: return@forEachIndexed
+                g.emit(IrStmt.FieldAccess(IrExpr.This, field, write = true, value = IrExpr.LocalRead(g.paramLocals[i])))
+            }
         }
         g.enterScope()
         initBlocks.forEach { block -> block.body.statements.forEach { genStmt(it, g, fileScope) } }
