@@ -42,9 +42,12 @@ object ErrorCodes {
     const val SEALED_INSTANTIATION = "E0035"
     const val SEALED_SUBCLASS_DIFFERENT_FILE = "E0036"
     const val ASYNC_OVERRIDE_MISMATCH = "E0037"
+    const val OPERATOR_MODIFIER_REQUIRED = "E0038"
+    const val ILLEGAL_OPERATOR_DECL = "E0039"
 
     // ── W 系列：警告 ──────────────────────────────────────────────────────────
     const val TYPE_FALLBACK = "W0001"
+    const val EQUALS_WITHOUT_HASHCODE = "W0002"
 
     // ── R 系列：REMIND ────────────────────────────────────────────────────────
     const val NULL_GUARD_INSERTED = "R0001"

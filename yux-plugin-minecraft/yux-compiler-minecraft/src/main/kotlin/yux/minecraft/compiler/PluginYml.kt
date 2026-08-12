@@ -54,6 +54,8 @@ data class CommandEntryData(
     val description: String? = null,
     /** `permission`（可选，仅非空时输出）。 */
     val permission: String? = null,
+    /** `usage`（可选，仅非空时输出为 plugin.yml `usage` 节）。 */
+    val usage: String? = null,
     /** `aliases`（可选，仅非空时输出为内联列表）。 */
     val aliases: List<String> = emptyList(),
 )
@@ -111,6 +113,7 @@ fun renderPluginYml(collector: PluginYmlCollector): String {
             lines += "  $name:"
             command.description?.let { lines += "    description: $it" }
             command.permission?.let { lines += "    permission: $it" }
+            command.usage?.let { lines += "    usage: $it" }
             if (command.aliases.isNotEmpty()) {
                 lines += "    aliases: [${command.aliases.joinToString(", ")}]"
             }

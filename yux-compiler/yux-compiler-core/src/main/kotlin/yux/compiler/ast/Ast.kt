@@ -147,6 +147,8 @@ class YxFunction(
     val body: YxFunctionBody,
     val isAsync: Boolean,
     val isOverride: Boolean,
+    /** 运算符重载（M13）：`operator fun plus(...)` 参与 `+` 等运算符解析。 */
+    val isOperator: Boolean = false,
     val visibility: YxVisibility,
     val annotations: List<YxAnnotation>,
     /** 扩展函数接收者类型（M9：`fun <Receiver>.<name>`，null=普通函数）。 */

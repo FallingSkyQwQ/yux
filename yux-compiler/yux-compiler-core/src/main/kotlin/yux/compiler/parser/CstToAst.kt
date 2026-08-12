@@ -189,6 +189,7 @@ class CstToAst {
             body = body,
             isAsync = decl.asyncKw != null,
             isOverride = decl.overrideKw != null,
+            isOperator = decl.operatorKw != null,
             visibility = convertVisibility(decl.modifier),
             annotations = decl.annotations.map { convertAnnotation(it) },
             receiver = decl.receiverType?.let { convertType(it) },

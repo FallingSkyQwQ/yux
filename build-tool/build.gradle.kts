@@ -13,6 +13,7 @@ dependencies {
     implementation(project(":yux-compiler:yux-compiler-backend-jvm"))
 
     testImplementation(project(":yux-compiler:yux-test-support"))
+    testImplementation(project(":yux-stdlib"))
     testImplementation(libs.junit.jupiter)
     testImplementation(libs.kotlin.test)
 }

@@ -4,11 +4,17 @@ import yux.compiler.ast.SourceSpan
 import yux.compiler.ast.YxAnnotation
 import yux.compiler.ast.YxAnnotationArg
 import yux.compiler.ast.YxBlock
+import yux.compiler.ast.YxAs
 import yux.compiler.ast.YxBoolLiteral
 import yux.compiler.ast.YxClass
 import yux.compiler.ast.YxClassMember
 import yux.compiler.ast.YxDataClass
 import yux.compiler.ast.YxDecl
+import yux.compiler.ast.YxExprStmt
+import yux.compiler.ast.YxCall
+import yux.compiler.ast.YxTypeCall
+import yux.compiler.ast.YxStmt
+import yux.compiler.ast.YxExpr
 import yux.compiler.ast.YxExtensionDecl
 import yux.compiler.ast.YxFloatLiteral
 import yux.compiler.ast.YxFunction
@@ -180,7 +186,7 @@ class MinecraftLowering(
         val payload = node.payload as? CommandPayload ?: return null
         val span = node.span
         payload.permission?.let { collector.commandPermissions += CommandPermissionData(it, payload.path) }
-        collector.commands += CommandEntryData(payload.path, payload.description, payload.permission, payload.aliases)
+        collector.commands += CommandEntryData(payload.path, payload.description, payload.permission, payload.usage, payload.aliases)
         val annotationArgs = buildList {
             add(YxAnnotationArg("path", stringLiteral(payload.path, span), span))
             payload.permission?.let { add(YxAnnotationArg("permission", stringLiteral(it, span), span)) }
@@ -252,14 +258,23 @@ class MinecraftLowering(
     private fun lowerConfig(node: YxExtensionDecl): List<YxDecl>? {
         val payload = node.payload as? ConfigPayload ?: return null
         val span = node.span
+        val helpers = mutableListOf<YxDecl>()
         val properties = payload.fields.map { field ->
-            val (type, initializer) = when (val value = field.value) {
-                is ConfigValue.Str -> namedType(listOf("String"), span) to YxStringLiteral(quote(value.text), span)
-                is ConfigValue.IntValue -> namedType(listOf("Int"), span) to YxIntLiteral(value.text, span)
-                is ConfigValue.LongValue -> namedType(listOf("Long"), span) to YxIntLiteral(value.text, span)
-                is ConfigValue.DoubleValue -> namedType(listOf("Double"), span) to YxFloatLiteral(value.text, span)
-                is ConfigValue.BoolValue -> namedType(listOf("Boolean"), span) to YxBoolLiteral(value.value, span)
-            }
+            val (type, initializer) =
+                when (val value = field.value) {
+                    is ConfigValue.Str -> namedType(listOf("String"), span) to YxStringLiteral(quote(value.text), span)
+                    is ConfigValue.IntValue -> namedType(listOf("Int"), span) to YxIntLiteral(value.text, span)
+                    is ConfigValue.LongValue -> namedType(listOf("Long"), span) to YxIntLiteral(value.text, span)
+                    is ConfigValue.DoubleValue -> namedType(listOf("Double"), span) to YxFloatLiteral(value.text, span)
+                    is ConfigValue.BoolValue -> namedType(listOf("Boolean"), span) to YxBoolLiteral(value.value, span)
+                    is ConfigValue.ListValue -> {
+                        // List 默认值（M13 补齐 03-§3.5 偏差）：合成顶层构建函数 → 属性初始化为其调用
+                        val helperName = "__yuxConfig${payload.name}${field.name.replaceFirstChar { it.uppercase() }}"
+                        helpers += configListBuilder(helperName, value, span)
+                        listType(elemTypeOf(value), span) to
+                            YxCall(YxIdentifier(helperName, span), emptyList(), noParen = false, span)
+                    }
+                }
             YxProperty(
                 name = field.name,
                 type = type,
@@ -270,7 +285,7 @@ class MinecraftLowering(
                 span = span,
             )
         }
-        return listOf(
+        val configClass =
             YxDataClass(
                 name = payload.name,
                 typeParams = emptyList(),
@@ -289,9 +304,70 @@ class MinecraftLowering(
                     ),
                 ),
                 span = span,
-            ),
+            )
+        return helpers + configClass
+    }
+
+    /** 合成 config List 默认值构建函数：`fun helper(): List T { r = List T(); r.add(...); return r }`。 */
+    private fun configListBuilder(name: String, value: ConfigValue.ListValue, span: SourceSpan): YxFunction {
+        val elem = elemTypeOf(value)
+        val listType = listType(elem, span)
+        val stmts = mutableListOf<YxStmt>()
+        // `List T()` 构造返回具体类型 ArrayList，按 S-8.5/擦除行为需 `as List T` 显式收窄
+        val list = YxAs(YxTypeCall(listType, emptyList(), span), listType, span)
+        stmts += YxVarDecl("result", listType, list, span)
+        for (item in value.items) {
+            stmts += YxExprStmt(
+                YxCall(
+                    YxMemberAccess(YxIdentifier("result", span), "add", span),
+                    listOf(configLiteral(item, span)),
+                    noParen = false,
+                    span,
+                ),
+                span,
+            )
+        }
+        stmts += YxReturn(YxIdentifier("result", span), span)
+        return YxFunction(
+            name = name,
+            typeParams = emptyList(),
+            params = emptyList(),
+            returnType = listType,
+            body = YxFunctionBody.YxBlockBody(YxBlock(stmts, span), span),
+            isAsync = false,
+            isOverride = false,
+            isOperator = false,
+            visibility = YxVisibility.PUBLIC,
+            annotations = emptyList(),
+            receiver = null,
+            span = span,
         )
     }
+
+    /** config 值 → Yux 表达式字面量（List 元素递归）。 */
+    private fun configLiteral(value: ConfigValue, span: SourceSpan): YxExpr = when (value) {
+        is ConfigValue.Str -> YxStringLiteral(quote(value.text), span)
+        is ConfigValue.IntValue -> YxIntLiteral(value.text, span)
+        is ConfigValue.LongValue -> YxIntLiteral(value.text, span)
+        is ConfigValue.DoubleValue -> YxFloatLiteral(value.text, span)
+        is ConfigValue.BoolValue -> YxBoolLiteral(value.value, span)
+        is ConfigValue.ListValue -> error("config List 默认值暂不支持嵌套列表")
+    }
+
+    /** List 元素类型：首个元素决定（空列表用 Any；擦除后元素经 runtime 反射转换）。 */
+    private fun elemTypeOf(value: ConfigValue.ListValue): String =
+        when (val first = value.items.firstOrNull()) {
+            null -> "Any"
+            is ConfigValue.Str -> "String"
+            is ConfigValue.IntValue -> "Int"
+            is ConfigValue.LongValue -> "Long"
+            is ConfigValue.DoubleValue -> "Double"
+            is ConfigValue.BoolValue -> "Boolean"
+            is ConfigValue.ListValue -> "Any"
+        }
+
+    private fun listType(elem: String, span: SourceSpan): YxNamedType =
+        YxNamedType(listOf("List"), listOf<YxType>(namedType(listOf(elem), span)), nullable = false, span = span)
 
     // ── permission（T-M8-6）：不产出类，仅收集元数据 ─────────────────────────
 
@@ -308,6 +384,9 @@ class MinecraftLowering(
         val interval = if (payload.kind == TaskKind.REPEAT) payload.tick else "0"
         val delay = if (payload.kind == TaskKind.DELAY) payload.tick else "0"
         val suffix = if (payload.async) "_A" else ""
+        // YuxTask.delay/interval 为 long 元素：注解实参必须以 L 后缀强制 Long 常量
+        // （S-2.5.1；否则 Literals.decodeInt 返回 Integer，JVM 加载注解抛 AnnotationTypeMismatchException）
+        val longTick = { text: String -> if (text.endsWith("L") || text.endsWith("l")) text else "${text}L" }
         return listOf(
             YxClass(
                 name = uniqueClassName("Task_${delay}_$interval$suffix"),
@@ -333,8 +412,8 @@ class MinecraftLowering(
                     YxAnnotation(
                         qualifiedName = listOf("yux", "minecraft", "annotations", "YuxTask"),
                         args = listOf(
-                            YxAnnotationArg("delay", YxIntLiteral(delay, span), span),
-                            YxAnnotationArg("interval", YxIntLiteral(interval, span), span),
+                            YxAnnotationArg("delay", YxIntLiteral(longTick(delay), span), span),
+                            YxAnnotationArg("interval", YxIntLiteral(longTick(interval), span), span),
                             YxAnnotationArg("async", YxBoolLiteral(payload.async, span), span),
                         ),
                         span = span,

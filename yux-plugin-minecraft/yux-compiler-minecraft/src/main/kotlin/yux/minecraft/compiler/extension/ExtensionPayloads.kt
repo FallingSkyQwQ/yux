@@ -47,6 +47,8 @@ class CommandPayload(
     val permission: String?,
     /** `description = "..."`（可选）。 */
     val description: String?,
+    /** `usage = "..."`（可选，plugin.yml `commands.<name>.usage`，命令用错时提示）。 */
+    val usage: String? = null,
     /** `aliases = ["h"]`。 */
     val aliases: List<String>,
     /** `execute ( sender , args ) { BODY }`（必填）。 */
@@ -78,8 +80,8 @@ class ConfigField(
 )
 
 /**
- * config 字段字面量值（v0.1 仅支持标量；List 默认值在解析期报诊断并跳过该字段，
- * 见 [yux.minecraft.compiler.CompilerPlugin] 的 config 解析器 KDoc）。
+ * config 字段字面量值（String/Int/Long/Double/Boolean 标量 + List）。
+ * List 默认值（M13 补齐 03-§3.5 偏差）：`[item, ...]` 元素复用标量字面量。
  */
 sealed interface ConfigValue {
     class Str(val text: String) : ConfigValue
@@ -87,6 +89,7 @@ sealed interface ConfigValue {
     class LongValue(val text: String) : ConfigValue
     class DoubleValue(val text: String) : ConfigValue
     class BoolValue(val value: Boolean) : ConfigValue
+    class ListValue(val items: List<ConfigValue>) : ConfigValue
 }
 
 /** `permission <"名称"> { ... }` 声明载荷（不产出类，仅收集元数据）。 */

@@ -317,6 +317,7 @@ class Parser(
         val override: Token? = null,
         val modifier: Token? = null,
         val sealed: Token? = null,
+        val operator: Token? = null,
     )
 
     /** 扩展关键字委托（T-M6-4）：消费关键字 token，交由插件解析器接管剩余语法。 */
@@ -332,6 +333,7 @@ class Parser(
         var override: Token? = null
         var modifier: Token? = null
         var sealed: Token? = null
+        var operator: Token? = null
         var looping = true
         while (looping) {
             when {
@@ -345,10 +347,14 @@ class Parser(
                 // 其余位置（属性名、表达式、成员名）保持普通标识符语义（T-M12）。
                 at(ID) && current.text == "sealed" && isSealedModifierAhead() -> sealed = advance()
 
+                // `operator` 为软关键字：仅当后随 `fun` / `async fun` 时视为修饰符，
+                // 其余位置（属性名、表达式、成员名）保持普通标识符语义（M13）。
+                at(ID) && current.text == "operator" && isOperatorModifierAhead() -> operator = advance()
+
                 else -> looping = false
             }
         }
-        return DeclFlags(async, override, modifier, sealed)
+        return DeclFlags(async, override, modifier, sealed, operator)
     }
 
     /** `sealed` 作为类修饰符的判定：后随类名 / `data`（此时 `sealed` 不可能是属性名）。 */
@@ -357,6 +363,12 @@ class Parser(
         return nxt.kind == IDENTIFIER ||
             (nxt.kind == KEYWORD && nxt.text == "data") ||
             (nxt.kind == SOFT_KEYWORD && (nxt.text == "extends" || nxt.text == "implements"))
+    }
+
+    /** `operator` 作为函数修饰符的判定：后随 `fun` / `async`（运算符重载 M13）。 */
+    private fun isOperatorModifierAhead(): Boolean {
+        val nxt = peek(1)
+        return nxt.kind == KEYWORD && (nxt.text == "fun" || nxt.text == "async")
     }
 
     private fun parsePackageDecl(): CstDecl {
@@ -593,6 +605,7 @@ class Parser(
             flags.async,
             flags.override,
             flags.modifier,
+            flags.operator,
             funKw,
             receiverType,
             name,

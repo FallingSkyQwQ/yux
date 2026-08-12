@@ -15,7 +15,7 @@ task repeat(interval:6000) {
 }
 
 // 冷却时间记录（内存表，04-§9：cooldowns）
-cooldowns = HashMap() as Map String Int
+cooldowns = HashMap() as Map String Long
 
 // 冷却判断（04-§9：cooldownActive）
 fun cooldownActive(player: Player): Boolean {
@@ -23,13 +23,13 @@ fun cooldownActive(player: Player): Boolean {
     last = cooldowns[player.name as String]
     cfg = config()
     if last == null {
-        cooldowns[player.name as String] = now as Int
+        cooldowns[player.name as String] = now
         return false
     }
-    if now - (last as Int) < (cfg.homeCooldown as Int) * 1000 {
+    if now - (last as Long) < (cfg.homeCooldown as Int) * 1000 {
         return true
     }
-    cooldowns[player.name as String] = now as Int
+    cooldowns[player.name as String] = now
     return false
 }
 

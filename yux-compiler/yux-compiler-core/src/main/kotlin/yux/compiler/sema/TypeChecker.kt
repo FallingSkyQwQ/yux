@@ -81,6 +81,9 @@ class TypeChecker(
     private val exprTypes = mutableMapOf<YxExpr, SemaType>()
     private val declTypes = mutableMapOf<yux.compiler.ast.YxDecl, SemaType>()
     private val resolvedRefs = mutableMapOf<YxNode, Symbol>()
+    /** 索引读取运算符（M13）：`a[i]` 命中的 `operator fun get`——写路径会在同一节点登记 `set`，
+     *  读取侧需要独立保存（索引节点语义为「读」还是「写」由所在语句决定）。 */
+    private val operatorReadRefs = mutableMapOf<YxNode, FunctionSymbol>()
     private val smartCast = SmartCast()
     private val nullGuard = yux.compiler.lowering.NullGuard(diagnostics)
 
@@ -120,6 +123,7 @@ class TypeChecker(
     val exprTypesView: Map<YxExpr, SemaType> get() = exprTypes
     val declTypesView: Map<yux.compiler.ast.YxDecl, SemaType> get() = declTypes
     val resolvedRefsView: Map<YxNode, Symbol> get() = resolvedRefs
+    val operatorReadRefsView: Map<YxNode, FunctionSymbol> get() = operatorReadRefs
     val guardPoints: List<GuardPoint> get() = nullGuard.guardPoints
 
     fun checkAll(declsByFile: Map<String, List<yux.compiler.ast.YxDecl>>) {
@@ -156,7 +160,21 @@ class TypeChecker(
         for (fn in sym.functions()) {
             fn.decl?.let { checkFunction(file, fn, it) }
         }
+        checkOperatorHashCodeWarning(sym)
         currentClass = saved
+    }
+
+    /** 声明 operator equals 但未声明 hashCode 时给警告（破坏 hash 容器语义，M13）。 */
+    private fun checkOperatorHashCodeWarning(sym: YxClassSymbol) {
+        if (sym.isData) return // data 类自动生成 hashCode（S-5.3.1）
+        val hasOperatorEquals = sym.functions().any { it.isOperator && it.name == "equals" }
+        if (hasOperatorEquals && sym.functions().none { it.name == "hashCode" }) {
+            diagnostics.warning(
+                "类 '${sym.name}' 声明 operator equals 但未声明 hashCode（可能破坏 hash 容器语义，M13）",
+                sym.span?.start,
+                ErrorCodes.EQUALS_WITHOUT_HASHCODE,
+            )
+        }
     }
 
     /** 类初始化块（S-5.2.5：构造时先执行属性初始化，再执行初始化块）。 */
@@ -351,8 +369,29 @@ class TypeChecker(
             }
         }
         declTypes[decl] = (declaredReturn as? SemaType.InferenceVar)?.solution ?: declaredReturn
+        checkOperatorReturnType(fn, declaredReturn)
         currentReceiver = savedReceiver
         leaveFunctionScope()
+    }
+
+    /** operator 返回类型约束（M13，推断完成后执行）：equals→Boolean、compareTo→Int、not→Boolean、set→Unit。 */
+    private fun checkOperatorReturnType(fn: FunctionSymbol, declaredReturn: SemaType) {
+        if (!fn.isOperator) return
+        val required = OPERATOR_RETURN_TYPES[fn.name] ?: return
+        val rt = SemaType.resolveVar((declaredReturn as? SemaType.InferenceVar)?.solution ?: declaredReturn)
+        val ok =
+            if (required == "Unit") {
+                SemaType.resolveVar(rt) is SemaType.UnitT
+            } else {
+                !rt.isError && TypeAssignability.sameBase(rt, SemaType.basic(required))
+            }
+        if (!ok) {
+            diagnostics.error(
+                "operator '${fn.name}' 返回类型必须是 $required（M13），实际 ${rt.render()}",
+                fn.span?.start,
+                ErrorCodes.ILLEGAL_OPERATOR_DECL,
+            )
+        }
     }
 
     /** 进入函数作用域：新建变量层 + 重置智能转型。 */
@@ -510,7 +549,7 @@ class TypeChecker(
         val valueType =
             if (stmt.op != "=" && targetType != null) {
                 val narrowed = typeOf(stmt.value, expected = targetType)
-                binaryOpResult(stmt.op.dropLast(1), targetType, narrowed, stmt.span)
+                binaryOpResult(stmt.op.dropLast(1), targetType, narrowed, stmt.span, stmt)
             } else {
                 typeOf(stmt.value, expected = targetType)
             }
@@ -581,6 +620,7 @@ class TypeChecker(
                 if (!elemType.isError && !valueType.isError) {
                     inference.expectAssignable(valueType, elemType, stmt.span.start, "索引赋值 '${target.base}'")
                 }
+                resolveIndexSetOperator(target, elemType)
             }
 
             else -> {
@@ -1954,7 +1994,16 @@ class TypeChecker(
         call: YxCall,
     ): SemaType? {
         val jc = jvmClassOf(receiverType) ?: return null
-        val entry = JvmExtensions.find(jc.qualifiedName, name) ?: return null
+        val elem = elementType(receiverType)
+        // M13：`sum()` 按元素类型收窄降级目标（`List Int` → sumInt → Int），
+        // 与 IRGen JvmCallResolver 保持同一选择逻辑
+        val entry =
+            if (name == "sum") {
+                val elemName = (SemaType.resolveVar(elem ?: SemaType.ErrorT) as? SemaType.Basic)?.name
+                JvmExtensions.sumVariant(elemName)
+            } else {
+                JvmExtensions.find(jc.qualifiedName, name) ?: return null
+            }
         val host = classPath.resolve(entry.first) as? JvmClassSymbol ?: return null
         val method = host.staticMethods.firstOrNull { it.name == entry.second } ?: return null
         // 实参数校验：静态方法参数 = receiver(param 0) + 实参
@@ -1966,7 +2015,6 @@ class TypeChecker(
             )
             return method.returnType
         }
-        val elem = elementType(receiverType)
         call.args.forEachIndexed { i, arg ->
             val param = method.params[i + 1]
             // FunctionN 形参：用接收者元素类型替换函数参数类型（`map { it * 10 }` 的 it 为元素类型）
@@ -1999,7 +2047,18 @@ class TypeChecker(
             when (base) {
                 is SemaType.Declared -> {
                     val sym = base.symbol
-                    if (sym is JvmClassSymbol) {
+                    if (sym is YxClassSymbol) {
+                        // M13：用户类索引读取走 `operator fun get(index)`（成员 > 扩展）
+                        when (val r = resolveOperatorMethodNamed("get", base, listOf(idx), expr, expr.span)) {
+                            is OperatorLookup.Found -> {
+                                operatorReadRefs[expr] = r.fn
+                                return r.fn.returnType ?: SemaType.ErrorT
+                            }
+
+                            OperatorLookup.ModifierMissing -> return SemaType.ErrorT
+                            OperatorLookup.NotFound -> SemaType.ANY
+                        }
+                    } else if (sym is JvmClassSymbol) {
                         when {
                             // JVM 数组：元素类型本身带可空性（原语数组非空，引用数组可空），不再统一加 ?（S-6.4.1）
                             sym.qualifiedName.startsWith("[") -> elementType(base) ?: SemaType.ANY
@@ -2042,6 +2101,27 @@ class TypeChecker(
         return result
     }
 
+    /**
+     * 索引写入（M13）：用户类 `a[i] = v` 走 `operator fun set(index, value)`。
+     * 命中登记 [resolvedRefs] 供 IRGen 路由；未定义 set 的 Yux 类报错（防止 IRGen 崩溃）。
+     */
+    private fun resolveIndexSetOperator(target: YxIndexExpr, elemType: SemaType) {
+        val base = SemaType.resolveVar(exprTypes[target.base] ?: SemaType.ErrorT)
+        if (base.isError) return
+        if (base is SemaType.Declared && base.symbol is YxClassSymbol) {
+            val idx = exprTypes[target.index] ?: SemaType.ANY
+            when (val r = resolveOperatorMethodNamed("set", base, listOf(idx, elemType), target, target.span)) {
+                is OperatorLookup.Found -> Unit
+                OperatorLookup.ModifierMissing -> Unit
+                OperatorLookup.NotFound -> diagnostics.error(
+                    "类型 '${base.render()}' 未定义索引写入运算符 set（M13）",
+                    target.span.start,
+                    ErrorCodes.UNRESOLVED_MEMBER,
+                )
+            }
+        }
+    }
+
     /** if 表达式（M9）：条件须 Boolean，结果类型为两分支的公共类型（期望优先）。 */
     private fun typeOfIfExpr(
         expr: YxIfExpr,
@@ -2077,6 +2157,181 @@ class TypeChecker(
 
     // ── 运算符 / Lambda ─────────────────────────────────────────────────────
 
+    /** operator 返回类型约束（M13）：函数名 → 必须返回的语义类型名（`Unit` 特殊）。 */
+    private val OPERATOR_RETURN_TYPES: Map<String, String> = mapOf(
+        "equals" to "Boolean",
+        "compareTo" to "Int",
+        "not" to "Boolean",
+        "set" to "Unit",
+    )
+
+    /** 二元运算符符号 → 运算符方法名（`&&`/`||`/`=` 不可重载，返回 null）。 */
+    private fun operatorMethodName(op: String): String? = when (op) {
+        "+" -> "plus"
+        "-" -> "minus"
+        "*" -> "times"
+        "/" -> "div"
+        "%" -> "rem"
+        ".." -> "rangeTo"
+        "<" -> "compareTo"
+        "<=" -> "compareTo"
+        ">" -> "compareTo"
+        ">=" -> "compareTo"
+        "==" -> "equals"
+        "!=" -> "equals"
+        else -> null
+    }
+
+    /** 一元运算符符号 → 运算符方法名（`!`→not、`-`→unaryMinus、`+`→unaryPlus）。 */
+    private fun unaryOperatorMethodName(op: String): String? = when (op) {
+        "!" -> "not"
+        "-" -> "unaryMinus"
+        "+" -> "unaryPlus"
+        else -> null
+    }
+
+    /** 运算符解析结果（M13）：命中/缺 operator 修饰符（E0038 已报）/未找到。 */
+    private sealed interface OperatorLookup {
+        data class Found(val fn: FunctionSymbol) : OperatorLookup
+
+        /** 存在同名但缺 `operator` 修饰的方法：E0038 已报，调用方不应回退内建。 */
+        object ModifierMissing : OperatorLookup
+        object NotFound : OperatorLookup
+    }
+
+    /**
+     * 按运算符方法名解析用户运算符（成员 > 扩展 > JVM 扩展，均未命中回退内建）。
+     * 命中则登记 [resolvedRefs]（供 IRGen 路由）。当接收者上存在同名但缺 `operator`
+     * 修饰的方法时，报 E0038 并返回 [OperatorLookup.ModifierMissing]（不静默回退内建）。
+     */
+    private fun resolveOperatorMethodNamed(
+        name: String,
+        receiver0: SemaType,
+        args: List<SemaType>,
+        node: YxNode?,
+        span: SourceSpan,
+    ): OperatorLookup {
+        val receiver = SemaType.resolveVar(receiver0)
+        if (receiver.isError) return OperatorLookup.NotFound
+        // 成员运算符（仅 Yux 声明类；JVM 包装类的 compareTo/equals 不参与，避免误报 E0038）
+        val memberPool: List<FunctionSymbol> =
+            if (receiver is SemaType.Declared && receiver.symbol is YxClassSymbol) {
+                (receiver.symbol as YxClassSymbol).functionsIncludingSuper(name)
+            } else {
+                emptyList()
+            }
+        val memberHit = matchOperator(memberPool.filter { it.isOperator }, 0, args)
+        if (memberHit != null) {
+            if (node != null) resolvedRefs[node] = memberHit
+            return OperatorLookup.Found(memberHit)
+        }
+        if (memberPool.any { !it.isOperator }) {
+            diagnostics.error(
+                "使用运算符但 '${receiver.render()}.$name' 缺 `operator` 修饰符（M13）",
+                span.start,
+                ErrorCodes.OPERATOR_MODIFIER_REQUIRED,
+            )
+            return OperatorLookup.ModifierMissing
+        }
+        // 扩展运算符（跨文件，同包可见；接收者类型键 = 非空 render）
+        val recvKey = receiver.nonNull().render()
+        val extPool =
+            symbolTable.files.flatMap { it.extensionFunctions.values.flatten() }
+                .filter { it.name == name && it.receiverType?.nonNull()?.render() == recvKey }
+        val extHit = matchOperator(extPool.filter { it.isOperator }, 1, args)
+        if (extHit != null) {
+            if (node != null) resolvedRefs[node] = extHit
+            return OperatorLookup.Found(extHit)
+        }
+        if (extPool.any { !it.isOperator }) {
+            diagnostics.error(
+                "使用运算符但扩展函数 '$name' 缺 `operator` 修饰符（M13）",
+                span.start,
+                ErrorCodes.OPERATOR_MODIFIER_REQUIRED,
+            )
+            return OperatorLookup.ModifierMissing
+        }
+        // JVM 扩展运算符（stdlib 降级，如 `list1 + list2` → Colls.concat）
+        return resolveJvmExtensionOperator(name, receiver, args, node)
+            ?.let { OperatorLookup.Found(it) }
+            ?: OperatorLookup.NotFound
+    }
+
+    /**
+     * JVM 扩展运算符解析（M13）：接收者为 JVM 类型且命中 [JvmExtensions] 注册表时，
+     * 构建静态调用符号（[FunctionSymbol.jvmOwner]/[FunctionSymbol.jvmMethod]），供 IRGen 降级。
+     * 同一运算符名的多个条目（如 List `+` 的 concat/append）按注册顺序选择（具体优先）。
+     */
+    private fun resolveJvmExtensionOperator(
+        name: String,
+        receiver: SemaType,
+        args: List<SemaType>,
+        node: YxNode?,
+    ): FunctionSymbol? {
+        val jc = jvmClassOf(receiver) ?: return null
+        for ((owner, methodName) in JvmExtensions.findAll(jc.qualifiedName, name)) {
+            val host = classPath.resolve(owner) as? JvmClassSymbol ?: continue
+            val method = host.staticMethods.firstOrNull { it.name == methodName } ?: continue
+            if (method.params.size != 1 + args.size) continue
+            val argsMatch =
+                args.indices.all { i ->
+                    val p = method.params[i + 1]
+                    TypeAssignability.sameBase(args[i], p) ||
+                        TypeAssignability.isAssignable(args[i], p) ||
+                        jvmAssignable(args[i], p)
+                }
+            if (!argsMatch) continue
+            val candidate =
+                FunctionSymbol(
+                    name = name,
+                    params = method.params.mapIndexed { i, p -> ParameterSymbol(if (i == 0) "this" else "arg$i", p, hasDefault = false, null) },
+                    returnType = method.returnType,
+                    isAsync = false,
+                    isOverride = false,
+                    owner = null,
+                    receiverType = null,
+                    visibility = YxVisibility.PUBLIC,
+                    isOperator = true,
+                    jvmOwner = owner,
+                    jvmMethod = methodName,
+                    span = null,
+                    decl = null,
+                )
+            if (node != null) resolvedRefs[node] = candidate
+            return candidate
+        }
+        return null
+    }
+
+    /** JVM 子类型判定（M13 运算符实参匹配）：经反射 `target.isAssignableFrom(from)`。 */
+    private fun jvmAssignable(from: SemaType, to: SemaType): Boolean {
+        val f = jvmClassOf(from) ?: return false
+        val t = jvmClassOf(to) ?: return false
+        return try {
+            val fc = Class.forName(f.qualifiedName, false, JvmClassSymbol::class.java.classLoader)
+            val tc = Class.forName(t.qualifiedName, false, JvmClassSymbol::class.java.classLoader)
+            tc.isAssignableFrom(fc)
+        } catch (_: ClassNotFoundException) {
+            false
+        } catch (_: LinkageError) {
+            false
+        }
+    }
+
+    /** 运算符候选匹配：参数从 [paramsStart] 起对齐 [args]，先精确（sameBase）后可赋值。 */
+    private fun matchOperator(
+        candidates: List<FunctionSymbol>,
+        paramsStart: Int,
+        args: List<SemaType>,
+    ): FunctionSymbol? {
+        val byArity = candidates.filter { it.params.size == paramsStart + args.size }
+        return byArity.firstOrNull { fn ->
+            args.indices.all { i -> TypeAssignability.sameBase(args[i], fn.params[paramsStart + i].type) }
+        } ?: byArity.firstOrNull { fn ->
+            args.indices.all { i -> TypeAssignability.isAssignable(args[i], fn.params[paramsStart + i].type) }
+        }
+    }
+
     private fun typeOfBinary(
         expr: YxBinary,
         expected: SemaType?,
@@ -2095,28 +2350,52 @@ class TypeChecker(
         }
         val left = typeOf(expr.left)
         val right = typeOf(expr.right)
-        return binaryOpResult(expr.op, left, right, expr.span)
+        return binaryOpResult(expr.op, left, right, expr.span, expr)
     }
 
-    /** 二元运算结果类型与操作数校验（S-7.5/S-7.6）：复合赋值 `x op= e` 展开复用同一套规则。 */
+    /**
+     * 二元运算结果类型与操作数校验（S-7.5/S-7.6）：复合赋值 `x op= e` 展开复用同一套规则。
+     * M13：先尝试用户运算符（成员 > 扩展 > JVM 扩展），命中时登记 [resolvedRefs] 供 IRGen 路由。
+     */
     private fun binaryOpResult(
         op: String,
         left: SemaType,
         right: SemaType,
         span: SourceSpan,
-    ): SemaType =
-        when (op) {
+        node: YxNode? = null,
+    ): SemaType {
+        operatorMethodName(op)?.let { name ->
+            when (val r = resolveOperatorMethodNamed(name, left, listOf(right), node, span)) {
+                is OperatorLookup.Found -> {
+                    // compareTo 派生四种比较（`a < b` ⇔ `a.compareTo(b) < 0`）、equals 派生 `!=`：
+                    // 表达式结果恒为 Boolean，尽管运算符方法返回 Int/Boolean
+                    if (op == "<" || op == "<=" || op == ">" || op == ">=" || op == "!=") {
+                        return SemaType.BOOLEAN
+                    }
+                    return r.fn.returnType ?: SemaType.ErrorT
+                }
+
+                OperatorLookup.ModifierMissing -> return SemaType.ErrorT
+                OperatorLookup.NotFound -> Unit
+            }
+        }
+        return when (op) {
             "+" -> {
-                if (left is SemaType.Basic && left.name == "String" || right is SemaType.Basic && right.name == "String") {
-                    // 字符串拼接：另一侧须为 String 或数字（S-7.6.1），防 `print "a" + "b"` 落到 Unit
-                    val otherOk =
-                        left.isError || right.isError ||
-                            (left is SemaType.Basic && left.name == "String") ||
-                            (right is SemaType.Basic && right.name == "String") ||
-                            SemaType.isNumeric(left) && SemaType.isNumeric(right)
-                    if (!otherOk) {
+                val lv = SemaType.resolveVar(left)
+                val rv = SemaType.resolveVar(right)
+                val leftIsString = lv is SemaType.Basic && lv.name == "String"
+                val rightIsString = rv is SemaType.Basic && rv.name == "String"
+                if (leftIsString || rightIsString) {
+                    // 字符串拼接：String 侧吸收任意可求值操作数（S-7.6.1，旧实现恒放行）。
+                    // 唯一例外是 Unit（void 调用）：调用结果没有值可拼，IRGen 会把它当拼接
+                    // 操作数发射（append 从空栈弹值 → VerifyError）。无括号实参绑定（S-7.2.2）
+                    // 使 `send "a" + x` 解析为 `(send "a") + x`，正是此场景的高发入口。
+                    val unitOperand =
+                        (!lv.isError && lv === SemaType.UnitT) ||
+                            (!rv.isError && rv === SemaType.UnitT)
+                    if (unitOperand) {
                         diagnostics.error(
-                            "字符串拼接需要 String 或数字操作数（S-7.6.1），实际 ${left.render()} 与 ${right.render()}",
+                            "字符串拼接的操作数不能是 Unit（void 调用无值可拼，S-7.6.1），实际 ${lv.render()} 与 ${rv.render()}",
                             span.start,
                             ErrorCodes.INVALID_OPERATOR_OPERAND,
                         )
@@ -2160,6 +2439,7 @@ class TypeChecker(
                 SemaType.ErrorT
             }
         }
+    }
 
     private fun equalityResult(
         span: SourceSpan,
@@ -2212,6 +2492,16 @@ class TypeChecker(
         expr: YxUnary,
         expected: SemaType?,
     ): SemaType {
+        // M13：用户一元运算符（unaryMinus/unaryPlus/not）优先于内建指令
+        unaryOperatorMethodName(expr.op)?.let { name ->
+            val operand = typeOf(expr.operand)
+            when (val r = resolveOperatorMethodNamed(name, operand, emptyList(), expr, expr.span)) {
+                is OperatorLookup.Found -> return r.fn.returnType ?: SemaType.ErrorT
+                OperatorLookup.ModifierMissing -> return SemaType.ErrorT
+                OperatorLookup.NotFound -> Unit
+            }
+            if (operand.isError) return SemaType.ErrorT
+        }
         val operand = typeOf(expr.operand)
         if (operand.isError) return SemaType.ErrorT
         return when (expr.op) {
@@ -2532,58 +2822,58 @@ object BuiltinFunctions {
         mapOf(
             "print" to
                 FunctionSymbol(
-                    "print",
-                    listOf(ParameterSymbol("x", ANY, hasDefault = false, null)),
-                    UNIT,
-                    false,
-                    false,
-                    null,
-                    null,
-                    YxVisibility.PUBLIC,
-                    null,
-                    null,
+                    name = "print",
+                    params = listOf(ParameterSymbol("x", ANY, hasDefault = false, null)),
+                    returnType = UNIT,
+                    isAsync = false,
+                    isOverride = false,
+                    owner = null,
+                    receiverType = null,
+                    visibility = YxVisibility.PUBLIC,
+                    span = null,
+                    decl = null,
                 ),
             "println" to
                 FunctionSymbol(
-                    "println",
-                    listOf(ParameterSymbol("x", ANY, hasDefault = false, null)),
-                    UNIT,
-                    false,
-                    false,
-                    null,
-                    null,
-                    YxVisibility.PUBLIC,
-                    null,
-                    null,
+                    name = "println",
+                    params = listOf(ParameterSymbol("x", ANY, hasDefault = false, null)),
+                    returnType = UNIT,
+                    isAsync = false,
+                    isOverride = false,
+                    owner = null,
+                    receiverType = null,
+                    visibility = YxVisibility.PUBLIC,
+                    span = null,
+                    decl = null,
                 ),
             "serialize" to
                 FunctionSymbol(
-                    "serialize",
-                    listOf(ParameterSymbol("x", ANY, hasDefault = false, null)),
-                    STRING,
-                    false,
-                    false,
-                    null,
-                    null,
-                    YxVisibility.PUBLIC,
-                    null,
-                    null,
+                    name = "serialize",
+                    params = listOf(ParameterSymbol("x", ANY, hasDefault = false, null)),
+                    returnType = STRING,
+                    isAsync = false,
+                    isOverride = false,
+                    owner = null,
+                    receiverType = null,
+                    visibility = YxVisibility.PUBLIC,
+                    span = null,
+                    decl = null,
                 ),
             "deserialize" to
                 FunctionSymbol(
-                    "deserialize",
-                    listOf(
+                    name = "deserialize",
+                    params = listOf(
                         ParameterSymbol("text", STRING, hasDefault = false, null),
                         ParameterSymbol("type", ANY, hasDefault = false, null),
                     ),
-                    ANY,
-                    false,
-                    false,
-                    null,
-                    null,
-                    YxVisibility.PUBLIC,
-                    null,
-                    null,
+                    returnType = ANY,
+                    isAsync = false,
+                    isOverride = false,
+                    owner = null,
+                    receiverType = null,
+                    visibility = YxVisibility.PUBLIC,
+                    span = null,
+                    decl = null,
                 ),
         )
 

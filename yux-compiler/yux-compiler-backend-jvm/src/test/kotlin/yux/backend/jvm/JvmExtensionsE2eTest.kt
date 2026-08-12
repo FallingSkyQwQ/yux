@@ -51,7 +51,8 @@ class JvmExtensionsE2eTest {
             }
             """.trimIndent(),
         )
-        assertEquals("0.0null", out)
+        // M13：`List Int.sum()` 按元素类型返回 Int（0），不再恒为 Double（0.0）
+        assertEquals("0null", out)
     }
 
     @Test
@@ -65,5 +66,28 @@ class JvmExtensionsE2eTest {
             """.trimIndent(),
         )
         assertEquals("hello worldHELLO WORLD", out)
+    }
+
+    @Test
+    fun `sum returns element-typed result`() {
+        val out = BackendTestSupport.compileAndRun(
+            """
+            fun main() {
+                ints = List Int()
+                ints.add(1); ints.add(2); ints.add(3)
+                longs = List Long()
+                longs.add(10L); longs.add(20L)
+                floats = List Float()
+                floats.add(1.5F); floats.add(2.5F)
+                doubles = List Double()
+                doubles.add(1.5); doubles.add(2.5)
+                print ints.sum()
+                print longs.sum()
+                print floats.sum()
+                print doubles.sum()
+            }
+            """.trimIndent(),
+        )
+        assertEquals("6304.04.0", out)
     }
 }

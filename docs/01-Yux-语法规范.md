@@ -659,6 +659,28 @@ count = numbers.reduce (0, (acc, n -> acc + n))   // 显式多参 Lambda
 - S-7.5.2 `==`/`!=`：对基本类型为值比较；对引用类型为结构相等（生成 `equals`），`===` 保留 JVM 引用比较（软记号，暂不启用）。
 - S-7.5.3 `is T`：类型检查；`as T`：强制转换，失败抛 `ClassCastException`。
 - S-7.5.4 无隐式数字转换（Int → Long 需显式 `.toLong()`，与 Kotlin 一致）；`a` 字面量除外（字面量按目标类型收窄）。
+- S-7.5.5 **运算符重载（M13）**：`operator fun <方法名>` 将运算符分发到用户定义方法。解析顺序：**成员运算符 > 扩展运算符 > JVM 扩展（stdlib 降级）> 内建指令**。映射表：
+
+  | 运算符 | 方法名 | 返回类型约束 | 说明 |
+  | --- | --- | --- | --- |
+  | `a + b` | `plus` | — | 字符串/数值内建语义被用户运算符覆盖 |
+  | `a - b` | `minus` | — | |
+  | `a * b` | `times` | — | |
+  | `a / b` | `div` | — | |
+  | `a % b` | `rem` | — | |
+  | `a < b` / `a <= b` / `a > b` / `a >= b` | `compareTo` | `Int` | 表达式结果为 `Boolean`（`a < b` ⇔ `a.compareTo(b) < 0`） |
+  | `a == b` / `a != b` | `equals` | `Boolean` | `!=` 为结果取反；`null` 比较仍是空判断，不分发 |
+  | `a .. b` | `rangeTo` | — | |
+  | `-a` | `unaryMinus` | — | |
+  | `+a` | `unaryPlus` | — | |
+  | `!a` | `not` | `Boolean` | |
+  | `a[i]` | `get` | — | 索引读取 |
+  | `a[i] = v` | `set` | `Unit` | 索引写入 |
+
+  - `&&`/`||`/`=` 为短路与赋值语义，**不可重载**。
+  - 接收者上存在同名函数但缺 `operator` 修饰符时，报 E0038（不静默回退内建）；operator 返回类型违反上表约束时报 E0039。
+  - `operator equals` 应配套 `hashCode`，否则给 W0002 警告（data 类自动生成 hashCode 不受影响）。
+  - 扩展运算符跨文件可见（同包）；JVM 集合 `+` 已内置降级（`List + List` → `Colls.concat`，`List + elem` → `Colls.append`）。
 
 ## 7.6 字符串与插值
 
@@ -786,6 +808,12 @@ player.health = 20       // = player.setHealth(20)
 player.inventory.add item // 链式属性 + 调用
 ```
 
+> **互操作可空性（设计决策，M13 收口）**：S-8.5 规定 JVM 互操作**引用类型返回值一律按可空**处理
+> （`ClassPathSymbolProvider.jvmType` 对引用类型加 `?`），配合 ADR-10 空安全（编译提醒 + 运行守卫）。
+> 原因：Java 无强制空性标注，静态断言非空会掩盖 `null` 传播（NPE 恶化）。使用处需 `as String` 等显式
+> 收窄（教程 FAQ Q2 范式）。未来方向：读取常见空性注解（`@NotNull`/`@Nullable`）做平台类型推断
+> （与 Kotlin platform type 对齐）——列入 05-§4 统一符号收集的后续项。
+
 ## 8.6 内存模型
 
 - S-8.6.1 默认 GC 管理：`player = Player()`。
@@ -793,10 +821,19 @@ player.inventory.add item // 链式属性 + 调用
 - S-8.6.3 `unsafe { }`：允许直接内存操作与原始指针（面向高手/底层库），须显式开启。
 - S-8.6.4 `native fun`：声明由 Native 后端/外部库提供的函数（JVM 上映射 `@JvmNative` 或 `java.lang.foreign`）。
 
+**JVM-first 落地现状（M13 语义收口）**：
+
+- `unsafe { }` 块**已实现**（解析 + 语义接受 + 编译运行，教程 `03-master/15-unsafe-block.yux`）；
+  JVM 上块内代码按普通代码编译（无显式逃逸开关），保留关键字供未来 Native 后端启用约束检查。
+- `stack` / `native fun` / `new` 关键字**只接受语法诊断**（S-8.6 为 Native 预留）：词法接受、解析器给出明确
+  诊断（"JVM 后端未实现原生函数声明 / 栈分配，对象一律 GC 分配"）而非泛化语法错误，防止误用；
+  完整语义依赖未来 Native/WASM 后端（02-§13 接口占位）。
+
 ```yux
 player = Player()          // GC
-stack hot = HotObj()       // 栈分配意图
-native fun syscall(n:Int):Long
+unsafe {
+    buf = ByteBuffer.allocate(1024)   // 普通 JVM 代码；Native 后端将启用越界/指针检查
+}
 ```
 
 ## 8.7 继承与接口

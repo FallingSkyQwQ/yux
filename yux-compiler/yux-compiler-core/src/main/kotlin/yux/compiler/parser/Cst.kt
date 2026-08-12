@@ -95,6 +95,7 @@ class CstFunctionDecl(
     val asyncKw: Token?, // async fun
     val overrideKw: Token?,
     val modifier: Token?, // private/protected
+    val operatorKw: Token?, // operator fun（运算符重载，M13）
     val funKw: Token?, // `fun`（service 成员可省略，01-§5.4 示例）
     val receiverType: CstType?, // 扩展函数接收者（M9：`fun <Receiver>.<name>`）
     val name: Token,

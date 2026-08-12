@@ -3,6 +3,7 @@ package yux.minecraft.compiler
 import org.junit.jupiter.api.Test
 import yux.compiler.Compiler
 import yux.compiler.ast.YxBoolLiteral
+import yux.compiler.ast.YxCall
 import yux.compiler.ast.YxClass
 import yux.compiler.ast.YxDataClass
 import yux.compiler.ast.YxDecl
@@ -50,6 +51,14 @@ class CompilerPluginTest {
         val diagnostics = DiagnosticSink()
         val decls = Compiler(diagnostics, manager).parseToDecls(SourceFile("main.yux", text))
         return ParseResult(decls, diagnostics, plugin)
+    }
+
+    /** 解析 + 下沉 + 全模块语义检查（校验合成代码可编译）。 */
+    private fun parseAndCheck(text: String): ParseResult {
+        val parsed = parse(text)
+        assertFalse(parsed.diagnostics.hasErrors, parsed.diagnostics.diagnostics.toString())
+        Compiler(parsed.diagnostics).analyze(mapOf("main.yux" to parsed.decls))
+        return parsed
     }
 
     private fun assertNoExtensionLeftover(result: ParseResult) {
@@ -204,7 +213,7 @@ class CompilerPluginTest {
         assertEquals("myserver.home", result.plugin.collector.commandPermissions.single().permission)
         assertEquals("/home", result.plugin.collector.commandPermissions.single().commandPath)
         assertEquals(
-            CommandEntryData("/home", "传送到家", "myserver.home", listOf("h")),
+            CommandEntryData(path = "/home", description = "传送到家", permission = "myserver.home", aliases = listOf("h")),
             result.plugin.collector.commands.single(),
         )
     }
@@ -286,17 +295,45 @@ class CompilerPluginTest {
     }
 
     @Test
-    fun `config List 默认值报诊断且不崩溃`() {
-        val result = parse("config Server { tags = [\"a\", \"b\"] }")
-        assertTrue(result.diagnostics.hasErrors, "List 默认值应产生诊断")
-        assertTrue(
-            result.diagnostics.diagnostics.any { it.message.contains("List") },
-            "诊断信息应说明 List 不支持: ${result.diagnostics.diagnostics}",
+    fun `config List 默认值下沉为 List 属性 + 合成构建函数`() {
+        val result = parse(
+            """
+            config Server {
+                tags = ["a", "b"]
+                scores = [1, 2, 3]
+                flags = [true]
+            }
+            """.trimIndent(),
         )
+        assertFalse(result.diagnostics.hasErrors, result.diagnostics.diagnostics.toString())
         assertNoExtensionLeftover(result)
-        // 字段被跳过，但仍产出空字段的 data 类
         val data = result.decls.filterIsInstance<YxDataClass>().single()
-        assertTrue(data.properties.isEmpty())
+        assertEquals("Server", data.name)
+        val tags = data.properties.first { it.name == "tags" }
+        val tagsType = tags.type as YxNamedType
+        assertEquals("List", tagsType.segments.single())
+        assertEquals("String", (tagsType.typeArgs.single() as YxNamedType).segments.single())
+        // 属性初始化为对合成构建函数的调用（List 默认值在运行时经 ConfigManager 反射构造）
+        assertIs<YxCall>(tags.initializer)
+        val helpers = result.decls.filterIsInstance<YxFunction>().filter { it.name.startsWith("__yuxConfig") }
+        assertEquals(3, helpers.size)
+        for (helper in helpers) {
+            val ret = helper.returnType as YxNamedType
+            assertEquals("List", ret.segments.single())
+        }
+    }
+
+    @Test
+    fun `config List 默认值函数在解析后通过语义检查`() {
+        val result = parseAndCheck(
+            """
+            config Server {
+                tags = ["a", "b"]
+                scores = [1, 2, 3]
+            }
+            """.trimIndent(),
+        )
+        assertFalse(result.diagnostics.hasErrors, result.diagnostics.diagnostics.toString())
     }
 
     // ── permission（T-M8-6）────────────────────────────────────────────────────
@@ -331,8 +368,8 @@ class CompilerPluginTest {
         val cls = yxClass(result.decls, "Task_0_20")
         val ann = cls.annotations.single()
         assertEquals(listOf("yux", "minecraft", "annotations", "YuxTask"), ann.qualifiedName)
-        assertEquals("0", assertIs<YxIntLiteral>(ann.args.first { it.name == "delay" }.value).text)
-        assertEquals("20", assertIs<YxIntLiteral>(ann.args.first { it.name == "interval" }.value).text)
+        assertEquals("0L", assertIs<YxIntLiteral>(ann.args.first { it.name == "delay" }.value).text)
+        assertEquals("20L", assertIs<YxIntLiteral>(ann.args.first { it.name == "interval" }.value).text)
         assertFalse(assertIs<YxBoolLiteral>(ann.args.first { it.name == "async" }.value).value)
         assertEquals("run", cls.members.filterIsInstance<YxFunction>().single().name)
     }
@@ -344,11 +381,11 @@ class CompilerPluginTest {
         assertNoExtensionLeftover(delay)
         val delayCls = yxClass(delay.decls, "Task_100_0")
         assertEquals(
-            "100",
+            "100L",
             assertIs<YxIntLiteral>(delayCls.annotations.single().args.first { it.name == "delay" }.value).text,
         )
         assertEquals(
-            "0",
+            "0L",
             assertIs<YxIntLiteral>(delayCls.annotations.single().args.first { it.name == "interval" }.value).text,
         )
         val async = parse("task async delay(50) { }")
@@ -476,10 +513,10 @@ class CompilerPluginTest {
     fun `pluginYml 渲染 commands 节含描述权限别名且命令名为路径末段`() {
         val collector = PluginYmlCollector().apply {
             pluginClassName = "HomePlugin"
-            commands += CommandEntryData("/sethome", "设置家", "homeplugin.set", listOf("sh", "s"))
-            commands += CommandEntryData("/home", null, "homeplugin.home", emptyList())
-            commands += CommandEntryData("delhome", null, null, emptyList())
-            commands += CommandEntryData("/admin/back", "嵌套路径取末段", null, emptyList())
+            commands += CommandEntryData(path = "/sethome", description = "设置家", permission = "homeplugin.set", aliases = listOf("sh", "s"))
+            commands += CommandEntryData(path = "/home", permission = "homeplugin.home", usage = "家传送：/home")
+            commands += CommandEntryData(path = "delhome")
+            commands += CommandEntryData(path = "/admin/back", description = "嵌套路径取末段")
         }
         assertEquals(
             """
@@ -491,6 +528,7 @@ class CompilerPluginTest {
                 aliases: [sh, s]
               home:
                 permission: homeplugin.home
+                usage: 家传送：/home
               delhome:
               back:
                 description: 嵌套路径取末段
@@ -502,8 +540,8 @@ class CompilerPluginTest {
     @Test
     fun `pluginYml 渲染命令名先到先得去重`() {
         val collector = PluginYmlCollector().apply {
-            commands += CommandEntryData("/dup", "first", null, emptyList())
-            commands += CommandEntryData("/dup", "second", null, emptyList())
+            commands += CommandEntryData(path = "/dup", description = "first", permission = null, aliases = emptyList())
+            commands += CommandEntryData(path = "/dup", description = "second", permission = null, aliases = emptyList())
         }
         assertEquals(
             """
@@ -522,7 +560,7 @@ class CompilerPluginTest {
             pluginClassName = "MyServer"
             permissions += PermissionData("myserver.admin", "管理员", "op", emptyList())
             commandPermissions += CommandPermissionData("myserver.home", "/home")
-            commands += CommandEntryData("/home", "回家", "myserver.home", emptyList())
+            commands += CommandEntryData(path = "/home", description = "回家", permission = "myserver.home", aliases = emptyList())
         }
         assertEquals(
             """
@@ -582,7 +620,7 @@ class CompilerPluginTest {
         assertEquals("myserver.home", result.plugin.collector.commandPermissions.single().permission)
         assertEquals("/home", result.plugin.collector.commandPermissions.single().commandPath)
         assertEquals(
-            CommandEntryData("/home", null, "myserver.home", emptyList()),
+            CommandEntryData(path = "/home", description = null, permission = "myserver.home", aliases = emptyList()),
             result.plugin.collector.commands.single(),
         )
     }

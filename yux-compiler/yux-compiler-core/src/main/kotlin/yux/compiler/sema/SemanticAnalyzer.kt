@@ -33,6 +33,7 @@ class SemanticAnalyzer(
             exprTypes = checker.exprTypesView,
             declTypes = checker.declTypesView,
             resolvedRefs = checker.resolvedRefsView,
+            operatorReadRefs = checker.operatorReadRefsView,
             guardPoints = checker.guardPoints,
             diagnostics = diagnostics,
         )
@@ -45,6 +46,8 @@ class AnalysisResult(
     val exprTypes: Map<YxExpr, SemaType>,
     val declTypes: Map<YxDecl, SemaType>,
     val resolvedRefs: Map<YxNode, Symbol>,
+    /** 索引读取运算符（M13）：`a[i]` 命中的 `operator fun get`。 */
+    val operatorReadRefs: Map<YxNode, FunctionSymbol>,
     val guardPoints: List<GuardPoint>,
     val diagnostics: DiagnosticSink,
 ) {

@@ -1,5 +1,6 @@
 package yux.buildtool
 
+import org.yaml.snakeyaml.Yaml
 import yux.backend.jvm.AsmBackend
 import yux.compiler.Compiler
 import yux.compiler.ast.YxDecl
@@ -9,7 +10,6 @@ import yux.compiler.plugin.PluginArtifact
 import yux.compiler.plugin.PluginManager
 import yux.compiler.sema.ClassPathSymbolProvider
 import yux.compiler.source.SourceFile
-import org.yaml.snakeyaml.Yaml
 import java.io.IOException
 import java.net.URLClassLoader
 import java.nio.file.Files
@@ -66,7 +66,10 @@ class YuxBuild(
     private val projectDir: Path = projectDir.toAbsolutePath().normalize()
 
     /** 完整构建（T-M7-5 `yuxc build`）：解析 → 计划 → 增量 → Yux 编译 → 生成 Gradle → 托管打包 → 拷贝 jar。 */
-    fun build(clean: Boolean = false, offline: Boolean = false): BuildResult {
+    fun build(
+        clean: Boolean = false,
+        offline: Boolean = false,
+    ): BuildResult {
         val plan = parseAndPlan()
         if (plan == null) return BuildResult(false, message = lastParseError)
         if (clean) {
@@ -84,19 +87,22 @@ class YuxBuild(
             val written = writeGradleProject(plan.config, generatedDir, emptyList())
             if (written != null) return BuildResult(false, message = written)
         }
-        val compiled = if (mixed) {
-            compileMixed(plan, generatedDir, clean, offline)
-        } else {
-            compileInternal(plan, plan.config, clean, emptyList())
-        }
+        val compiled =
+            if (mixed) {
+                compileMixed(plan, generatedDir, clean, offline)
+            } else {
+                compileInternal(plan, plan.config, clean, emptyList())
+            }
         if (!compiled.success) {
             return BuildResult(false, compiled.diagnostics, compiled = true, message = "Yux 编译失败")
         }
         // M8（T-M8-12）：编译器插件产出的 plugin.yml 在 Yux 编译后产生 → 重新生成脚本合并。
         val written = writeGradleProject(plan.config, generatedDir, compiled.resourceArtifacts)
         if (written != null) return BuildResult(false, message = written)
-        val targetJar = BuildPaths.resolve(projectDir, BuildPaths.LIBS_DIR)
-            .resolve("${plan.config.name}-${plan.config.version}.jar")
+        val targetJar =
+            BuildPaths
+                .resolve(projectDir, BuildPaths.LIBS_DIR)
+                .resolve("${plan.config.name}-${plan.config.version}.jar")
         // 纯 Yux 增量命中且 jar 已存在 → 跳过 Gradle（无变更快速重建的可观测行为）；
         // 混合项目恒走 Gradle `jar`（Java/Kotlin 源变更由 Gradle 自身增量编译，跳过会产出过期 jar）。
         if (!mixed && compiled.upToDate && Files.isRegularFile(targetJar)) {
@@ -126,18 +132,23 @@ class YuxBuild(
             val written = writeGradleProject(plan.config, generatedDir, emptyList())
             if (written != null) return compileFailure(written)
         }
-        val compiled = if (mixed) {
-            compileMixed(plan, generatedDir, clean, offline = false)
-        } else {
-            compileInternal(plan, plan.config, clean, emptyList())
-        }
+        val compiled =
+            if (mixed) {
+                compileMixed(plan, generatedDir, clean, offline = false)
+            } else {
+                compileInternal(plan, plan.config, clean, emptyList())
+            }
         if (!compiled.success || !compiled.upToDate) return compiled
         // 增量命中：从 build/yux-classes 重新加载类；加载失败则强制重编。
         val reloaded = loadClasses()
         if (reloaded != null) {
             return CompiledProject(
-                reloaded, plan.mainClassName, compiled.diagnostics, success = true,
-                upToDate = true, projectClasspath = compiled.projectClasspath,
+                reloaded,
+                plan.mainClassName,
+                compiled.diagnostics,
+                success = true,
+                upToDate = true,
+                projectClasspath = compiled.projectClasspath,
             )
         }
         return compileInternal(plan, plan.config, clean = true, projectClasspath = compiled.projectClasspath)
@@ -153,7 +164,12 @@ class YuxBuild(
      *
      * 双向同时引用（Yux↔Kotlin 循环）需统一符号收集（05-§4 未来项），v0.1 明确不支持（S-05.3 后置）。
      */
-    private fun compileMixed(plan: BuildPlan, generatedDir: Path, clean: Boolean, offline: Boolean): CompiledProject {
+    private fun compileMixed(
+        plan: BuildPlan,
+        generatedDir: Path,
+        clean: Boolean,
+        offline: Boolean,
+    ): CompiledProject {
         val gradle = GradleRunner(gradleBinary, offline)
         // 1) Yux 先行：classpath 仅含上次构建留下的 Java/Kotlin 产物（通常为空）。
         val first = compileInternal(plan, plan.config, clean, mixedClassDirs(generatedDir))
@@ -193,21 +209,23 @@ class YuxBuild(
         }
 
     /** Gradle 生成的 Java/Kotlin 编译产物目录（存在者；生成工程从 build/generated 运行，产物落于其 build/classes）。 */
-    private fun mixedClassDirs(generatedDir: Path): List<Path> = listOf(
-        generatedDir.resolve("build/classes/java/main"),
-        generatedDir.resolve("build/classes/kotlin/main"),
-    ).filter { Files.isDirectory(it) }
+    private fun mixedClassDirs(generatedDir: Path): List<Path> =
+        listOf(
+            generatedDir.resolve("build/classes/java/main"),
+            generatedDir.resolve("build/classes/kotlin/main"),
+        ).filter { Files.isDirectory(it) }
 
     /**
      * 混合项目运行期 classpath：Yux 产物 + Java/Kotlin 产物目录。
      * 单一 URLClassLoader 覆盖三方产物，使 Yux ↔ Java/Kotlin 互相引用可解析
      * （父子类加载器仅单向委托，分开加载会 NoClassDefFoundError，05-§5）。
      */
-    private fun runtimeClasspath(generatedDir: Path): List<Path> = listOf(
-        BuildPaths.resolve(projectDir, BuildPaths.YUX_CLASSES_DIR),
-        generatedDir.resolve("build/classes/java/main"),
-        generatedDir.resolve("build/classes/kotlin/main"),
-    ).filter { Files.isDirectory(it) }
+    private fun runtimeClasspath(generatedDir: Path): List<Path> =
+        listOf(
+            BuildPaths.resolve(projectDir, BuildPaths.YUX_CLASSES_DIR),
+            generatedDir.resolve("build/classes/java/main"),
+            generatedDir.resolve("build/classes/kotlin/main"),
+        ).filter { Files.isDirectory(it) }
 
     /** 项目类加载器：Java/Kotlin 产物目录 → URLClassLoader（父加载器为编译管线默认类加载器）；空目录 → 默认。 */
     private fun projectClassLoader(classDirs: List<Path>): ClassLoader {
@@ -217,26 +235,29 @@ class YuxBuild(
     }
 
     /** build.yml 内容哈希（缓存键的一部分）：改 mainClass/paperVersion/mavenDeps/plugins 等配置即失效重编译。 */
-    private fun buildConfigHash(): String = try {
-        YuxCache.sha256(Files.readAllBytes(projectDir.resolve("build.yml")))
-    } catch (e: IOException) {
-        "" // 解析已成功仅剩并发删除场景；回退空哈希仍以源码哈希为准
-    }
+    private fun buildConfigHash(): String =
+        try {
+            YuxCache.sha256(Files.readAllBytes(projectDir.resolve("build.yml")))
+        } catch (e: IOException) {
+            "" // 解析已成功仅剩并发删除场景；回退空哈希仍以源码哈希为准
+        }
 
     /** 解析 build.yml 并编制计划；失败返回 null（原因记入 [lastParseError]）。 */
     private fun parseAndPlan(): BuildPlan? {
-        val config = try {
-            BuildYmlParser().parse(projectDir)
-        } catch (e: BuildConfigException) {
-            lastParseError = e.message
-            return null
-        }
-        val plan = try {
-            BuildPlanner().plan(projectDir, config)
-        } catch (e: BuildConfigException) {
-            lastParseError = e.message
-            return null
-        }
+        val config =
+            try {
+                BuildYmlParser().parse(projectDir)
+            } catch (e: BuildConfigException) {
+                lastParseError = e.message
+                return null
+            }
+        val plan =
+            try {
+                BuildPlanner().plan(projectDir, config)
+            } catch (e: BuildConfigException) {
+                lastParseError = e.message
+                return null
+            }
         return plan
     }
 
@@ -245,7 +266,12 @@ class YuxBuild(
      * 否则解析全部源文件 → 写 yux-symbols.json（T-M7-7）→ 语义分析 → IR 生成 →
      * JVM 后端 + 插件钩子 → 写字节码 → 更新缓存。
      */
-    private fun compileInternal(plan: BuildPlan, config: BuildConfig, clean: Boolean, projectClasspath: List<Path>): CompiledProject {
+    private fun compileInternal(
+        plan: BuildPlan,
+        config: BuildConfig,
+        clean: Boolean,
+        projectClasspath: List<Path>,
+    ): CompiledProject {
         val cache = YuxCache(projectDir)
         val configHash = buildConfigHash()
         if (!clean && cache.isUpToDate(plan.yuxSources, compilerVersion, configHash)) {
@@ -256,12 +282,13 @@ class YuxBuild(
         // 跨文件引用：先解析全部源文件，再统一 analyze/generate。
         val declsByFile = linkedMapOf<String, List<YxDecl>>()
         for (sourcePath in plan.yuxSources) {
-            val text = try {
-                Files.readString(sourcePath)
-            } catch (e: IOException) {
-                compiler.diagnostics.error("读取源码失败: $sourcePath: ${e.message}")
-                continue
-            }
+            val text =
+                try {
+                    Files.readString(sourcePath)
+                } catch (e: IOException) {
+                    compiler.diagnostics.error("读取源码失败: $sourcePath: ${e.message}")
+                    continue
+                }
             val source = SourceFile(sourcePath.toString(), text)
             declsByFile[source.path] = compiler.parseToDecls(source)
         }
@@ -277,37 +304,83 @@ class YuxBuild(
         if (compiler.diagnostics.hasErrors) {
             return CompiledProject(emptyMap(), plan.mainClassName, compiler.diagnostics, success = false, upToDate = false)
         }
-        val generated = try {
-            val module = compiler.generate(declsByFile, analysis)
-            val artifacts = AsmBackend(classLoader = compiler.classLoader).generate(module, compiler.diagnostics).toMutableList()
-            // T-M6-5：插件 CodegenHook 附加产物（与 CLI Runner.kt 的合并模式一致）；
-            // M8（T-M8-12）：非 .class 产物（plugin.yml 等）与类分离，进入打包流程。
-            val resourceArtifacts = mutableListOf<PluginArtifact>()
-            for (hook in pluginManager.hooks) {
-                for (artifact in hook.generate(module, compiler.diagnostics)) {
-                    if (artifact.name.endsWith(".class")) {
-                        artifacts += AsmBackend.OutputArtifact(artifact.name, artifact.bytes)
-                    } else {
-                        resourceArtifacts += artifact
+        // 类级增量（M13）：纯 Yux 项目（无插件 codegen hook / 无 Java/Kotlin）下，
+        // 变更文件 + 反向依赖子集重新生成字节码，未变更文件复用缓存类字节。
+        val incrementalEnabled =
+            !clean && pluginManager.hooks.isEmpty() && plan.javaSources.isEmpty() && plan.kotlinSources.isEmpty()
+        val previousEntries = if (incrementalEnabled) cache.loadFileEntries() else null
+        val relativeOf = { abs: Path -> projectDir.relativize(abs).toString().replace('\\', '/') }
+        val absoluteOf = { rel: String -> projectDir.resolve(rel) }
+        val currentSources = plan.yuxSources.map { relativeOf(it) }.toSet()
+        val affectedRelative: Set<String>? =
+            if (previousEntries == null) {
+                null
+            } else {
+                cache.changedFiles(plan.yuxSources, previousEntries)
+                    .filter { it in currentSources } // 已删除文件不再产出
+                    .toSet()
+            }
+        val partialIncremental = affectedRelative != null && affectedRelative.isNotEmpty() && affectedRelative != currentSources
+        val bodyFiles = if (partialIncremental) affectedRelative!!.map { absoluteOf(it).toString() }.toSet() else null
+        val generated =
+            try {
+                val genResult = compiler.generateProject(declsByFile, analysis, bodyFiles = bodyFiles)
+                val artifacts = AsmBackend(classLoader = compiler.classLoader).generate(genResult.module, compiler.diagnostics).toMutableList()
+                // T-M6-5：插件 CodegenHook 附加产物（与 CLI Runner.kt 的合并模式一致）；
+                // M8（T-M8-12）：非 .class 产物（plugin.yml 等）与类分离，进入打包流程。
+                val resourceArtifacts = mutableListOf<PluginArtifact>()
+                for (hook in pluginManager.hooks) {
+                    for (artifact in hook.generate(genResult.module, compiler.diagnostics)) {
+                        if (artifact.name.endsWith(".class")) {
+                            artifacts += AsmBackend.OutputArtifact(artifact.name, artifact.bytes)
+                        } else {
+                            resourceArtifacts += artifact
+                        }
                     }
                 }
+                IncrementalGen(artifacts, resourceArtifacts, genResult.fileClassNames)
+            } catch (e: RuntimeException) {
+                // IRGen/后端对语义合法但不支持的输入抛异常（async 内 return、'' 字面量、`..=`、
+                // ASM 生成失败等）：转为 ERROR 诊断使构建走正常失败路径（runBuild/runProject 打印
+                // 诊断并返回 1），而不是让异常逃逸成笼统的「构建异常」。
+                compiler.diagnostics.error("编译错误: ${e.message}")
+                return CompiledProject(emptyMap(), plan.mainClassName, compiler.diagnostics, success = false, upToDate = false)
             }
-            Pair(artifacts, resourceArtifacts)
-        } catch (e: RuntimeException) {
-            // IRGen/后端对语义合法但不支持的输入抛异常（async 内 return、'' 字面量、`..=`、
-            // ASM 生成失败等）：转为 ERROR 诊断使构建走正常失败路径（runBuild/runProject 打印
-            // 诊断并返回 1），而不是让异常逃逸成笼统的「构建异常」。
-            compiler.diagnostics.error("编译错误: ${e.message}")
-            return CompiledProject(emptyMap(), plan.mainClassName, compiler.diagnostics, success = false, upToDate = false)
-        }
-        val artifacts = generated.first
-        val resourceArtifacts = generated.second
+        var artifacts: List<AsmBackend.OutputArtifact> = generated.artifacts
+        val resourceArtifacts = generated.resourceArtifacts
         if (compiler.diagnostics.hasErrors) {
             return CompiledProject(emptyMap(), plan.mainClassName, compiler.diagnostics, success = false, upToDate = false)
         }
+        // 增量：仅保留受影响文件的类产物，其余类字节从缓存目录复用。
+        if (partialIncremental) {
+            val affectedAbs = affectedRelative!!.map { absoluteOf(it).toString() }.toSet()
+            val freshClassNames = generated.fileClassNames
+                .filterKeys { it in affectedAbs }
+                .values
+                .flatten()
+                .toSet()
+            val cachedClassNames = generated.fileClassNames.values.flatten().filter { it !in freshClassNames }.toSet()
+            artifacts = artifacts.filter { it.className in freshClassNames } +
+                cache.loadCachedClasses(cachedClassNames).map { AsmBackend.OutputArtifact(it.first, it.second) }
+        }
+        // 依赖图（文件 → 引用的其它文件）随分析结果写回缓存，供下次构建判定反向依赖。
+        val deps = FileDependencies.compute(declsByFile, analysis.symbolTable)
         try {
             writeClasses(BuildPaths.resolve(projectDir, BuildPaths.YUX_CLASSES_DIR), artifacts)
-            cache.save(plan.yuxSources, compilerVersion, configHash)
+            if (incrementalEnabled) {
+                val entries =
+                    currentSources.associateWith { rel ->
+                        val abs = absoluteOf(rel).toString()
+                        FileCacheEntry(
+                            sha = YuxCache.sha256(Files.readAllBytes(absoluteOf(rel))),
+                            deps = (deps[abs] ?: emptyList()).map { relativeOf(projectDir.resolve(it)) }.sorted(),
+                            classes = (generated.fileClassNames[abs] ?: emptySet()).sorted(),
+                        )
+                    }
+                cache.save(entries, compilerVersion, configHash)
+            } else {
+                cache.save(plan.yuxSources, compilerVersion, configHash)
+            }
         } catch (e: IOException) {
             compiler.diagnostics.error("写入编译产物失败: ${e.message}")
             return CompiledProject(emptyMap(), plan.mainClassName, compiler.diagnostics, success = false, upToDate = false)
@@ -323,24 +396,37 @@ class YuxBuild(
         )
     }
 
+    /** 生成阶段中间结果（类级增量：产物 + 文件→类名映射）。 */
+    private data class IncrementalGen(
+        val artifacts: MutableList<AsmBackend.OutputArtifact>,
+        val resourceArtifacts: MutableList<PluginArtifact>,
+        val fileClassNames: Map<String, Set<String>>,
+    )
+
     /**
      * 生成 Gradle 工程：源路径一律为绝对路径（生成工程从 build/generated 运行）。
      * M8（T-M8-12）：编译器插件产出的 plugin.yml（main/permissions）与 build.yml 派生
      * 的 plugin.yml（name/version/api-version）以 YAML 合并——插件内容优先。
      * 返回 null = 成功；IO 失败返回中文错误消息。
      */
-    private fun writeGradleProject(config: BuildConfig, generatedDir: Path, resourceArtifacts: List<PluginArtifact>): String? {
-        return try {
-            val absConfig = config.copy(
-                sourceJava = config.sourceJava?.let { BuildPaths.resolve(projectDir, it).toString() },
-                sourceKotlin = config.sourceKotlin?.let { BuildPaths.resolve(projectDir, it).toString() },
-                resourcesDir = BuildPaths.resolve(projectDir, config.resourcesDir).toString(),
-            )
-            val generated = GradleGenerator().generate(
-                absConfig,
-                yuxClassesDir = BuildPaths.resolve(projectDir, BuildPaths.YUX_CLASSES_DIR).toString(),
-                shadeJars = if ("minecraft" in config.pluginsEnabled) locateShadeJars() else emptyList(),
-            )
+    private fun writeGradleProject(
+        config: BuildConfig,
+        generatedDir: Path,
+        resourceArtifacts: List<PluginArtifact>,
+    ): String? =
+        try {
+            val absConfig =
+                config.copy(
+                    sourceJava = config.sourceJava?.let { BuildPaths.resolve(projectDir, it).toString() },
+                    sourceKotlin = config.sourceKotlin?.let { BuildPaths.resolve(projectDir, it).toString() },
+                    resourcesDir = BuildPaths.resolve(projectDir, config.resourcesDir).toString(),
+                )
+            val generated =
+                GradleGenerator().generate(
+                    absConfig,
+                    yuxClassesDir = BuildPaths.resolve(projectDir, BuildPaths.YUX_CLASSES_DIR).toString(),
+                    shadeJars = if ("minecraft" in config.pluginsEnabled) locateShadeJars() else emptyList(),
+                )
             Files.createDirectories(generatedDir)
             Files.writeString(generatedDir.resolve("settings.gradle"), generated.settingsGradle)
             Files.writeString(generatedDir.resolve("build.gradle.kts"), generated.buildGradleKts)
@@ -356,10 +442,12 @@ class YuxBuild(
         } catch (e: IOException) {
             "生成 Gradle 工程失败: ${e.message}"
         }
-    }
 
     /** 合并两份 plugin.yml：基础（build.yml 派生）为底，钩子产物（编译器插件）逐键覆盖。 */
-    private fun mergePluginYml(base: String?, hook: String?): String? {
+    private fun mergePluginYml(
+        base: String?,
+        hook: String?,
+    ): String? {
         if (base == null && hook == null) return null
         val merged = linkedMapOf<String, Any?>()
         base?.let { merged.putAll(parseYamlMap(it)) }
@@ -369,32 +457,39 @@ class YuxBuild(
 
     /** SnakeYAML 安全解析为有序 Map；解析失败回退为空 Map（不阻塞构建）。 */
     private fun parseYamlMap(text: String): Map<String, Any?> {
-        val root = try {
-            Yaml().load<Any?>(text)
-        } catch (e: RuntimeException) {
-            return emptyMap()
-        }
+        val root =
+            try {
+                Yaml().load<Any?>(text)
+            } catch (e: RuntimeException) {
+                return emptyMap()
+            }
         if (root !is Map<*, *>) return emptyMap()
-        return root.entries.mapNotNull { (k, v) ->
-            (k as? String)?.let { it to v }
-        }.toMap(linkedMapOf())
+        return root.entries
+            .mapNotNull { (k, v) ->
+                (k as? String)?.let { it to v }
+            }.toMap(linkedMapOf())
     }
 
     /** 以块式风格渲染 YAML（snakeyaml DumperOptions 默认即块式）。 */
     private fun renderYaml(map: Map<String, Any?>): String = Yaml().dump(map)
 
     /** 拷贝 Gradle 产出的 jar 到 `build/libs/<name>-<version>.jar`；无产物 → 失败结果。 */
-    private fun copyArtifact(generatedDir: Path, targetJar: Path): BuildResult {
-        val sourceJar = try {
-            Files.list(generatedDir.resolve("build/libs")).use { stream ->
-                stream.filter { it.fileName.toString().endsWith(".jar") }
-                    .sorted(compareBy { it.fileName.toString() })
-                    .toList()
-                    .firstOrNull()
+    private fun copyArtifact(
+        generatedDir: Path,
+        targetJar: Path,
+    ): BuildResult {
+        val sourceJar =
+            try {
+                Files.list(generatedDir.resolve("build/libs")).use { stream ->
+                    stream
+                        .filter { it.fileName.toString().endsWith(".jar") }
+                        .sorted(compareBy { it.fileName.toString() })
+                        .toList()
+                        .firstOrNull()
+                }
+            } catch (e: IOException) {
+                return BuildResult(false, message = "Gradle 未产出 jar")
             }
-        } catch (e: IOException) {
-            return BuildResult(false, message = "Gradle 未产出 jar")
-        }
         if (sourceJar == null) {
             return BuildResult(false, message = "Gradle 未产出 jar")
         }
@@ -408,7 +503,11 @@ class YuxBuild(
     }
 
     /** 写 `yux-symbols.json`；失败记录为诊断错误。 */
-    private fun writeSymbols(config: BuildConfig, declsByFile: Map<String, List<YxDecl>>, diagnostics: DiagnosticSink) {
+    private fun writeSymbols(
+        config: BuildConfig,
+        declsByFile: Map<String, List<YxDecl>>,
+        diagnostics: DiagnosticSink,
+    ) {
         val symbolsFile = BuildPaths.resolve(projectDir, BuildPaths.SYMBOLS_FILE)
         try {
             Files.createDirectories(symbolsFile.parent)
@@ -419,7 +518,10 @@ class YuxBuild(
     }
 
     /** 写字节码到 `build/yux-classes/<className.replace('.', '/')>.class`。 */
-    private fun writeClasses(classesDir: Path, artifacts: List<AsmBackend.OutputArtifact>) {
+    private fun writeClasses(
+        classesDir: Path,
+        artifacts: List<AsmBackend.OutputArtifact>,
+    ) {
         for (artifact in artifacts) {
             val classFile = classesDir.resolve(artifact.className.replace('.', '/') + ".class")
             Files.createDirectories(classFile.parent)
@@ -433,11 +535,17 @@ class YuxBuild(
         if (!Files.isDirectory(classesDir)) return null
         return try {
             Files.walk(classesDir).use { stream ->
-                stream.filter { Files.isRegularFile(it) && it.fileName.toString().endsWith(".class") }
+                stream
+                    .filter { Files.isRegularFile(it) && it.fileName.toString().endsWith(".class") }
                     .toList()
                     .associate { file ->
                         val rel = classesDir.relativize(file)
-                        val className = rel.toString().replace('\\', '/').substringBeforeLast('.').replace('/', '.')
+                        val className =
+                            rel
+                                .toString()
+                                .replace('\\', '/')
+                                .substringBeforeLast('.')
+                                .replace('/', '.')
                         className to Files.readAllBytes(file)
                     }
             }
@@ -481,25 +589,42 @@ class YuxBuild(
      * 定位插件 jar 需 shade 的依赖（M9）：Paper 加载要求插件 jar 自包含 SDK 运行时与
      * 第三方库（服务器只提供 paper-api）。从当前进程 classpath 定位：
      * - `yux-minecraft-runtime`（PluginBootstrap/注解/HomeStore/ConfigManager）
+     * - `yux-stdlib`（`yux.core.CoreLib` 等，Yux 内置函数 `print` 等的运行时宿主）
      * - `snakeyaml`（HomeStore/ConfigManager 的 YAML 依赖）
      * - `kotlin-stdlib`（runtime 的 Kotlin 传递依赖）
      * 逐个解析类 codeSource；未找到则跳过（该依赖由服务器或环境提供）。
      */
     private fun locateShadeJars(): List<String> {
-        val markers = listOf(
-            "yux.minecraft.bootstrap.PluginBootstrap",
-            "org.yaml.snakeyaml.Yaml",
-            "kotlin.Unit",
-        )
+        val markers =
+            listOf(
+                "yux.minecraft.bootstrap.PluginBootstrap",
+                "yux.core.CoreLib",
+                "org.yaml.snakeyaml.Yaml",
+                "kotlin.Unit",
+            )
         return markers.mapNotNull { marker ->
             try {
-                val location = Class.forName(marker).protectionDomain?.codeSource?.location ?: return@mapNotNull null
-                val file = try {
-                    java.nio.file.Paths.get(location.toURI())
-                } catch (e: Exception) {
-                    return@mapNotNull null
+                val location =
+                    Class
+                        .forName(marker)
+                        .protectionDomain
+                        ?.codeSource
+                        ?.location ?: return@mapNotNull null
+                val file =
+                    try {
+                        java.nio.file.Paths
+                            .get(location.toURI())
+                    } catch (e: Exception) {
+                        return@mapNotNull null
+                    }
+                if (file.toString().endsWith(".jar") &&
+                    java.nio.file.Files
+                        .isRegularFile(file)
+                ) {
+                    file.toString()
+                } else {
+                    null
                 }
-                if (file.toString().endsWith(".jar") && java.nio.file.Files.isRegularFile(file)) file.toString() else null
             } catch (_: Throwable) {
                 null
             }

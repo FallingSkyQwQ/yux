@@ -11,7 +11,10 @@ import java.util.Comparator
 /**
  * 文件级增量缓存（T-M7-6，02-§12.3）：以「全部源文件 SHA-256 + 编译器版本 + build 配置
  * 哈希」为键，判定既有产物是否过期。清单 `manifest.json` 为单行确定性 JSON：
- * `{"version": "0.1.0-SNAPSHOT", "config": "...", "files": {"src/main.yux": "sha256hex"}}`。
+ * `{"version": "0.1.0-SNAPSHOT", "config": "...", "files": {"src/main.yux": {"sha": "...", "deps": [...], "classes": [...]}}}`。
+ *
+ * 类级增量（M13）：每个源文件记录「依赖文件集（deps）」与「产出的类名集（classes）」。
+ * 变更文件 + 其反向依赖需要重新生成字节码；其余文件复用缓存类字节（选择性 codegen）。
  *
  * 清单键为相对项目根的正斜杠路径（绝对输入相对化、相对输入直接采用——与
  * [YuxSymbols] 的 relativePath 一致），按键排序保证确定性。清单解析走 SnakeYAML
@@ -55,6 +58,75 @@ class YuxCache(
         )
     }
 
+    /** 读取各文件的增量元数据（SHA + 依赖 + 产出类）；清单缺失/旧格式/损坏 → null。 */
+    fun loadFileEntries(): Map<String, FileCacheEntry>? {
+        val manifest = cacheDir.resolve(MANIFEST_FILE)
+        if (!Files.isRegularFile(manifest)) return null
+        val parsed = readManifest(manifest) ?: return null
+        return parsed.entries
+    }
+
+    /** 以文件粒度写入清单（deps/classes 随构建分析结果更新）。 */
+    fun save(
+        entries: Map<String, FileCacheEntry>,
+        compilerVersion: String = COMPILER_VERSION,
+        configHash: String = "",
+    ) {
+        Files.createDirectories(cacheDir)
+        Files.writeString(
+            cacheDir.resolve(MANIFEST_FILE),
+            renderManifestDetailed(compilerVersion, configHash, entries),
+        )
+    }
+
+    /**
+     * 需要重新生成字节码的文件集：源文件哈希变化（新增/修改/删除）+ 其**反向依赖**闭包
+     * （前次构建记录的 deps）。返回 null 表示无缓存元数据 → 全量重编。
+     */
+    fun changedFiles(
+        sources: List<Path>,
+        previous: Map<String, FileCacheEntry>,
+    ): Set<String> {
+        val current = try {
+            hash(sources)
+        } catch (e: IOException) {
+            return sources.map { relativeKey(it) }.toSet()
+        }
+        val changed = LinkedHashSet<String>()
+        // 修改/新增：哈希不一致
+        for ((key, sha) in current) {
+            if (previous[key]?.sha != sha) changed += key
+        }
+        // 删除：前次清单中有而当前源码缺失 → 其反向依赖须重编
+        for (key in previous.keys) {
+            if (key !in current) changed += key
+        }
+        // 反向依赖闭包（BFS）
+        val reverse = mutableMapOf<String, MutableSet<String>>()
+        for ((file, entry) in previous) {
+            for (dep in entry.deps) reverse.getOrPut(dep) { mutableSetOf() } += file
+        }
+        val affected = LinkedHashSet<String>()
+        val queue = ArrayDeque(changed)
+        while (queue.isNotEmpty()) {
+            val file = queue.removeFirst()
+            if (!affected.add(file)) continue
+            reverse[file]?.forEach { queue.addLast(it) }
+        }
+        return affected
+    }
+
+    /** 从磁盘读取类字节（增量复用：未被重新生成的文件产出类）。 */
+    fun loadCachedClasses(classNames: Set<String>, classesDir: Path = BuildPaths.resolve(projectDir, BuildPaths.YUX_CLASSES_DIR)): List<Pair<String, ByteArray>> {
+        val out = mutableListOf<Pair<String, ByteArray>>()
+        for (name in classNames) {
+            val file = classesDir.resolve(name.replace('.', '/') + ".class")
+            if (!Files.isRegularFile(file)) continue
+            out += name to Files.readAllBytes(file)
+        }
+        return out
+    }
+
     /** 删除缓存目录（不存在时静默）。 */
     fun clear() {
         if (Files.exists(cacheDir)) {
@@ -89,13 +161,28 @@ class YuxCache(
         val version = root["version"] as? String ?: return null
         val config = root["config"] as? String ?: return null
         val files = root["files"] as? Map<*, *> ?: return null
-        val fileHashes = sortedMapOf<String, String>()
+        val entries = sortedMapOf<String, FileCacheEntry>()
         for ((key, value) in files.entries) {
-            if (key !is String || value !is String) return null
-            fileHashes[key] = value
+            if (key !is String) return null
+            // 兼容旧格式（v0.1：files 值为纯 SHA 字符串）与新格式（M13：值为 {sha, deps, classes}）
+            entries[key] =
+                when (value) {
+                    is String -> FileCacheEntry(value, emptyList(), emptyList())
+                    is Map<*, *> -> {
+                        val sha = value["sha"] as? String ?: return null
+                        val deps = stringList(value["deps"])
+                        val classes = stringList(value["classes"])
+                        if (deps == null || classes == null) return null
+                        FileCacheEntry(sha, deps, classes)
+                    }
+                    else -> return null
+                }
         }
-        return ManifestData(version, config, fileHashes)
+        return ManifestData(version, config, entries)
     }
+
+    private fun stringList(value: Any?): List<String>? =
+        (value as? List<*>)?.map { it as? String ?: return null }
 
     /** 源路径 → 清单键：绝对路径相对 [projectDir] 规约，相对路径直接采用。 */
     private fun relativeKey(path: Path): String {
@@ -103,9 +190,21 @@ class YuxCache(
         return rel.toString().replace('\\', '/')
     }
 
-    /** 渲染单行确定性清单（冒号后空两格；文件项按键排序）。 */
+    /** 渲染单行确定性清单（文件项按键排序）。 */
     private fun renderManifest(version: String, configHash: String, files: Map<String, String>): String {
         val entries = files.entries.joinToString(", ") { "${quote(it.key)}: ${quote(it.value)}" }
+        return "{\"version\": ${quote(version)}, \"config\": ${quote(configHash)}, \"files\": {$entries}}"
+    }
+
+    /** 渲染文件粒度清单（deps/classes 排序后序列化为 JSON 数组文本）。 */
+    private fun renderManifestDetailed(version: String, configHash: String, files: Map<String, FileCacheEntry>): String {
+        val entries =
+            files.entries.joinToString(", ") { (key, entry) ->
+                val deps = entry.deps.sorted().joinToString(", ") { quote(it) }
+                val classes = entry.classes.sorted().joinToString(", ") { quote(it) }
+                val body = "\"sha\": ${quote(entry.sha)}, \"deps\": [$deps], \"classes\": [$classes]"
+                "${quote(key)}: {$body}"
+            }
         return "{\"version\": ${quote(version)}, \"config\": ${quote(configHash)}, \"files\": {$entries}}"
     }
 
@@ -114,7 +213,10 @@ class YuxCache(
         "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
 
     /** 解析后的清单模型。 */
-    private data class ManifestData(val version: String, val config: String, val files: Map<String, String>)
+    private data class ManifestData(val version: String, val config: String, val entries: Map<String, FileCacheEntry>) {
+        val files: Map<String, String>
+            get() = entries.mapValues { it.value.sha }
+    }
 
     companion object {
         /** 编译器版本：清单键的一部分；编译器变更后强制全量重编。 */
@@ -129,3 +231,13 @@ class YuxCache(
         }
     }
 }
+
+/** 单文件增量元数据（类级增量，M13）。 */
+data class FileCacheEntry(
+    /** 源文件 SHA-256。 */
+    val sha: String,
+    /** 依赖的其它源文件清单键（用于反向依赖重编）。 */
+    val deps: List<String>,
+    /** 本文件产出的类名（JVM 点分名；增量时复用未变更文件的类字节）。 */
+    val classes: List<String>,
+)

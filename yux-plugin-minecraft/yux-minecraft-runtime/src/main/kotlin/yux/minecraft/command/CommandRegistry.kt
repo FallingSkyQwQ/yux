@@ -34,7 +34,9 @@ object CommandRegistry {
     /** 注册命令；无 @YuxCommand 注解、路径未在 plugin.yml 注册时静默返回。 */
     fun register(plugin: Plugin, command: Any) {
         val meta = command.javaClass.getAnnotation(YuxCommand::class.java) ?: return
-        val bukkitCmd = (plugin as? JavaPlugin)?.getCommand(meta.path) ?: return
+        // 注解 path 含 `/` 前缀（如 `/sethome`），plugin.yml 以末段命令名注册；
+        // Bukkit getCommand 按纯命令名/别名查找，须归一化（否则返回 null 静默失效）。
+        val bukkitCmd = (plugin as? JavaPlugin)?.getCommand(commandName(meta.path)) ?: return
         bukkitCmd.setPermission(meta.permission.ifEmpty { null })
         bukkitCmd.setAliases(meta.aliases.split(',').map { it.trim() }.filter { it.isNotEmpty() })
         bukkitCmd.setExecutor(executorFor(command))
@@ -75,4 +77,7 @@ object CommandRegistry {
                 },
             )
         }.orElse(null)
+
+    /** 命令名：路径末段去 `/`（`/sethome` → `sethome`；`/admin/back` → `back`），与 plugin.yml 渲染一致。 */
+    internal fun commandName(path: String): String = path.substringAfterLast('/').ifEmpty { path }
 }

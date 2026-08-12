@@ -1,0 +1,58 @@
+// 02-进阶 · 第 22 章：运算符重载（operator fun：plus/times/compareTo/equals/get/set/扩展/集合+）
+Vec {
+    x:Int
+    y:Int
+    operator fun plus(other:Vec):Vec {
+        return Vec(x + other.x, y + other.y)
+    }
+    operator fun times(k:Int):Vec {
+        return Vec(x * k, y * k)
+    }
+    operator fun compareTo(other:Vec):Int {
+        if (x != other.x) return x - other.x
+        return y - other.y
+    }
+    operator fun equals(other:Vec):Boolean {
+        return x == other.x && y == other.y
+    }
+    operator fun hashCode():Int {
+        return x * 31 + y
+    }
+}
+Pair {
+    first:Int
+    second:Int
+    operator fun get(i:Int):Int {
+        return if (i == 0) then first else second
+    }
+    operator fun set(i:Int, v:Int):Unit {
+        if (i == 0) {
+            this.first = v
+        } else {
+            this.second = v
+        }
+    }
+}
+fun main() {
+    a = Vec(1, 2)
+    b = Vec(3, 4)
+    c = a + b
+    println c.x
+    println c.y
+    println (a < b)
+    println (a <= b)
+    println (a == a)
+    println (a != b)
+    println ((a * 5).x)
+    p = Pair(0, 0)
+    p[0] = 10
+    p[1] = 20
+    println p[0]
+    println p[1]
+    xs = List Int()
+    xs.add(1); xs.add(2)
+    ys = List Int()
+    ys.add(3)
+    z = (xs + ys) as List Any
+    println z.size
+}
