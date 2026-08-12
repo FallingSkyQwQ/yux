@@ -1,3 +1,5 @@
 
 -- 诊断 --
 ERROR[E0004] 3:39: 类型不匹配（参数 'title' 默认值）: 期望 String，实际 Int
+  3 | fun greet(name:String, title:String = 42) {
+    |                                       ^

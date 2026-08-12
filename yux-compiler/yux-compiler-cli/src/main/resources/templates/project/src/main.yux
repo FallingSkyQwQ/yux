@@ -1,0 +1,4 @@
+package <package>
+fun main() {
+    print "Hello, <name>!"
+}

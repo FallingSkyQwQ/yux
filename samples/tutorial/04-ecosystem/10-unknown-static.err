@@ -1,3 +1,5 @@
 
 -- 诊断 --
 ERROR[E0016] 3:13: 静态方法 'bogus' 不存在
+  3 |     println Math.bogus(1)
+    |             ^

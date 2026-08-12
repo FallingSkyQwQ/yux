@@ -2,7 +2,7 @@
 
 本文件记录各里程碑的显著变更（含 breaking changes，见 06-§3）。
 
-## [Unreleased] - 2026-08-12 — 运算符重载（M13 转正）
+## [Unreleased] - 2026-08-12 — 运算符重载（M13 转正）+ 类级增量编译
 
 ### 新增
 
@@ -27,8 +27,6 @@
   - `command` 新增 `usage = "..."` 属性，下沉为 plugin.yml `commands.<name>.usage`（04-§2 的 usage 语法现可落地）；
   - `config` 支持 **List 默认值**（`tags = ["a", "b"]`）：合成顶层 List 构建函数作为属性初始值（`as List T` 收窄适配擦除），元素类型由首元素推导（String/Int/Long/Double/Boolean），运行时 `ConfigMapping` 反射转换已就绪。
 
-### 新增
-
 - **运算符重载（M13）**：`operator fun plus/minus/times/div/rem/compareTo/equals/rangeTo/unaryMinus/unaryPlus/not/get/set` 将运算符分发到用户定义方法，解析顺序 **成员 > 扩展 > JVM 扩展 > 内建**：
   - `operator` 软关键字（仅后随 `fun`/`async fun` 时视为修饰符，其余位置保持标识符语义）；
   - `!=` 由 equals 取反派生；`< <= > >=` 经 `compareTo` 与 0 比较派生（表达式结果恒 `Boolean`）；
@@ -47,6 +45,34 @@
 - **插件 jar 未打包 `yux-stdlib` → `NoClassDefFoundError: yux/core/CoreLib`**：`print` 等内置函数降级为 `yux.core.CoreLib` 静态调用，但 `locateShadeJars` 的 shade 清单只有 runtime/snakeyaml/kotlin-stdlib，插件启用/卸载时 `print` 找不到 CoreLib。现在 shade 清单加入 `yux.core.CoreLib` 标记，插件 jar 自包含 yux-stdlib。
 - **samples e2e 快照补齐**：`samples/hello.yux`、`lambdas.yux`、`nullable.yux`、`stdlib.yux` 缺失 `.stdout` 快照，`MainTest.samples directory e2e compares stdout` 在 tutorial-bible 重构后一直失败；补全 4 份快照。
 
+## [v0.1.0-m16] - 2026-08-11 — 实用 CLI
+
+### 新增
+
+- **Clikt 4.4 重写 CLI**（`yux-compiler-cli`）：从手写参数解析迁移到 Clikt 声明式框架。
+  - 自动 usage/help（`yuxc`、`yuxc --help`、`yuxc <cmd> --help`、`yuxc help [cmd]`）；
+  - `--completion bash|zsh|fish` 一键生成 shell 补全脚本；
+  - 旧命令（lex/ast/check/ir/run/build/test）行为、错误文案、退出码保持不变，既有测试全绿。
+- **`yuxc new` 脚手架**：`yuxc new <name> [-t hello|project|plugin] [--package] [--force]`，
+  classpath 模板 + 占位符渲染（`<name>`/`<Name>`/`<package>`），生成即构建可运行。
+- **`yuxc fmt` 格式化器**（`yux.compiler.fmt.YuxFormatter`，新）：CST 驱动规范排版。
+  - 4 空格缩进、块/顶层空行规则、行内 token 间距表；
+  - 注释保留（行内/独占行自动判定）；字符串插值 `"${x}"`；扩展函数、when/if 表达式；
+  - 插件扩展块（plugin/event/command…）整体 raw copy（剥离尾部空白保证幂等）；
+  - 幂等性 `format(format(x)) == format(x)` 测试锁定；`-i` 原地 / `--check` CI 校验 / stdin。
+- **彩色诊断 + 源码标注**：ANSI 严重级别 + 源码行 + 插入符（tty 自动检测、`NO_COLOR`、`--color auto|always|never`）。
+- **`yuxc version`**：构建时生成 `yuxc-version.properties`（版本单一事实源 = Gradle project.version）。
+- **`yuxc doc`**：打开在线文档（headless 打印 URL）。
+
+### 变更
+
+- 参数解析框架：手写 → Clikt 4.4（新依赖 `com.github.ajalt.clikt`，bundled mordant）。
+- 发行形态不变：installDist 发行包（zip/tgz + setupyux.sh）。
+
+### 说明
+
+- 格式化器解析失败（语法错误）返回诊断而非崩溃；插件源码需 `--plugin` 才能识别扩展语法。
+- `fmt` 对插件扩展块内的代码不重排（原样保留），仅保证整体幂等。
 ## [Unreleased] - 2026-08-11 — 教程三缺陷修复（无 subject 的 when / 属性 init+访问器 / 推断被 println 顶成 Any）
 
 ### 修复

@@ -1,3 +1,5 @@
 
 -- 诊断 --
 ERROR[E0015] 3:5: 类型不匹配（return）: 期望 Int，实际 String
+  3 |     return "oops"
+    |     ^

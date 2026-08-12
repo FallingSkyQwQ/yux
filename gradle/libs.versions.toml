@@ -9,6 +9,7 @@ kotlinx-coroutines = "1.8.1"
 jackson-databind = "2.17.2"
 snakeyaml = "2.2"
 paper-api = "1.21-R0.1-SNAPSHOT"
+clikt = "4.4.0"
 
 [libraries]
 # JVM 字节码生成（ADR-04）
@@ -28,6 +29,9 @@ snakeyaml = { module = "org.yaml:snakeyaml", version.ref = "snakeyaml" }
 
 # Paper API（03-§2：SDK 编译期/运行期依赖，M8）
 paper-api = { module = "io.papermc.paper:paper-api", version.ref = "paper-api" }
+
+# CLI 参数解析（M16：Clikt 声明式子命令/help/usage/补全）
+clikt = { module = "com.github.ajalt.clikt:clikt", version.ref = "clikt" }
 
 [plugins]
 kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }

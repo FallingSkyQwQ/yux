@@ -1,3 +1,5 @@
 
 -- 诊断 --
 ERROR[E0034] 4:9: when 表达式需要 else 分支（非密封 subject 无 else）（T-M12）
+  4 |     x = when n { 1 -> "one" }
+    |         ^
